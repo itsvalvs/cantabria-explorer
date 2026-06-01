@@ -323,13 +323,16 @@
           <i class="ti ti-x" aria-hidden="true"></i>
         </button>
       </div>
-      <!-- Zona subir foto -->
-      <div class="uzone" id="uzone" onclick="document.getElementById('file-in').click()" style="cursor:pointer">
-        <i class="ti ti-camera-plus" aria-hidden="true"></i>
-        Toca para añadir foto <span style="color:rgba(255,255,255,0.4)">(opcional)</span>
-        <div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div>
+      <!-- Zona subir foto — input visible pero transparente encima del div -->
+      <div style="position:relative">
+        <div class="uzone" id="uzone" style="pointer-events:none">
+          <i class="ti ti-camera-plus" aria-hidden="true"></i>
+          Toca para añadir foto <span style="color:rgba(255,255,255,0.4)">(opcional)</span>
+          <div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div>
+        </div>
+        <input type="file" id="file-in" accept="image/*"
+          style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:10;">
       </div>
-      <input type="file" id="file-in" accept="image/*" style="position:fixed;top:-9999px;left:-9999px;opacity:0;width:1px;height:1px;">
       <!-- Descripción -->
       <textarea id="evidencia-desc" placeholder="Añade una descripción de tu visita... (opcional)"
         style="display:block;width:100%;margin-top:10px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;min-height:72px;line-height:1.5;"></textarea>
