@@ -531,6 +531,43 @@
     <div class="nav" id="nav-profile"></div>
   </div>
 
+  <!-- MODAL PERFIL DE AMIGO -->
+  <div id="friend-profile-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100;flex-direction:column;justify-content:flex-end;">
+    <div style="background:#141e2c;border-radius:22px 22px 0 0;max-height:92vh;overflow-y:auto;animation:su .22s ease">
+      <!-- Header -->
+      <div style="background:linear-gradient(135deg,#1a0d2a,#0d1a3a);padding:24px 18px 20px;position:relative">
+        <button onclick="closeFriendProfile()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;">
+          <i class="ti ti-x" aria-hidden="true"></i>
+        </button>
+        <div style="display:flex;align-items:center;gap:14px">
+          <div id="fp-avatar" style="width:64px;height:64px;border-radius:50%;background:#1a2535;border:2px solid #e86820;display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#e86820;overflow:hidden;flex-shrink:0"></div>
+          <div>
+            <div id="fp-username" style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff"></div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:2px">Cantabria Explorer</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <div style="flex:1;background:rgba(255,255,255,0.08);border-radius:12px;padding:10px 8px;text-align:center">
+            <div id="fp-visits-count" style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#e8b820">0</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:1px">Conquistados</div>
+          </div>
+          <div style="flex:1;background:rgba(255,255,255,0.08);border-radius:12px;padding:10px 8px;text-align:center">
+            <div id="fp-photos-count" style="font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#e8b820">0</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:1px">Fotos</div>
+          </div>
+        </div>
+      </div>
+      <!-- Galería -->
+      <div style="padding:16px 14px 0">
+        <h3 style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Fotos</h3>
+        <div id="fp-gallery" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:16px"></div>
+        <!-- Últimas visitas -->
+        <h3 style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Últimas visitas</h3>
+        <div id="fp-map" style="margin-bottom:24px"></div>
+      </div>
+    </div>
+  </div>
+
 </div><!-- /app -->
 
 <!-- Supabase JS -->
