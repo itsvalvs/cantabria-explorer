@@ -1,38 +1,20 @@
-const CACHE = 'cantabria-v1';
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/app.js',
-  '/manifest.json',
-];
+// Service Worker minimalista — solo para PWA, sin cache agresivo
+const CACHE = 'cantabria-v2';
 
 self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', e => {
+  // Borrar caches anteriores
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+      Promise.all(keys.map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
+// Sin cache — siempre red directa
 self.addEventListener('fetch', e => {
-  // Solo cachear mismas origen
-  if (!e.request.url.startsWith(self.location.origin)) return;
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      const net = fetch(e.request).then(res => {
-        if (res && res.status === 200) {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
-        }
-        return res;
-      }).catch(() => cached);
-      return cached || net;
-    })
-  );
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
 });
