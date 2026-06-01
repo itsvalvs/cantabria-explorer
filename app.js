@@ -309,15 +309,28 @@ async function confirmVisit() {
 
     // 1. Subir foto si hay
     if (file) {
-      const ext  = file.name.split('.').pop();
+      // Convertir a blob igual que el avatar para compatibilidad iOS
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const blob = await fetch(base64).then(r => r.blob());
+      const ext  = file.type === 'image/png' ? 'png' : 'jpg';
       const path = `${state.user.id}/${Date.now()}.${ext}`;
-      const { error: upErr } = await db.storage
+
+      console.log('Subiendo evidencia a:', path, 'tipo:', file.type, 'tamaño:', file.size);
+
+      const { data: upData, error: upErr } = await db.storage
         .from('evidencias')
-        .upload(path, file, { contentType: file.type, upsert: false });
+        .upload(path, blob, { contentType: file.type, upsert: false });
+
       if (upErr) {
-        console.error('Error subiendo foto:', upErr);
-        throw new Error('No se pudo subir la foto: ' + upErr.message);
+        console.error('Error subiendo evidencia:', JSON.stringify(upErr));
+        throw new Error('Error al subir foto: ' + (upErr.message || upErr.error || JSON.stringify(upErr)));
       }
+      console.log('Evidencia subida OK:', upData);
       storagePath = path;
     }
 
@@ -627,13 +640,18 @@ async function loadFeed() {
     .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
     .eq('estado', 'aceptado');
 
-  // Extraer los perfiles de los amigos (el que NO soy yo)
+  // Extraer los perfiles de los amigos (el que NO soy yo) — deduplicar por id
+  const seen = new Set();
   const friendProfiles = (friends || []).map(f => {
     if (f.follower_id === state.user.id) return f.following;
     return f.follower;
-  }).filter(Boolean);
+  }).filter(p => {
+    if (!p || seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
 
-  const friendIds = friendProfiles.map(p => p.id);
+  const friendIds = [...new Set(friendProfiles.map(p => p.id))];
 
   // Renderizar stories con nombres y avatares reales
   renderStories(friendProfiles);
