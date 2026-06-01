@@ -291,8 +291,13 @@ async function confirmVisit() {
     if (file) {
       const ext  = file.name.split('.').pop();
       const path = `${state.user.id}/${Date.now()}.${ext}`;
-      const { error: upErr } = await db.storage.from('evidencias').upload(path, file);
-      if (upErr) throw upErr;
+      const { error: upErr } = await db.storage
+        .from('evidencias')
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) {
+        console.error('Error subiendo foto:', upErr);
+        throw new Error('No se pudo subir la foto: ' + upErr.message);
+      }
       storagePath = path;
     }
 
@@ -676,33 +681,74 @@ async function toggleLike(btn, photoId) {
 async function searchUser() {
   const q = document.getElementById('search-input').value.trim();
   if (!q) return;
+  const res = document.getElementById('search-results');
+  res.innerHTML = '<div style="color:rgba(255,255,255,0.35);font-size:12px;padding:8px 0">Buscando...</div>';
+
   const { data } = await db
     .from('profiles')
     .select('id, username')
     .ilike('username', `%${q}%`)
     .neq('id', state.user.id)
     .limit(10);
-  const res = document.getElementById('search-results');
-  if (!data || !data.length) { res.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">No se encontró ningún usuario</div>'; return; }
-  res.innerHTML = data.map(u => `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
-      <span style="color:#fff;font-size:13px">${u.username}</span>
-      <button onclick="sendFriendRequest('${u.id}','${u.username}')"
-        style="padding:5px 12px;background-color:#2272e8;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
+
+  if (!data || !data.length) {
+    res.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">No se encontró ningún usuario</div>';
+    return;
+  }
+
+  // Obtener estado de amistad con cada resultado
+  const { data: friendships } = await db
+    .from('friendships')
+    .select('follower_id, following_id, estado')
+    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`);
+
+  res.innerHTML = data.map(u => {
+    const rel = (friendships || []).find(f =>
+      (f.follower_id === state.user.id && f.following_id === u.id) ||
+      (f.following_id === state.user.id && f.follower_id === u.id)
+    );
+    const initials = u.username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    let btnHtml = '';
+    if (!rel) {
+      btnHtml = `<button onclick="sendFriendRequest('${u.id}','${u.username}',this)"
+        style="padding:6px 13px;background-color:#2272e8;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
         + Añadir
-      </button>
-    </div>`).join('');
+      </button>`;
+    } else if (rel.estado === 'pendiente') {
+      btnHtml = `<span style="font-size:11px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
+        <i class="ti ti-clock" aria-hidden="true" style="font-size:10px"></i> Pendiente
+      </span>`;
+    } else if (rel.estado === 'aceptado') {
+      btnHtml = `<span style="font-size:11px;color:#22b050;background:rgba(34,176,80,0.12);padding:5px 10px;border-radius:999px">
+        <i class="ti ti-check" aria-hidden="true" style="font-size:10px"></i> Amigos
+      </span>`;
+    }
+    return `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
+      <div style="width:34px;height:34px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:#7ab3e8;flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
+      <span style="color:#fff;font-size:13px;flex:1">${u.username}</span>
+      ${btnHtml}
+    </div>`;
+  }).join('');
 }
 
-async function sendFriendRequest(toId, toUsername) {
+async function sendFriendRequest(toId, toUsername, btn) {
   if (!state.user) return;
+  // Cambiar botón a pendiente inmediatamente
+  if (btn) {
+    btn.outerHTML = `<span style="font-size:11px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
+      <i class="ti ti-clock" aria-hidden="true" style="font-size:10px"></i> Pendiente
+    </span>`;
+  }
   const { error } = await db.from('friendships').insert({
     follower_id:  state.user.id,
     following_id: toId,
     estado:       'pendiente',
   });
-  if (!error) alert('Solicitud enviada a ' + toUsername);
-  else if (error.code === '23505') alert('Ya tienes una solicitud pendiente con ' + toUsername);
+  if (error && error.code !== '23505') {
+    alert('Error al enviar solicitud. Inténtalo de nuevo.');
+    searchUser(); // refrescar
+  }
 }
 
 // ── PERFIL ────────────────────────────────────────────────────
