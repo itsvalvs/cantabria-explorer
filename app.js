@@ -260,35 +260,37 @@ function showMuniBar(name) {
 
 function openSheet() {
   if (!state.selectedMuni) return;
-  const muni    = state.selectedMuni;
-  const visita  = state.visited[muni];
+  const muni   = state.selectedMuni;
+  const visita = state.visited[muni];
 
   document.getElementById('sht-title').textContent = muni;
   document.getElementById('sht-sub').textContent   = visita
-    ? 'Ya conquistado — puedes añadir otra foto o desmarcar'
-    : 'Añade una foto de tu visita a ' + muni;
+    ? 'Ya conquistado — añade foto o descripción'
+    : 'Foto, descripción o ambas (todo opcional)';
 
-  // Botón desmarcar: solo visible si ya está conquistado
   const btnDesmarcar = document.getElementById('btn-desmarcar');
   if (btnDesmarcar) btnDesmarcar.style.display = visita ? 'block' : 'none';
-
-  // Botón marcar: cambiar texto si ya está
   const btnConf = document.getElementById('btn-conf');
-  if (btnConf) btnConf.textContent = visita ? 'Guardar nueva foto' : 'Marcar como conquistado';
+  if (btnConf) btnConf.textContent = visita ? 'Guardar' : 'Marcar como conquistado';
 
-  // Reset visibilidad
   document.querySelectorAll('.vis-btn').forEach(b => b.classList.remove('vis-active'));
   document.getElementById('vis-amigos').classList.add('vis-active');
 
-  // Reset foto
+  // Reset foto y descripción
+  clearPhoto();
+  const desc = document.getElementById('evidencia-desc');
+  if (desc) desc.value = '';
+
+  document.getElementById('upload-sheet').classList.add('open');
+}
+
+function clearPhoto() {
   document.getElementById('prev-w').style.display = 'none';
   document.getElementById('uzone').style.display  = 'block';
   document.getElementById('file-in').value        = '';
   state.pendingFile   = null;
   state.pendingBase64 = null;
   state.pendingMime   = null;
-
-  document.getElementById('upload-sheet').classList.add('open');
 }
 
 let selectedVisibilidad = 'amigos';
@@ -302,7 +304,14 @@ async function confirmVisit() {
   const muni = state.selectedMuni;
   if (!muni || !state.user) return;
 
-  const btn = document.getElementById('btn-conf');
+  const btn  = document.getElementById('btn-conf');
+  const desc = (document.getElementById('evidencia-desc')?.value || '').trim();
+
+  // Necesita al menos foto o descripción
+  if (!state.pendingBase64 && !desc) {
+    // Sin foto ni descripción — solo marcar visita
+  }
+
   btn.textContent = 'Guardando...';
   btn.disabled    = true;
 
@@ -358,27 +367,52 @@ async function confirmVisit() {
     // 3. Registrar foto si hay
     if (storagePath) {
       const now = new Date();
-      await db.from('photos').insert({
+      const now2 = new Date();
+      const { data: photoData } = await db.from('photos').insert({
         user_id:      state.user.id,
         municipio:    muni,
         storage_path: storagePath,
+        descripcion:  desc || null,
         visibilidad:  selectedVisibilidad,
         coords:       state.lastCoords || null,
-        fecha:        now.toISOString().split('T')[0],
-        hora:         now.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
-      });
+        fecha:        now2.toISOString().split('T')[0],
+        hora:         now2.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
+      }).select().single();
 
       // Añadir a estado local
       const publicUrl = db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || '';
       state.photos.unshift({
+        id:    photoData?.id,
         src:   publicUrl,
         muni,
-        date:  now.toLocaleDateString('es-ES'),
-        time:  now.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
+        date:  now2.toLocaleDateString('es-ES'),
+        time:  now2.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
         coords: state.lastCoords || '',
-        desc:  '',
+        desc:  desc || '',
         vis:   selectedVisibilidad,
         path:  storagePath,
+      });
+    } else if (desc) {
+      // Solo descripción sin foto — guardar como foto sin storage_path
+      const now3 = new Date();
+      await db.from('photos').insert({
+        user_id:      state.user.id,
+        municipio:    muni,
+        storage_path: 'text_only',
+        descripcion:  desc,
+        visibilidad:  selectedVisibilidad,
+        coords:       state.lastCoords || null,
+        fecha:        now3.toISOString().split('T')[0],
+        hora:         now3.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
+      });
+      state.photos.unshift({
+        src:   null,
+        muni,
+        date:  now3.toLocaleDateString('es-ES'),
+        time:  now3.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
+        coords: '',
+        desc:  desc,
+        vis:   selectedVisibilidad,
       });
     }
 
@@ -395,6 +429,8 @@ async function confirmVisit() {
     state.pendingFile   = null;
     state.pendingBase64 = null;
     state.pendingMime   = null;
+    const descEl = document.getElementById('evidencia-desc');
+    if (descEl) descEl.value = '';
     updateProgress();
 
   } catch(err) {
@@ -970,16 +1006,81 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
         </div>
+        <!-- Comentarios -->
+        <div id="comments-${v.id}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+          <div style="color:rgba(255,255,255,0.25);font-size:11px">Cargando comentarios...</div>
+        </div>
+        <div class="comment-input-row">
+          <input class="comment-input" id="comment-input-${v.id}" type="text" placeholder="Añade un comentario..." maxlength="200"
+            onkeydown="if(event.key==='Enter')postComment('${v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\'")}')"/>
+          <button class="comment-send" onclick="postComment('${v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\'")}')">
+            <i class="ti ti-send" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
     </div>`;
   }).join('');
 
-  // Cargar likes
+  // Cargar likes y comentarios
   visits.forEach(v => {
     const key  = v.user_id + '_' + v.municipio;
     const foto = (fotasByMuniUser[key] || [])[0];
     if (foto) loadPhotoLikes(foto.id);
+    loadVisitComments(v.id);
   });
+}
+
+async function loadVisitComments(visitId) {
+  const container = document.getElementById('comments-' + visitId);
+  if (!container) return;
+
+  const { data: comments } = await db
+    .from('photo_comments')
+    .select('*, profiles(username, avatar_url)')
+    .eq('photo_id', visitId)
+    .order('created_at', { ascending: true })
+    .limit(20);
+
+  if (!comments || !comments.length) {
+    container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px">Sin comentarios aún</div>';
+    return;
+  }
+
+  container.innerHTML = comments.map(c => {
+    const u = c.profiles?.username || 'Usuario';
+    const initials = u.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const avatar   = c.profiles?.avatar_url
+      ? `<img src="${c.profiles.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${u}"/>`
+      : initials;
+    return `
+    <div class="comment">
+      <div class="c-av">${avatar}</div>
+      <div class="c-text"><strong>${u}</strong> ${c.texto}</div>
+    </div>`;
+  }).join('');
+}
+
+async function postComment(visitId, targetUserId, municipio) {
+  const input = document.getElementById('comment-input-' + visitId);
+  if (!input || !state.user) return;
+  const texto = input.value.trim();
+  if (!texto) return;
+
+  input.value = '';
+  input.disabled = true;
+
+  try {
+    await db.from('photo_comments').insert({
+      user_id:  state.user.id,
+      photo_id: visitId,
+      texto,
+    });
+    await loadVisitComments(visitId);
+  } catch(err) {
+    alert('Error al comentar: ' + err.message);
+  } finally {
+    input.disabled = false;
+  }
 }
 
 function goToMuniOnMap(muni) {
@@ -1302,8 +1403,11 @@ function renderGallery() {
   g.innerHTML = state.photos.map((p,i) => `
     <div class="gi" onclick="openPM(${i})">
       ${p.src
-        ? `<img src="${p.src}" alt="${p.muni}" loading="lazy"/>`
-        : `<div class="gi-ph"><i class="ti ti-camera" aria-hidden="true"></i></div>`}
+        ? `<img src="${p.src}?t=1" alt="${p.muni}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
+        : `<div class="gi-ph" style="background:rgba(34,176,80,0.08);flex-direction:column;gap:4px">
+             <i class="ti ti-message-circle" aria-hidden="true" style="font-size:18px;color:rgba(255,255,255,0.2)"></i>
+             <span style="font-size:9px;color:rgba(255,255,255,0.2);text-align:center;padding:0 4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${p.desc||''}</span>
+           </div>`}
       <div class="gi-hov">
         <div class="gm">
           <div style="font-weight:500">${p.muni.length>14?p.muni.substring(0,12)+'…':p.muni}</div>
@@ -1315,12 +1419,20 @@ function renderGallery() {
 
 function openPM(i) {
   const p = state.photos[i];
-  document.getElementById('pm-img').src = p.src || '';
+  const imgEl = document.getElementById('pm-img');
+  if (p.src) {
+    imgEl.src   = p.src + '?t=' + Date.now();
+    imgEl.style.display = 'block';
+  } else {
+    imgEl.src   = '';
+    imgEl.style.display = 'none';
+  }
   document.getElementById('pm-meta').innerHTML = `
     <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${p.muni}</strong></div>
     <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${p.date}</strong></div>
     <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${p.time || '—'}</strong></div>
     <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${p.coords || '—'}</strong></div>
+    ${p.desc ? `<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${p.desc}</strong></div>` : ''}
     <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>
       <strong style="display:flex;gap:6px;margin-top:4px">
         ${['privado','amigos','publico'].map(v => `
