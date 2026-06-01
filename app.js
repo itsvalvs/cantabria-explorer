@@ -549,19 +549,34 @@ function showDiceResult(num) {
 async function loadFeed() {
   if (!state.user) return;
 
-  // Obtener IDs de amigos aceptados
+  document.getElementById('stories-row').innerHTML = '';
+  document.getElementById('feed-posts').innerHTML = `
+    <div style="text-align:center;padding:20px;color:rgba(255,255,255,0.3);font-size:12px">
+      Cargando...
+    </div>`;
+
+  // Obtener amigos aceptados CON sus perfiles
   const { data: friends } = await db
     .from('friendships')
-    .select('follower_id, following_id')
+    .select(`
+      follower_id,
+      following_id,
+      follower:profiles!friendships_follower_id_fkey(id, username, avatar_url),
+      following:profiles!friendships_following_id_fkey(id, username, avatar_url)
+    `)
     .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
     .eq('estado', 'aceptado');
 
-  const friendIds = (friends || []).map(f =>
-    f.follower_id === state.user.id ? f.following_id : f.follower_id
-  );
+  // Extraer los perfiles de los amigos (el que NO soy yo)
+  const friendProfiles = (friends || []).map(f => {
+    if (f.follower_id === state.user.id) return f.following;
+    return f.follower;
+  }).filter(Boolean);
 
-  // Cargar stories
-  renderStories(friendIds);
+  const friendIds = friendProfiles.map(p => p.id);
+
+  // Renderizar stories con nombres y avatares reales
+  renderStories(friendProfiles);
 
   if (!friendIds.length) {
     document.getElementById('feed-posts').innerHTML = `
@@ -572,7 +587,7 @@ async function loadFeed() {
     return;
   }
 
-  // Fotos de amigos visibles para mí
+  // Fotos de amigos
   const { data: posts } = await db
     .from('photos')
     .select('*, profiles(username, avatar_url)')
@@ -581,23 +596,33 @@ async function loadFeed() {
     .order('created_at', { ascending: false })
     .limit(20);
 
-  renderFeedPosts(posts || []);
+  renderFeedPosts(posts || [], friendProfiles);
 }
 
-function renderStories(friendIds) {
-  // Por ahora mostramos placeholder — se puede cargar avatares reales
-  document.getElementById('stories-row').innerHTML = friendIds.length
-    ? friendIds.slice(0,6).map((id,i) => `
-        <div class="story-item">
-          <div class="story-ring${i>3?' seen':''}">
-            <div class="story-av" style="color:#7ae8c9">${'U'+(i+1)}</div>
-          </div>
-          <div class="story-name">Amigo ${i+1}</div>
-        </div>`).join('')
-    : '';
+const STORY_COLORS = ['#c97ae8','#7ae8c9','#e87a9a','#e8b97a','#7ab3e8','#a8e87a'];
+
+function renderStories(friendProfiles) {
+  if (!friendProfiles.length) {
+    document.getElementById('stories-row').innerHTML = '';
+    return;
+  }
+  document.getElementById('stories-row').innerHTML = friendProfiles.slice(0,8).map((p, i) => {
+    const initials = (p.username || '?').split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const color    = STORY_COLORS[i % STORY_COLORS.length];
+    const avatar   = p.avatar_url
+      ? `<img src="${p.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${p.username}"/>`
+      : `<span style="color:${color};font-family:'Playfair Display',serif;font-size:14px;font-weight:500">${initials}</span>`;
+    return `
+      <div class="story-item">
+        <div class="story-ring">
+          <div class="story-av">${avatar}</div>
+        </div>
+        <div class="story-name">${p.username || '?'}</div>
+      </div>`;
+  }).join('');
 }
 
-function renderFeedPosts(posts) {
+function renderFeedPosts(posts, friendProfiles) {
   if (!posts.length) {
     document.getElementById('feed-posts').innerHTML = `
       <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px">
@@ -609,14 +634,20 @@ function renderFeedPosts(posts) {
     const coast    = isCoast(p.municipio);
     const username = p.profiles?.username || 'Usuario';
     const initials = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
-    const colors   = ['#c97ae8','#7ae8c9','#e87a9a','#e8b97a','#7ab3e8','#a8e87a'];
-    const color    = colors[i % colors.length];
+    const color    = STORY_COLORS[i % STORY_COLORS.length];
+    const friendProfile = (friendProfiles || []).find(f => f.username === username);
+    const avatarUrl = friendProfile?.avatar_url || p.profiles?.avatar_url;
+    const avatarHtml = avatarUrl
+      ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`
+      : initials;
+    // Las evidencias son privadas — construir URL firmada no es posible en cliente
+    // Usamos getPublicUrl que funciona si el bucket tiene política pública o signed
     const imgUrl   = db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '';
     const fecha    = new Date(p.created_at).toLocaleDateString('es-ES');
     return `
     <div class="feed-post">
       <div class="post-header">
-        <div class="post-av" style="color:${color}">${initials}</div>
+        <div class="post-av" style="color:${color};overflow:hidden">${avatarHtml}</div>
         <div><div class="post-user">${username}</div><div class="post-time">${fecha}</div></div>
         <div class="post-badge ${coast?'pb-coast':'pb-mount'}">
           <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:10px"></i>
