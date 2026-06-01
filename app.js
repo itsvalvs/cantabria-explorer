@@ -989,36 +989,69 @@ document.getElementById('av-in').addEventListener('change', async function(e) {
   const file = e.target.files[0];
   if (!file || !state.user) return;
 
-  // Mostrar loading en el avatar
-  const ring = document.getElementById('av-ring');
-  const initials = document.getElementById('av-init').textContent;
-  ring.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.5)">...</div>`;
+  const ring     = document.getElementById('av-ring');
+  const initials = ring.querySelector('#av-init')?.textContent || 'EX';
+  ring.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;width:100%;height:100%">...</div>`;
 
   try {
-    const ext  = file.name.split('.').pop().toLowerCase();
-    const path = `${state.user.id}/avatar.${ext}`;
+    // Convertir a base64 para evitar problemas con iOS y CORS
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
 
-    // Subir al bucket PÚBLICO 'avatares'
-    const { error: upErr } = await db.storage
+    // Convertir base64 a Blob
+    const res      = await fetch(base64);
+    const blob     = await res.blob();
+    const ext      = file.type === 'image/png' ? 'png' : 'jpg';
+
+    // Nombre simple: userid.ext (sin subcarpeta para evitar problemas de política)
+    const fileName = `${state.user.id}.${ext}`;
+
+    // Primero intentar borrar el anterior (ignorar error si no existe)
+    await db.storage.from('avatares').remove([fileName]);
+
+    // Subir nuevo
+    const { data: upData, error: upErr } = await db.storage
       .from('avatares')
-      .upload(path, file, { upsert: true, contentType: file.type });
+      .upload(fileName, blob, {
+        contentType: file.type,
+        upsert:      true,
+        cacheControl: '3600',
+      });
 
-    if (upErr) throw upErr;
-
-    // Obtener URL pública (funciona porque el bucket es público)
-    const { data } = db.storage.from('avatares').getPublicUrl(path);
-    const url = data?.publicUrl;
-
-    if (url) {
-      // Añadir timestamp para evitar caché del navegador
-      const urlFresh = url + '?t=' + Date.now();
-      await db.from('profiles').update({ avatar_url: url }).eq('id', state.user.id);
-      ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
+    if (upErr) {
+      console.error('Upload error:', upErr);
+      throw new Error(upErr.message);
     }
+
+    // URL pública directa (bucket público)
+    const { data: urlData } = db.storage.from('avatares').getPublicUrl(fileName);
+    const url = urlData?.publicUrl;
+
+    if (!url) throw new Error('No se pudo obtener la URL pública');
+
+    const urlFresh = url + '?t=' + Date.now();
+
+    // Guardar en perfil
+    const { error: dbErr } = await db.from('profiles')
+      .update({ avatar_url: url })
+      .eq('id', state.user.id);
+
+    if (dbErr) throw dbErr;
+
+    // Actualizar estado local
+    if (state.profile) state.profile.avatar_url = url;
+
+    // Mostrar imagen
+    ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
+
   } catch(err) {
-    // Restaurar iniciales si falla
+    console.error('Avatar error:', err);
     ring.innerHTML = `<span id="av-init">${initials}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
-    alert('Error al subir la foto: ' + err.message);
+    alert('No se pudo subir el avatar: ' + err.message);
   }
 });
 
