@@ -147,7 +147,8 @@ async function loadUserData(user) {
     document.getElementById('av-init').textContent = profile.username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
     if (profile.avatar_url) {
       const ring = document.getElementById('av-ring');
-      ring.innerHTML = `<img src="${profile.avatar_url}" alt="Avatar"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
+      const urlFresh = profile.avatar_url + '?t=' + Date.now();
+      ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
     }
   }
 
@@ -744,14 +745,37 @@ async function saveUser() {
 document.getElementById('av-in').addEventListener('change', async function(e) {
   const file = e.target.files[0];
   if (!file || !state.user) return;
-  const ext  = file.name.split('.').pop();
-  const path = `${state.user.id}/avatar.${ext}`;
-  await db.storage.from('evidencias').upload(path, file, { upsert: true });
-  const url = db.storage.from('evidencias').getPublicUrl(path).data?.publicUrl;
-  if (url) {
-    await db.from('profiles').update({ avatar_url: url }).eq('id', state.user.id);
-    const ring = document.getElementById('av-ring');
-    ring.innerHTML = `<img src="${url}" alt="Avatar"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
+
+  // Mostrar loading en el avatar
+  const ring = document.getElementById('av-ring');
+  const initials = document.getElementById('av-init').textContent;
+  ring.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.5)">...</div>`;
+
+  try {
+    const ext  = file.name.split('.').pop().toLowerCase();
+    const path = `${state.user.id}/avatar.${ext}`;
+
+    // Subir al bucket PÚBLICO 'avatares'
+    const { error: upErr } = await db.storage
+      .from('avatares')
+      .upload(path, file, { upsert: true, contentType: file.type });
+
+    if (upErr) throw upErr;
+
+    // Obtener URL pública (funciona porque el bucket es público)
+    const { data } = db.storage.from('avatares').getPublicUrl(path);
+    const url = data?.publicUrl;
+
+    if (url) {
+      // Añadir timestamp para evitar caché del navegador
+      const urlFresh = url + '?t=' + Date.now();
+      await db.from('profiles').update({ avatar_url: url }).eq('id', state.user.id);
+      ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
+    }
+  } catch(err) {
+    // Restaurar iniciales si falla
+    ring.innerHTML = `<span id="av-init">${initials}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
+    alert('Error al subir la foto: ' + err.message);
   }
 });
 
