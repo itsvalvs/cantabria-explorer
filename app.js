@@ -233,6 +233,7 @@ function switchScreen(name) {
   if (name === 'profile')  renderProfile();
   if (name === 'feed')     loadFeed();
   if (name === 'eventos')  loadEventos();
+  if (name === 'dado')     renderMuniList();
 }
 
 // ── MAPA ──────────────────────────────────────────────────────
@@ -310,12 +311,17 @@ async function confirmVisit() {
 
     // 1. Subir foto si hay
     if (file) {
-      const ext  = file.name.split('.').pop().replace(/[^a-z0-9]/gi,'').toLowerCase() || 'jpg';
-      const path = `${state.user.id}/${Date.now()}.${ext}`;
+      // Refrescar sesión antes de subir (clave en iOS Safari)
+      const { data: sessionData } = await db.auth.getSession();
+      const freshUser = sessionData?.session?.user;
+      if (!freshUser) throw new Error('Sesión expirada — cierra la app y vuelve a entrar');
 
-      console.log('Subiendo evidencia:', path, file.type, file.size + 'b');
+      const userId = freshUser.id;
+      const ext    = file.name.split('.').pop().replace(/[^a-z0-9]/gi,'').toLowerCase() || 'jpg';
+      const path   = `${userId}/${Date.now()}.${ext}`;
 
-      // Subir directo sin conversión
+      console.log('Subiendo evidencia:', path, file.type, file.size + 'b', 'user:', userId.substring(0,8));
+
       const { data: upData, error: upErr } = await db.storage
         .from('evidencias')
         .upload(path, file, {
@@ -326,7 +332,7 @@ async function confirmVisit() {
 
       if (upErr) {
         console.error('Upload error:', JSON.stringify(upErr));
-        throw new Error('Error foto: ' + (upErr.message || JSON.stringify(upErr)));
+        throw new Error('Error foto: ' + (upErr.message || upErr.statusCode || JSON.stringify(upErr)));
       }
 
       console.log('Subida OK:', upData?.path);
@@ -658,6 +664,131 @@ function showDiceResult(num) {
       });
     }, 250);
   };
+
+  const btnSaber = document.getElementById('btn-saber-mas');
+  if (btnSaber) btnSaber.onclick = () => openMuniModal(muni);
+}
+
+// ── LISTA DE MUNICIPIOS ──────────────────────────────────────
+let muniListFilter = 'todos';
+
+function filterMuniList(tipo) {
+  if (tipo) {
+    muniListFilter = tipo;
+    // Actualizar botones filtro
+    ['todos','costa','montaña'].forEach(t => {
+      const id = t === 'todos' ? 'mf-todos' : t === 'costa' ? 'mf-costa' : 'mf-mont';
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      const active = t === tipo;
+      btn.style.backgroundColor = active ? '#e8b820' : 'rgba(255,255,255,0.1)';
+      btn.style.color = active ? '#fff' : 'rgba(255,255,255,0.6)';
+    });
+  }
+  renderMuniList();
+}
+
+function renderMuniList() {
+  const container = document.getElementById('muni-list');
+  if (!container) return;
+
+  const search = (document.getElementById('muni-search')?.value || '').toLowerCase().trim();
+  const allMunis = Object.values(state.municipiosData || {});
+
+  const filtered = allMunis.filter(m => {
+    const tipoOk = muniListFilter === 'todos' || m.tipo === muniListFilter;
+    const searchOk = !search || m.nombre.toLowerCase().includes(search);
+    return tipoOk && searchOk;
+  }).sort((a,b) => a.nombre.localeCompare(b.nombre));
+
+  if (!filtered.length) {
+    container.innerHTML = '<p style="color:rgba(255,255,255,0.3);font-size:13px;text-align:center;padding:20px 0">No se encontraron municipios</p>';
+    return;
+  }
+
+  container.innerHTML = filtered.map(m => {
+    const visitado = state.visited[m.nombre];
+    const coast    = m.tipo === 'costa';
+    return `
+    <div onclick="openMuniModal('${m.nombre.replace(/'/g, "\'")}')"
+      style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:#141e2c;border-radius:14px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);">
+      <div style="width:38px;height:38px;border-radius:10px;background:${coast?'#0d2a4a':'#0d2a1e'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:18px;color:${coast?'#85B7EB':'#5DCAA5'}"></i>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.nombre}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${m.comarca || ''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${visitado ? '<span style="width:8px;height:8px;border-radius:50%;background:#22b050;display:block"></span>' : ''}
+        <i class="ti ti-chevron-right" aria-hidden="true" style="font-size:16px;color:rgba(255,255,255,0.2)"></i>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openMuniModal(nombre) {
+  const m = state.municipiosData?.[nombre] || { nombre, tipo: 'montaña' };
+  const coast = m.tipo === 'costa';
+  const visitado = state.visited[nombre];
+
+  // Header
+  document.getElementById('mm-header').style.background = coast
+    ? 'linear-gradient(135deg,#0d2a4a,#153a60)'
+    : 'linear-gradient(135deg,#0d2a1e,#153020)';
+
+  const badge = document.getElementById('mm-badge');
+  badge.innerHTML = `<i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:10px"></i> ${coast?'Costa':'Montaña'}`;
+  badge.style.background = coast ? 'rgba(56,138,221,0.25)' : 'rgba(29,158,117,0.25)';
+  badge.style.color = coast ? '#85B7EB' : '#5DCAA5';
+
+  document.getElementById('mm-name').textContent = nombre;
+  document.getElementById('mm-comarca').textContent = m.comarca ? 'Comarca de ' + m.comarca : '';
+
+  // Pills
+  const pills = [];
+  if (m.poblacion) pills.push(`<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.1);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.7)"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i>${m.poblacion.toLocaleString('es-ES')} hab.</div>`);
+  if (m.area_km2) pills.push(`<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.1);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.7)"><i class="ti ti-ruler-2" aria-hidden="true" style="font-size:11px"></i>${m.area_km2} km²</div>`);
+  if (visitado) pills.push(`<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,176,80,0.2);border-radius:999px;padding:4px 10px;font-size:11px;color:#22b050"><i class="ti ti-check" aria-hidden="true" style="font-size:11px"></i>Conquistado</div>`);
+  document.getElementById('mm-pills').innerHTML = pills.join(' ');
+
+  // Contenido
+  document.getElementById('mm-desc').textContent = m.descripcion || 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.';
+  document.getElementById('mm-curiosidad').textContent = m.curiosidad || 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.';
+
+  const visitasItems = (m.visitas || ['Lugar de interés 1 — Lorem ipsum dolor sit amet.','Lugar de interés 2 — Ut enim ad minim veniam quis.','Lugar de interés 3 — Duis aute irure dolor reprehenderit.']);
+  document.getElementById('mm-visitas').innerHTML = visitasItems.map((v,i) => `
+    <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="width:24px;height:24px;border-radius:50%;background:rgba(34,176,80,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#22b050;flex-shrink:0">${i+1}</div>
+      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${v}</p>
+    </div>`).join('');
+
+  const comerItems = (m.comer || ['Restaurante 1 — Lorem ipsum especialidad local.','Restaurante 2 — Ut enim ad minim cocina tradicional.','Bar / Sidrería 3 — Gastronomía local y productos de temporada.']);
+  document.getElementById('mm-comer').innerHTML = comerItems.map((c,i) => `
+    <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+      <div style="width:24px;height:24px;border-radius:50%;background:rgba(232,40,138,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#e8288a;flex-shrink:0">${i+1}</div>
+      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${c}</p>
+    </div>`).join('');
+
+  // Botón ver en mapa
+  document.getElementById('mm-btn-mapa').onclick = () => {
+    closeMuniModal();
+    state.selectedMuni = nombre;
+    switchScreen('map');
+    setTimeout(() => {
+      document.querySelectorAll('.muni-path').forEach(p => p.classList.remove('selected'));
+      document.querySelectorAll('.muni-path').forEach(p => {
+        if (p.getAttribute('data-name') === nombre) { p.classList.add('selected'); showMuniBar(nombre); }
+      });
+    }, 250);
+  };
+
+  const modal = document.getElementById('muni-modal');
+  modal.style.display = 'flex';
+}
+
+function closeMuniModal() {
+  document.getElementById('muni-modal').style.display = 'none';
 }
 
 // ── FEED DE AMIGOS ────────────────────────────────────────────
