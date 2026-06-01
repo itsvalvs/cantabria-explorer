@@ -351,6 +351,7 @@
   <div class="screen" id="screen-dado">
     <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
     <div class="sc">
+      <!-- DADO -->
       <div class="dado-hero"><h1>Tu próximo destino</h1><p>Par = costa · Impar = montaña</p>
         <div class="terrain-badges">
           <div class="tbadge tbadge-coast" id="badge-coast"><i class="ti ti-waves" aria-hidden="true" style="font-size:14px"></i> Costa</div>
@@ -380,8 +381,8 @@
             <button id="btn-go" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:13px;background-color:#e8b820;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;margin-bottom:8px;">
               <i class="ti ti-map-pin" aria-hidden="true"></i> Ver en el mapa
             </button>
-            <button onclick="rollDice()" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:11px;background-color:#a07810;color:#fff;border:none;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
-              <i class="ti ti-refresh" aria-hidden="true"></i> Volver a lanzar
+            <button id="btn-saber-mas" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:11px;background-color:#a07810;color:#fff;border:none;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
+              <i class="ti ti-book" aria-hidden="true"></i> Saber más
             </button>
           </div>
         </div>
@@ -389,7 +390,84 @@
       <div id="no-more" style="display:none;text-align:center;padding:20px;font-size:13px;color:rgba(255,255,255,0.4);line-height:1.6;">
         <i class="ti ti-trophy" aria-hidden="true" style="font-size:28px;color:#e8b820;display:block;margin-bottom:8px"></i>¡Increíble! Has conquistado todos de tu categoría.
       </div>
+
+      <!-- LISTA DE MUNICIPIOS -->
+      <div style="padding:16px 14px 8px;display:flex;align-items:center;justify-content:space-between">
+        <h2 style="font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#fff">Todos los municipios</h2>
+        <div style="display:flex;gap:6px">
+          <button onclick="filterMuniList('todos')" id="mf-todos"
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:#e8b820;color:#fff;">
+            Todos
+          </button>
+          <button onclick="filterMuniList('costa')" id="mf-costa"
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">
+            Costa
+          </button>
+          <button onclick="filterMuniList('montaña')" id="mf-mont"
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">
+            Montaña
+          </button>
+        </div>
+      </div>
+      <div style="padding:0 14px 4px">
+        <input id="muni-search" type="text" placeholder="Buscar municipio..."
+          oninput="filterMuniList()"
+          style="width:100%;padding:9px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;"/>
+      </div>
+      <div id="muni-list" style="padding:8px 14px 20px"></div>
     </div>
+
+    <!-- MODAL FICHA MUNICIPIO -->
+    <div id="muni-modal" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.82);z-index:30;flex-direction:column;justify-content:flex-end;">
+      <div style="background:#141e2c;border-radius:22px 22px 0 0;overflow-y:auto;max-height:88vh;animation:su .22s ease">
+        <div style="position:relative">
+          <div id="mm-header" style="padding:24px 18px 16px;background:linear-gradient(135deg,#0d2a4a,#0d2a1e)">
+            <button onclick="closeMuniModal()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;">
+              <i class="ti ti-x" aria-hidden="true"></i>
+            </button>
+            <div id="mm-badge" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:10px;font-weight:600;margin-bottom:10px;background:rgba(56,138,221,0.25);color:#85B7EB">
+              <i class="ti ti-waves" aria-hidden="true" style="font-size:10px"></i> Costa
+            </div>
+            <h2 id="mm-name" style="font-family:'Playfair Display',serif;font-size:26px;font-weight:700;color:#fff;line-height:1.1"></h2>
+            <p id="mm-comarca" style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:4px"></p>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap" id="mm-pills"></div>
+          </div>
+          <div style="padding:16px 18px 24px">
+            <!-- Descripción -->
+            <div style="margin-bottom:20px">
+              <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px">Sobre el municipio</h3>
+              <p id="mm-desc" style="font-size:14px;color:rgba(255,255,255,0.7);line-height:1.65"></p>
+            </div>
+            <!-- Curiosidad -->
+            <div style="background:#1a2535;border-radius:14px;padding:14px;margin-bottom:16px;border-left:3px solid #e8b820">
+              <div style="font-size:11px;font-weight:600;color:#e8b820;letter-spacing:.05em;text-transform:uppercase;margin-bottom:6px">
+                <i class="ti ti-bulb" aria-hidden="true"></i> Curiosidad
+              </div>
+              <p id="mm-curiosidad" style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.55"></p>
+            </div>
+            <!-- Sitios para visitar -->
+            <div style="margin-bottom:16px">
+              <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">
+                <i class="ti ti-map-pin" aria-hidden="true" style="color:#22b050"></i> Qué visitar
+              </h3>
+              <div id="mm-visitas"></div>
+            </div>
+            <!-- Sitios para comer -->
+            <div style="margin-bottom:16px">
+              <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">
+                <i class="ti ti-tools-kitchen-2" aria-hidden="true" style="color:#e8288a"></i> Dónde comer
+              </h3>
+              <div id="mm-comer"></div>
+            </div>
+            <!-- Botones acción -->
+            <button id="mm-btn-mapa" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:13px;background-color:#e8b820;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;margin-bottom:8px;">
+              <i class="ti ti-map-pin" aria-hidden="true"></i> Ver en el mapa
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="nav" id="nav-dado"></div>
   </div>
 
