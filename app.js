@@ -99,16 +99,61 @@ async function doRegister() {
   const pass     = document.getElementById('auth-pass').value;
   const username = document.getElementById('auth-username').value.trim();
   const msg      = document.getElementById('auth-msg');
-  if (!email || !pass || !username) { msg.textContent = 'Rellena todos los campos'; msg.style.display='block'; return; }
-  if (pass.length < 6) { msg.textContent = 'La contraseña debe tener al menos 6 caracteres'; msg.style.display='block'; return; }
+  msg.style.color = '#e8288a';
+
+  // Validaciones básicas
+  if (!email || !pass || !username) {
+    msg.textContent = 'Rellena todos los campos';
+    msg.style.display = 'block'; return;
+  }
+  if (pass.length < 6) {
+    msg.textContent = 'La contraseña debe tener al menos 6 caracteres';
+    msg.style.display = 'block'; return;
+  }
+  if (username.length < 3) {
+    msg.textContent = 'El nombre de usuario debe tener al menos 3 caracteres';
+    msg.style.display = 'block'; return;
+  }
+  if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
+    msg.textContent = 'El nombre solo puede tener letras, números, guiones y puntos';
+    msg.style.display = 'block'; return;
+  }
+
   setAuthLoading(true);
+
+  // Comprobar si el username ya existe ANTES de crear la cuenta
+  const { data: existing } = await db
+    .from('profiles')
+    .select('username')
+    .ilike('username', username)
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    msg.textContent = 'Ese nombre de usuario ya está en uso, elige otro';
+    msg.style.display = 'block';
+    setAuthLoading(false); return;
+  }
+
+  // Crear cuenta
   const { error } = await db.auth.signUp({
     email, password: pass,
     options: { data: { username } }
   });
+
   setAuthLoading(false);
-  if (error) { msg.textContent = error.message; msg.style.display='block'; }
-  else { msg.style.color='#22b050'; msg.textContent = '¡Cuenta creada! Revisa tu email para confirmar.'; msg.style.display='block'; }
+
+  if (error) {
+    if (error.message.includes('already registered')) {
+      msg.textContent = 'Ese email ya tiene una cuenta. Inicia sesión.';
+    } else {
+      msg.textContent = error.message;
+    }
+    msg.style.display = 'block';
+  } else {
+    msg.style.color = '#22b050';
+    msg.textContent = '¡Cuenta creada! Revisa tu email para confirmar.';
+    msg.style.display = 'block';
+  }
 }
 
 function setAuthLoading(on) {
@@ -661,12 +706,133 @@ async function sendFriendRequest(toId, toUsername) {
 }
 
 // ── PERFIL ────────────────────────────────────────────────────
-function renderProfile() {
+async function renderProfile() {
   const c = Object.keys(state.visited).length;
   document.getElementById('sv').textContent  = c;
   document.getElementById('sp').textContent  = Math.round(c / state.totalMuni * 100) + '%';
   document.getElementById('sph').textContent = state.photos.length;
   renderGallery();
+  await loadSolicitudes();
+}
+
+async function loadSolicitudes() {
+  if (!state.user) return;
+
+  const { data: recibidas } = await db
+    .from('friendships')
+    .select('follower_id, created_at, profiles!friendships_follower_id_fkey(username)')
+    .eq('following_id', state.user.id)
+    .eq('estado', 'pendiente');
+
+  const { data: enviadas } = await db
+    .from('friendships')
+    .select('following_id, created_at, profiles!friendships_following_id_fkey(username)')
+    .eq('follower_id', state.user.id)
+    .eq('estado', 'pendiente');
+
+  const container = document.getElementById('solicitudes-section');
+  if (!container) return;
+
+  const totalPendientes = (recibidas?.length || 0) + (enviadas?.length || 0);
+
+  if (totalPendientes === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  let html = `
+    <div style="padding:14px 14px 0">
+      <h2 style="font-size:11px;font-weight:500;color:rgba(255,255,255,0.4);margin-bottom:10px;letter-spacing:.06em;text-transform:uppercase">
+        Solicitudes de amistad
+        <span style="background:#e8288a;color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;margin-left:6px">${totalPendientes}</span>
+      </h2>`;
+
+  if (recibidas?.length > 0) {
+    html += `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:8px">Recibidas</div>`;
+    html += recibidas.map(s => {
+      const username = s.profiles?.username || 'Usuario';
+      const initials = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+      const fecha    = new Date(s.created_at).toLocaleDateString('es-ES');
+      return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid #e8288a;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:#e8288a;flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:500;color:#fff">${username}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${fecha}</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button onclick="aceptarSolicitud('${s.follower_id}','${username}')"
+            style="padding:7px 12px;background-color:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
+            <i class="ti ti-check" aria-hidden="true"></i> Aceptar
+          </button>
+          <button onclick="rechazarSolicitud('${s.follower_id}','${username}')"
+            style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">
+            <i class="ti ti-x" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  if (enviadas?.length > 0) {
+    html += `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:12px;margin-bottom:8px">Enviadas</div>`;
+    html += enviadas.map(s => {
+      const username = s.profiles?.username || 'Usuario';
+      const initials = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+      const fecha    = new Date(s.created_at).toLocaleDateString('es-ES');
+      return `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:rgba(255,255,255,0.5);flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:500;color:#fff">${username}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${fecha}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
+            <i class="ti ti-clock" aria-hidden="true" style="font-size:11px"></i> Pendiente
+          </span>
+          <button onclick="cancelarSolicitud('${s.following_id}','${username}')"
+            style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">
+            <i class="ti ti-x" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  html += `</div>`;
+  container.innerHTML = html;
+}
+
+async function aceptarSolicitud(fromUserId, username) {
+  await db.from('friendships')
+    .update({ estado: 'aceptado' })
+    .eq('follower_id', fromUserId)
+    .eq('following_id', state.user.id);
+  await db.from('friendships').upsert({
+    follower_id:  state.user.id,
+    following_id: fromUserId,
+    estado:       'aceptado',
+  });
+  await loadSolicitudes();
+}
+
+async function rechazarSolicitud(fromUserId, username) {
+  if (!confirm('Rechazar la solicitud de ' + username + '?')) return;
+  await db.from('friendships')
+    .delete()
+    .eq('follower_id', fromUserId)
+    .eq('following_id', state.user.id);
+  await loadSolicitudes();
+}
+
+async function cancelarSolicitud(toUserId, username) {
+  if (!confirm('Cancelar la solicitud enviada a ' + username + '?')) return;
+  await db.from('friendships')
+    .delete()
+    .eq('follower_id', state.user.id)
+    .eq('following_id', toUserId);
+  await loadSolicitudes();
 }
 
 function renderGallery() {
