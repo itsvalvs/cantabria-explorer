@@ -2,7 +2,7 @@
   "name": "Cantabria Explorer",
   "short_name": "Cantabria",
   "description": "Explora los 102 municipios de Cantabria. Conquístalos todos.",
-  "start_url": "/",
+  "start_url": "/cantabria-explorer/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f1923",
