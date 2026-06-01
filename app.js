@@ -207,7 +207,9 @@ async function loadUserData(user) {
     .from('photos').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
   if (photos) state.photos = photos.map(p => ({
     id:       p.id,
-    src:      db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '',
+    src:      p.storage_path && p.storage_path !== 'text_only'
+              ? (db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '')
+              : null,
     muni:     p.municipio,
     date:     p.fecha,
     time:     p.hora || '',
@@ -285,9 +287,10 @@ function openSheet() {
 }
 
 function clearPhoto() {
-  document.getElementById('prev-w').style.display = 'none';
-  document.getElementById('uzone').style.display  = 'block';
-  document.getElementById('file-in').value        = '';
+  document.getElementById('prev-w').style.display   = 'none';
+  const uzoneParent = document.getElementById('uzone')?.parentElement;
+  if (uzoneParent) uzoneParent.style.display = 'block';
+  try { document.getElementById('file-in').value = ''; } catch(e){}
   state.pendingFile   = null;
   state.pendingBase64 = null;
   state.pendingMime   = null;
@@ -513,7 +516,7 @@ function getCoords() {
   });
 }
 
-document.getElementById('uzone').addEventListener('click', () => document.getElementById('file-in').click());
+// uzone click handled by overlapping input
 function handleFileSelected(file) {
   if (!file) return;
   console.log('Archivo seleccionado:', file.name, file.type, file.size);
@@ -534,7 +537,9 @@ function handleFileSelected(file) {
       now.toLocaleDateString('es-ES') + ' · ' +
       now.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
     document.getElementById('prev-w').style.display = 'block';
-    document.getElementById('uzone').style.display  = 'none';
+    // Ocultar el wrapper del input
+    const uzoneParent = document.getElementById('uzone')?.parentElement;
+    if (uzoneParent) uzoneParent.style.display = 'none';
     console.log('Base64 guardado, longitud:', base64.length);
   };
   reader.onerror = () => alert('Error al leer la foto. Inténtalo de nuevo.');
@@ -938,6 +943,15 @@ function renderStories(friendProfiles) {
   }).join('');
 }
 
+async function getPhotoUrl(storagePath) {
+  if (!storagePath || storagePath === 'text_only') return null;
+  // Crear URL firmada válida 1 hora (funciona para buckets privados y públicos)
+  const { data } = await db.storage
+    .from('evidencias')
+    .createSignedUrl(storagePath, 3600);
+  return data?.signedUrl || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || null;
+}
+
 function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
   if (!visits.length) {
     document.getElementById('feed-posts').innerHTML = `
@@ -963,7 +977,10 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
     const key   = v.user_id + '_' + v.municipio;
     const fotos = fotasByMuniUser[key] || [];
     const foto  = fotos[0];
-    const imgUrl = foto ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl : null;
+    // Usar URL pública directa (bucket es público)
+    const imgUrl = foto && foto.storage_path !== 'text_only'
+      ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl
+      : null;
 
     const fecha = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
 
@@ -1403,7 +1420,7 @@ function renderGallery() {
   g.innerHTML = state.photos.map((p,i) => `
     <div class="gi" onclick="openPM(${i})">
       ${p.src
-        ? `<img src="${p.src}?t=1" alt="${p.muni}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
+        ? `<img src="${p.src}?nocache=${Date.now()}" alt="${p.muni}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
         : `<div class="gi-ph" style="background:rgba(34,176,80,0.08);flex-direction:column;gap:4px">
              <i class="ti ti-message-circle" aria-hidden="true" style="font-size:18px;color:rgba(255,255,255,0.2)"></i>
              <span style="font-size:9px;color:rgba(255,255,255,0.2);text-align:center;padding:0 4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${p.desc||''}</span>
@@ -1421,7 +1438,7 @@ function openPM(i) {
   const p = state.photos[i];
   const imgEl = document.getElementById('pm-img');
   if (p.src) {
-    imgEl.src   = p.src + '?t=' + Date.now();
+    imgEl.src   = p.src + '?nocache=' + Date.now();
     imgEl.style.display = 'block';
   } else {
     imgEl.src   = '';
