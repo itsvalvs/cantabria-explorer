@@ -284,7 +284,9 @@ function openSheet() {
   document.getElementById('prev-w').style.display = 'none';
   document.getElementById('uzone').style.display  = 'block';
   document.getElementById('file-in').value        = '';
-  state.pendingFile = null;
+  state.pendingFile   = null;
+  state.pendingBase64 = null;
+  state.pendingMime   = null;
 
   document.getElementById('upload-sheet').classList.add('open');
 }
@@ -300,42 +302,47 @@ async function confirmVisit() {
   const muni = state.selectedMuni;
   if (!muni || !state.user) return;
 
-  // Usar la referencia guardada en state — más fiable en iOS Safari
-  const file = state.pendingFile || document.getElementById('file-in').files[0];
-  const btn  = document.getElementById('btn-conf');
+  const btn = document.getElementById('btn-conf');
   btn.textContent = 'Guardando...';
   btn.disabled    = true;
 
   try {
     let storagePath = null;
 
-    // 1. Subir foto si hay
-    if (file) {
-      // Refrescar sesión antes de subir (clave en iOS Safari)
+    // 1. Subir foto si hay (desde base64 guardado en state)
+    if (state.pendingBase64) {
+      // Refrescar sesión
       const { data: sessionData } = await db.auth.getSession();
       const freshUser = sessionData?.session?.user;
-      if (!freshUser) throw new Error('Sesión expirada — cierra la app y vuelve a entrar');
-
+      if (!freshUser) throw new Error('Sesión expirada — sal y vuelve a entrar');
       const userId = freshUser.id;
-      const ext    = file.name.split('.').pop().replace(/[^a-z0-9]/gi,'').toLowerCase() || 'jpg';
-      const path   = `${userId}/${Date.now()}.${ext}`;
 
-      console.log('Subiendo evidencia:', path, file.type, file.size + 'b', 'user:', userId.substring(0,8));
+      // Convertir base64 a Blob (más fiable que File en iOS)
+      const base64Data = state.pendingBase64.split(',')[1];
+      const mime       = state.pendingMime || 'image/jpeg';
+      const byteChars  = atob(base64Data);
+      const byteArrays = [];
+      for (let i = 0; i < byteChars.length; i += 512) {
+        const slice = byteChars.slice(i, i + 512);
+        const bytes = new Uint8Array(slice.length);
+        for (let j = 0; j < slice.length; j++) bytes[j] = slice.charCodeAt(j);
+        byteArrays.push(bytes);
+      }
+      const blob = new Blob(byteArrays, { type: mime });
+      const ext  = mime.includes('png') ? 'png' : 'jpg';
+      const path = `${userId}/${Date.now()}.${ext}`;
+
+      console.log('Subiendo evidencia desde base64:', path, mime, blob.size + 'b');
 
       const { data: upData, error: upErr } = await db.storage
         .from('evidencias')
-        .upload(path, file, {
-          contentType:  file.type || 'image/jpeg',
-          cacheControl: '3600',
-          upsert:       false,
-        });
+        .upload(path, blob, { contentType: mime, cacheControl: '3600', upsert: false });
 
       if (upErr) {
         console.error('Upload error:', JSON.stringify(upErr));
-        throw new Error('Error foto: ' + (upErr.message || upErr.statusCode || JSON.stringify(upErr)));
+        throw new Error('Error foto: ' + (upErr.message || JSON.stringify(upErr)));
       }
-
-      console.log('Subida OK:', upData?.path);
+      console.log('Subida OK:', path);
       storagePath = path;
     }
 
@@ -385,7 +392,9 @@ async function confirmVisit() {
     document.getElementById('file-in').value = '';
     document.getElementById('prev-w').style.display = 'none';
     document.getElementById('uzone').style.display  = 'block';
-    state.pendingFile = null;
+    state.pendingFile   = null;
+    state.pendingBase64 = null;
+    state.pendingMime   = null;
     updateProgress();
 
   } catch(err) {
@@ -471,37 +480,40 @@ function getCoords() {
 document.getElementById('uzone').addEventListener('click', () => document.getElementById('file-in').click());
 function handleFileSelected(file) {
   if (!file) return;
-
-  // Guardar referencia en state inmediatamente
-  state.pendingFile = file;
   console.log('Archivo seleccionado:', file.name, file.type, file.size);
 
-  const r = new FileReader();
-  r.onload = ev => {
-    document.getElementById('prev-img').src = ev.target.result;
+  // Leer como base64 INMEDIATAMENTE y guardar en state
+  // Esto es lo único que persiste en Safari iOS después de que el usuario
+  // navega entre pantallas o la app va a background
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const base64 = ev.target.result; // data:image/jpeg;base64,....
+    state.pendingBase64 = base64;
+    state.pendingMime   = file.type || 'image/jpeg';
+    state.pendingFile   = null; // ya no lo necesitamos
+
+    document.getElementById('prev-img').src = base64;
     const now = new Date();
     document.getElementById('prev-meta').textContent =
       now.toLocaleDateString('es-ES') + ' · ' +
       now.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
     document.getElementById('prev-w').style.display = 'block';
     document.getElementById('uzone').style.display  = 'none';
+    console.log('Base64 guardado, longitud:', base64.length);
   };
-  r.readAsDataURL(file);
+  reader.onerror = () => alert('Error al leer la foto. Inténtalo de nuevo.');
+  reader.readAsDataURL(file);
   getCoords();
 }
 
 const fileInput = document.getElementById('file-in');
-
-// 'input' es más fiable que 'change' en iOS Safari para Fototeca y cámara
-fileInput.addEventListener('input', function(e) {
+fileInput.addEventListener('input',  function(e) {
   const file = e.target.files && e.target.files[0];
   if (file) handleFileSelected(file);
 });
-
-// 'change' como fallback para otros navegadores
 fileInput.addEventListener('change', function(e) {
   const file = e.target.files && e.target.files[0];
-  if (file && !state.pendingFile) handleFileSelected(file);
+  if (file) handleFileSelected(file);
 });
 
 // ── EVENTOS ───────────────────────────────────────────────────
@@ -838,16 +850,33 @@ async function loadFeed() {
     return;
   }
 
-  // Fotos de amigos
-  const { data: posts } = await db
-    .from('photos')
-    .select('*, profiles(username, avatar_url)')
+  // Visitas de amigos (con o sin foto)
+  const { data: visits } = await db
+    .from('visits')
+    .select('*, profiles(id, username, avatar_url)')
     .in('user_id', friendIds)
     .in('visibilidad', ['amigos','publico'])
     .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(30);
 
-  renderFeedPosts(posts || [], friendProfiles);
+  // Fotos de amigos
+  const { data: fotos } = await db
+    .from('photos')
+    .select('*, profiles(id, username, avatar_url)')
+    .in('user_id', friendIds)
+    .in('visibilidad', ['amigos','publico'])
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  // Combinar visitas y fotos, relacionar fotos con su visita
+  const fotasByMuniUser = {};
+  (fotos || []).forEach(f => {
+    const key = f.user_id + '_' + f.municipio;
+    if (!fotasByMuniUser[key]) fotasByMuniUser[key] = [];
+    fotasByMuniUser[key].push(f);
+  });
+
+  renderFeedPosts(visits || [], fotasByMuniUser, friendProfiles);
 }
 
 const STORY_COLORS = ['#c97ae8','#7ae8c9','#e87a9a','#e8b97a','#7ab3e8','#a8e87a'];
@@ -873,58 +902,72 @@ function renderStories(friendProfiles) {
   }).join('');
 }
 
-function renderFeedPosts(posts, friendProfiles) {
-  if (!posts.length) {
+function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
+  if (!visits.length) {
     document.getElementById('feed-posts').innerHTML = `
-      <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px">
-        Tus amigos aún no han subido fotos.
+      <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">
+        <i class="ti ti-map-2" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>
+        Tus amigos aún no han conquistado municipios.
       </div>`;
     return;
   }
-  document.getElementById('feed-posts').innerHTML = posts.map((p,i) => {
-    const coast    = isCoast(p.municipio);
-    const username = p.profiles?.username || 'Usuario';
-    const initials = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
-    const color    = STORY_COLORS[i % STORY_COLORS.length];
-    const friendProfile = (friendProfiles || []).find(f => f.username === username);
-    const avatarUrl = friendProfile?.avatar_url || p.profiles?.avatar_url;
+
+  document.getElementById('feed-posts').innerHTML = visits.map((v, i) => {
+    const coast      = isCoast(v.municipio);
+    const username   = v.profiles?.username || 'Usuario';
+    const userId     = v.profiles?.id || v.user_id;
+    const initials   = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const color      = STORY_COLORS[i % STORY_COLORS.length];
+    const fp         = (friendProfiles || []).find(f => f.id === userId);
+    const avatarUrl  = fp?.avatar_url || v.profiles?.avatar_url;
     const avatarHtml = avatarUrl
-      ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`
+      ? `<img src="${avatarUrl}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`
       : initials;
-    // Las evidencias son privadas — construir URL firmada no es posible en cliente
-    // Usamos getPublicUrl que funciona si el bucket tiene política pública o signed
-    const imgUrl   = db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '';
-    const fecha    = new Date(p.created_at).toLocaleDateString('es-ES');
+
+    const key   = v.user_id + '_' + v.municipio;
+    const fotos = fotasByMuniUser[key] || [];
+    const foto  = fotos[0];
+    const imgUrl = foto ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl : null;
+
+    const fecha = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
+
     return `
     <div class="feed-post">
-      <div class="post-header">
+      <div class="post-header" onclick="openFriendProfile('${userId}','${username}')" style="cursor:pointer">
         <div class="post-av" style="color:${color};overflow:hidden">${avatarHtml}</div>
-        <div><div class="post-user">${username}</div><div class="post-time">${fecha}</div></div>
+        <div>
+          <div class="post-user">${username}</div>
+          <div class="post-time">${fecha}</div>
+        </div>
         <div class="post-badge ${coast?'pb-coast':'pb-mount'}">
           <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:10px"></i>
           ${coast?'Costa':'Montaña'}
         </div>
       </div>
-      <div class="post-img" style="background:#1a2535">
+      <div class="post-img" style="background:${coast?'#0d2535':'#0d2a1e'}">
         ${imgUrl
-          ? `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover" alt="${p.municipio}"/>`
-          : `<i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true"></i>`}
+          ? `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover" alt="${v.municipio}"/>`
+          : `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
+               <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:38px"></i>
+               <span style="font-size:11px">Sin foto de evidencia</span>
+             </div>`}
         <div class="post-location">
-          <i class="ti ti-map-pin" aria-hidden="true"></i>${p.municipio}
+          <i class="ti ti-map-pin" aria-hidden="true"></i>${v.municipio}
         </div>
       </div>
       <div class="post-body">
-        <div class="post-muni">${p.municipio}</div>
-        ${p.descripcion ? `<div class="post-desc">${p.descripcion}</div>` : ''}
+        <div class="post-muni">${v.municipio}</div>
+        ${foto?.descripcion ? `<div class="post-desc">${foto.descripcion}</div>` : ''}
         <div class="post-actions">
-          <button class="post-action" onclick="toggleLike(this,'${p.id}')" data-liked="false">
-            <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${p.id}">0</span>
+          ${foto ? `
+          <button class="post-action" onclick="toggleLike(this,'${foto.id}')" data-liked="false">
+            <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${foto.id}">0</span>
+          </button>` : `<div></div>`}
+          <button class="post-action" style="margin-left:auto" onclick="openMuniModal('${v.municipio.replace(/'/g,"\'")}')">
+            <i class="ti ti-info-circle" aria-hidden="true"></i><span style="font-size:11px">Ver ficha</span>
           </button>
-          <button class="post-action" style="cursor:default">
-            <i class="ti ti-message-circle" aria-hidden="true"></i><span>0</span>
-          </button>
-          <button class="post-action" style="margin-left:auto" onclick="switchScreen('map')">
-            <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Ver mapa</span>
+          <button class="post-action" onclick="goToMuniOnMap('${v.municipio.replace(/'/g,"\'")}')">
+            <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
         </div>
       </div>
@@ -932,7 +975,95 @@ function renderFeedPosts(posts, friendProfiles) {
   }).join('');
 
   // Cargar likes
-  posts.forEach(p => loadPhotoLikes(p.id));
+  visits.forEach(v => {
+    const key  = v.user_id + '_' + v.municipio;
+    const foto = (fotasByMuniUser[key] || [])[0];
+    if (foto) loadPhotoLikes(foto.id);
+  });
+}
+
+function goToMuniOnMap(muni) {
+  state.selectedMuni = muni;
+  switchScreen('map');
+  setTimeout(() => {
+    document.querySelectorAll('.muni-path').forEach(p => p.classList.remove('selected'));
+    document.querySelectorAll('.muni-path').forEach(p => {
+      if (p.getAttribute('data-name') === muni) { p.classList.add('selected'); showMuniBar(muni); }
+    });
+  }, 250);
+}
+
+// ── PERFIL DE AMIGO ──────────────────────────────────────────
+async function openFriendProfile(userId, username) {
+  const modal = document.getElementById('friend-profile-modal');
+  if (!modal) return;
+
+  // Limpiar y mostrar loading
+  document.getElementById('fp-username').textContent  = username;
+  document.getElementById('fp-avatar').textContent    = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+  document.getElementById('fp-visits-count').textContent = '...';
+  document.getElementById('fp-photos-count').textContent = '...';
+  document.getElementById('fp-gallery').innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Cargando...</div>';
+  document.getElementById('fp-map').innerHTML = '';
+  modal.style.display = 'flex';
+
+  // Cargar datos del amigo
+  const [profileRes, visitsRes, photosRes] = await Promise.all([
+    db.from('profiles').select('username, avatar_url').eq('id', userId).single(),
+    db.from('visits').select('municipio, fecha, created_at').eq('user_id', userId).in('visibilidad',['amigos','publico']).order('created_at',{ascending:false}),
+    db.from('photos').select('*').eq('user_id', userId).in('visibilidad',['amigos','publico']).order('created_at',{ascending:false}).limit(9),
+  ]);
+
+  const profile = profileRes.data;
+  const visits  = visitsRes.data || [];
+  const photos  = photosRes.data || [];
+
+  // Avatar
+  if (profile?.avatar_url) {
+    document.getElementById('fp-avatar').innerHTML = `<img src="${profile.avatar_url}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`;
+  }
+
+  // Stats
+  document.getElementById('fp-visits-count').textContent = visits.length;
+  document.getElementById('fp-photos-count').textContent = photos.length;
+
+  // Últimas visitas (lista)
+  const fpMap = document.getElementById('fp-map');
+  if (visits.length) {
+    fpMap.innerHTML = visits.slice(0,10).map(v => {
+      const coast = isCoast(v.municipio);
+      const fecha = new Date(v.created_at).toLocaleDateString('es-ES',{day:'numeric',month:'short'});
+      return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
+        <div style="width:32px;height:32px;border-radius:8px;background:${coast?'#0d2a4a':'#0d2a1e'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <i class="ti ${coast?'ti-waves':'ti-mountain'}" style="font-size:15px;color:${coast?'#85B7EB':'#5DCAA5'}" aria-hidden="true"></i>
+        </div>
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:500;color:#fff">${v.municipio}</div>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.35)">${fecha}</div>
+      </div>`;
+    }).join('');
+  } else {
+    fpMap.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin visitas públicas</div>';
+  }
+
+  // Galería fotos
+  const gallery = document.getElementById('fp-gallery');
+  if (photos.length) {
+    gallery.innerHTML = photos.map(p => {
+      const url = db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '';
+      return `<div style="aspect-ratio:1;border-radius:8px;overflow:hidden;background:#1a2535">
+        ${url ? `<img src="${url}" style="width:100%;height:100%;object-fit:cover" alt="${p.municipio}"/>` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.15);font-size:20px"><i class="ti ti-camera" aria-hidden="true"></i></div>`}
+      </div>`;
+    }).join('');
+  } else {
+    gallery.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin fotos públicas</div>';
+  }
+}
+
+function closeFriendProfile() {
+  document.getElementById('friend-profile-modal').style.display = 'none';
 }
 
 async function loadPhotoLikes(photoId) {
