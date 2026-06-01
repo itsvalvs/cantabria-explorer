@@ -283,6 +283,7 @@ function openSheet() {
   document.getElementById('prev-w').style.display = 'none';
   document.getElementById('uzone').style.display  = 'block';
   document.getElementById('file-in').value        = '';
+  state.pendingFile = null;
 
   document.getElementById('upload-sheet').classList.add('open');
 }
@@ -298,9 +299,9 @@ async function confirmVisit() {
   const muni = state.selectedMuni;
   if (!muni || !state.user) return;
 
-  const fileInput = document.getElementById('file-in');
-  const file      = fileInput.files[0];
-  const btn       = document.getElementById('btn-conf');
+  // Usar la referencia guardada en state — más fiable en iOS Safari
+  const file = state.pendingFile || document.getElementById('file-in').files[0];
+  const btn  = document.getElementById('btn-conf');
   btn.textContent = 'Guardando...';
   btn.disabled    = true;
 
@@ -378,13 +379,8 @@ async function confirmVisit() {
     document.getElementById('file-in').value = '';
     document.getElementById('prev-w').style.display = 'none';
     document.getElementById('uzone').style.display  = 'block';
+    state.pendingFile = null;
     updateProgress();
-
-    if (storagePath) {
-      alert('✅ Foto guardada correctamente en: ' + storagePath);
-    } else if (file) {
-      alert('⚠️ La visita se guardó pero hubo un problema con la foto.');
-    }
 
   } catch(err) {
     console.error('confirmVisit error:', err);
@@ -470,6 +466,10 @@ document.getElementById('uzone').addEventListener('click', () => document.getEle
 document.getElementById('file-in').addEventListener('change', function(e) {
   const file = e.target.files[0];
   if (!file) return;
+
+  // Guardar referencia inmediata en state — iOS Safari puede limpiar files[] después
+  state.pendingFile = file;
+
   const r = new FileReader();
   r.onload = ev => {
     document.getElementById('prev-img').src = ev.target.result;
