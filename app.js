@@ -463,12 +463,12 @@ function getCoords() {
 }
 
 document.getElementById('uzone').addEventListener('click', () => document.getElementById('file-in').click());
-document.getElementById('file-in').addEventListener('change', function(e) {
-  const file = e.target.files[0];
+function handleFileSelected(file) {
   if (!file) return;
 
-  // Guardar referencia inmediata en state — iOS Safari puede limpiar files[] después
+  // Guardar referencia en state inmediatamente
   state.pendingFile = file;
+  console.log('Archivo seleccionado:', file.name, file.type, file.size);
 
   const r = new FileReader();
   r.onload = ev => {
@@ -482,6 +482,20 @@ document.getElementById('file-in').addEventListener('change', function(e) {
   };
   r.readAsDataURL(file);
   getCoords();
+}
+
+const fileInput = document.getElementById('file-in');
+
+// 'input' es más fiable que 'change' en iOS Safari para Fototeca y cámara
+fileInput.addEventListener('input', function(e) {
+  const file = e.target.files && e.target.files[0];
+  if (file) handleFileSelected(file);
+});
+
+// 'change' como fallback para otros navegadores
+fileInput.addEventListener('change', function(e) {
+  const file = e.target.files && e.target.files[0];
+  if (file && !state.pendingFile) handleFileSelected(file);
 });
 
 // ── EVENTOS ───────────────────────────────────────────────────
