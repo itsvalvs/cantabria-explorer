@@ -309,28 +309,26 @@ async function confirmVisit() {
 
     // 1. Subir foto si hay
     if (file) {
-      // Convertir a blob igual que el avatar para compatibilidad iOS
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload  = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const blob = await fetch(base64).then(r => r.blob());
-      const ext  = file.type === 'image/png' ? 'png' : 'jpg';
+      const ext  = file.name.split('.').pop().replace(/[^a-z0-9]/gi,'').toLowerCase() || 'jpg';
       const path = `${state.user.id}/${Date.now()}.${ext}`;
 
-      console.log('Subiendo evidencia a:', path, 'tipo:', file.type, 'tamaño:', file.size);
+      console.log('Subiendo evidencia:', path, file.type, file.size + 'b');
 
+      // Subir directo sin conversión
       const { data: upData, error: upErr } = await db.storage
         .from('evidencias')
-        .upload(path, blob, { contentType: file.type, upsert: false });
+        .upload(path, file, {
+          contentType:  file.type || 'image/jpeg',
+          cacheControl: '3600',
+          upsert:       false,
+        });
 
       if (upErr) {
-        console.error('Error subiendo evidencia:', JSON.stringify(upErr));
-        throw new Error('Error al subir foto: ' + (upErr.message || upErr.error || JSON.stringify(upErr)));
+        console.error('Upload error:', JSON.stringify(upErr));
+        throw new Error('Error foto: ' + (upErr.message || JSON.stringify(upErr)));
       }
-      console.log('Evidencia subida OK:', upData);
+
+      console.log('Subida OK:', upData?.path);
       storagePath = path;
     }
 
@@ -382,8 +380,38 @@ async function confirmVisit() {
     document.getElementById('uzone').style.display  = 'block';
     updateProgress();
 
+    if (storagePath) {
+      alert('✅ Foto guardada correctamente en: ' + storagePath);
+    } else if (file) {
+      alert('⚠️ La visita se guardó pero hubo un problema con la foto.');
+    }
+
   } catch(err) {
-    alert('Error al guardar: ' + err.message);
+    console.error('confirmVisit error:', err);
+    // Si el error es solo de la foto, guardar la visita igualmente
+    if (err.message && err.message.includes('foto')) {
+      try {
+        await db.from('visits').upsert({
+          user_id:     state.user.id,
+          municipio:   muni,
+          visibilidad: selectedVisibilidad,
+          coords:      state.lastCoords || null,
+          fecha:       new Date().toISOString().split('T')[0],
+        });
+        state.visited[muni] = true;
+        document.querySelectorAll('.muni-path').forEach(p => {
+          if (p.getAttribute('data-name') === muni) p.classList.add('visited');
+        });
+        showMuniBar(muni);
+        document.getElementById('upload-sheet').classList.remove('open');
+        updateProgress();
+        alert('⚠️ Visita guardada pero sin foto. Error: ' + err.message);
+      } catch(e2) {
+        alert('Error al guardar: ' + err.message);
+      }
+    } else {
+      alert('Error al guardar: ' + err.message);
+    }
   } finally {
     btn.textContent = state.visited[state.selectedMuni] ? 'Guardar nueva foto' : 'Marcar como conquistado';
     btn.disabled    = false;
@@ -1072,31 +1100,18 @@ document.getElementById('av-in').addEventListener('change', async function(e) {
   ring.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;width:100%;height:100%">...</div>`;
 
   try {
-    // Convertir a base64 para evitar problemas con iOS y CORS
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload  = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-
-    // Convertir base64 a Blob
-    const res      = await fetch(base64);
-    const blob     = await res.blob();
-    const ext      = file.type === 'image/png' ? 'png' : 'jpg';
-
-    // Nombre simple: userid.ext (sin subcarpeta para evitar problemas de política)
+    const ext      = file.name.split('.').pop().replace(/[^a-z0-9]/gi,'').toLowerCase() || 'jpg';
     const fileName = `${state.user.id}.${ext}`;
 
-    // Primero intentar borrar el anterior (ignorar error si no existe)
+    // Borrar anterior si existe
     await db.storage.from('avatares').remove([fileName]);
 
-    // Subir nuevo
+    // Subir directo
     const { data: upData, error: upErr } = await db.storage
       .from('avatares')
-      .upload(fileName, blob, {
-        contentType: file.type,
-        upsert:      true,
+      .upload(fileName, file, {
+        contentType:  file.type || 'image/jpeg',
+        upsert:       true,
         cacheControl: '3600',
       });
 
