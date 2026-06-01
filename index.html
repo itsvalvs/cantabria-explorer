@@ -315,8 +315,12 @@
         <button class="vis-btn" id="vis-publico" onclick="setVis('publico')"><i class="ti ti-world" aria-hidden="true" style="font-size:11px"></i> Público</button>
       </div>
       <div class="prev-w" id="prev-w"><img id="prev-img" src="" alt="preview"/><div class="prev-meta" id="prev-meta"></div></div>
-      <label class="uzone" for="file-in" id="uzone"><i class="ti ti-camera-plus" aria-hidden="true"></i>Toca para añadir foto<div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div></label>
-      <input type="file" id="file-in" accept="image/*" style="display:none">
+      <div class="uzone" id="uzone" onclick="document.getElementById('file-in').click()" style="cursor:pointer">
+        <i class="ti ti-camera-plus" aria-hidden="true"></i>
+        Toca para añadir foto
+        <div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div>
+      </div>
+      <input type="file" id="file-in" accept="image/*,video/*" style="position:fixed;top:-9999px;left:-9999px;opacity:0;width:1px;height:1px;">
       <button id="btn-conf" onclick="confirmVisit()" style="display:block;width:100%;margin-top:12px;padding:13px;background-color:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">Marcar como conquistado</button>
       <button id="btn-desmarcar" onclick="desmarcarVisit()" style="display:none;width:100%;margin-top:8px;padding:11px;background-color:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">
         <i class="ti ti-trash" aria-hidden="true" style="font-size:13px"></i> Desmarcar como conquistado
