@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#0f1923"/>
+  <meta name="description" content="Explora los 102 municipios de Cantabria. Conquístalos todos."/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Cantabria"/>
+  <link rel="manifest" href="manifest.json"/>
+  <title>Cantabria Explorer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
+  <style>
+    :root {
+      --bg:#0f1923; --bg2:#141e2c; --bg3:#1a2535;
+      --border:rgba(255,255,255,0.08);
+      --text:#ffffff; --muted:rgba(255,255,255,0.45); --hint:rgba(255,255,255,0.3);
+      --green:#22b050; --green-dk:#1a7a3e;
+      --pink:#e8288a;  --yellow:#e8b820; --blue:#2272e8; --orange:#e86820;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{height:100%;background:#111;font-family:'Inter',sans-serif;overscroll-behavior:none;}
+
+    /* ── AUTH SCREEN ── */
+    #auth-screen {
+      display:none;
+      position:fixed;inset:0;
+      background:var(--bg);
+      flex-direction:column;
+      align-items:center;justify-content:center;
+      padding:30px 24px;
+      z-index:100;
+    }
+    .auth-logo {
+      font-family:'Playfair Display',serif;
+      font-size:32px;font-weight:700;color:#fff;
+      margin-bottom:6px;text-align:center;
+    }
+    .auth-sub {
+      font-size:13px;color:rgba(255,255,255,0.4);
+      margin-bottom:36px;text-align:center;
+    }
+    .auth-box {
+      width:100%;max-width:340px;
+      background:var(--bg2);
+      border:1px solid var(--border);
+      border-radius:18px;padding:24px;
+    }
+    .auth-input {
+      display:block;width:100%;padding:11px 14px;
+      background:var(--bg3);border:1px solid rgba(255,255,255,0.12);
+      border-radius:10px;font-size:14px;color:#fff;
+      font-family:'Inter',sans-serif;margin-bottom:10px;
+      outline:none;
+    }
+    .auth-input:focus{border-color:var(--blue);}
+    #auth-msg {
+      display:none;font-size:12px;padding:8px 12px;
+      border-radius:8px;margin-bottom:10px;
+      background:rgba(232,40,138,0.15);color:#e8288a;
+    }
+    .btn-login-main {
+      width:100%;padding:12px;
+      background-color:#22b050;color:#fff;
+      border:none;border-radius:12px;
+      font-size:14px;font-weight:600;cursor:pointer;
+      font-family:'Inter',sans-serif;margin-bottom:8px;
+    }
+    .btn-register-main {
+      width:100%;padding:12px;
+      background-color:#2272e8;color:#fff;
+      border:none;border-radius:12px;
+      font-size:14px;font-weight:600;cursor:pointer;
+      font-family:'Inter',sans-serif;
+    }
+    #register-row{display:none;}
+    #auth-toggle {
+      width:100%;margin-top:14px;padding:8px;
+      background:none;color:rgba(255,255,255,0.4);
+      border:none;font-size:12px;cursor:pointer;
+      font-family:'Inter',sans-serif;
+    }
+
+    /* ── APP ── */
+    #app {
+      display:none;
+      max-width:430px;margin:0 auto;
+      height:100dvh;background:var(--bg);
+      flex-direction:column;position:relative;overflow:hidden;
+    }
+    .screen{display:none;flex-direction:column;flex:1;overflow:hidden;}
+    .screen.active{display:flex;}
+    .sbar{padding:12px 20px 6px;padding-top:max(12px,env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);flex-shrink:0;border-bottom:1px solid var(--border);}
+    .sbar-title{font-family:'Playfair Display',serif;font-size:14px;font-weight:500;color:var(--text);letter-spacing:.08em;}
+    .nav{display:flex;gap:6px;padding:8px 8px calc(8px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--border);flex-shrink:0;}
+    .sc{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+    .sc::-webkit-scrollbar{display:none;}
+
+    /* MAP */
+    .map-top{padding:16px 18px 10px;}
+    .map-top h1{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--text);line-height:1.2;}
+    .map-top p{font-size:12px;color:var(--muted);margin-top:3px;}
+    .prog-wrap{margin:10px 18px 4px;background:rgba(255,255,255,0.08);border-radius:999px;height:4px;overflow:hidden;}
+    .prog-fill{height:100%;background:var(--green);border-radius:999px;width:0%;transition:width .5s;}
+    .prog-lbl{display:flex;justify-content:space-between;padding:4px 18px 10px;font-size:10px;color:var(--hint);}
+    .map-cont{margin:0 12px 8px;background:var(--bg3);border-radius:16px;overflow:hidden;border:1px solid var(--border);position:relative;}
+    #map-svg{width:100%;height:auto;display:block;}
+    .muni-path{fill:#2a3a4a;stroke:var(--bg);stroke-width:.5;cursor:pointer;transition:fill .15s;}
+    .muni-path:hover{fill:#3a5068;}
+    .muni-path.visited{fill:var(--green);}
+    .muni-path.selected{stroke:var(--green);stroke-width:1.5;}
+    .map-load{position:absolute;inset:0;background:var(--bg3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;}
+    .spin{width:26px;height:26px;border:3px solid rgba(255,255,255,0.1);border-top-color:var(--green);border-radius:50%;animation:spin .8s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .map-load p{font-size:12px;color:var(--muted);}
+    .map-legend{display:flex;gap:14px;padding:2px 18px 10px;font-size:11px;color:var(--muted);}
+    .ldot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle;}
+    .muni-bar{margin:0 12px 12px;padding:11px 14px;background:var(--bg3);border-radius:14px;border:1px solid var(--border);display:none;align-items:center;justify-content:space-between;gap:8px;}
+    .mn{font-size:14px;font-weight:500;color:var(--text);}
+    .ms{font-size:11px;color:var(--muted);margin-top:2px;}
+
+    /* SHEET */
+    .bsheet{display:none;position:absolute;bottom:0;left:0;right:0;background:var(--bg3);border-top:1px solid rgba(255,255,255,0.1);border-radius:22px 22px 0 0;padding:16px 18px calc(24px + env(safe-area-inset-bottom));z-index:10;animation:su .22s ease;}
+    .bsheet.open{display:block;}
+    @keyframes su{from{transform:translateY(100%);}to{transform:translateY(0);}}
+    .bhandle{width:32px;height:4px;background:rgba(255,255,255,0.15);border-radius:999px;margin:0 auto 14px;}
+    .bst{font-size:15px;font-weight:500;color:var(--text);margin-bottom:3px;}
+    .bss{font-size:12px;color:var(--muted);margin-bottom:10px;}
+    .vis-row{display:flex;gap:8px;margin-bottom:14px;}
+    .vis-btn{flex:1;padding:7px;border:1px solid rgba(255,255,255,0.15);border-radius:999px;background:none;color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;}
+    .vis-btn.vis-active{background-color:#2272e8;color:#fff;border-color:#2272e8;}
+    .uzone{border:1px dashed rgba(255,255,255,0.2);border-radius:12px;padding:22px;text-align:center;cursor:pointer;color:var(--muted);font-size:13px;}
+    .uzone i{font-size:26px;margin-bottom:7px;display:block;color:var(--green);}
+    .prev-w{display:none;border-radius:10px;overflow:hidden;margin-bottom:10px;position:relative;}
+    .prev-w img{width:100%;height:115px;object-fit:cover;display:block;}
+    .prev-meta{position:absolute;bottom:5px;left:6px;background:rgba(0,0,0,.65);color:white;font-size:10px;padding:2px 7px;border-radius:4px;}
+
+    /* EVENTOS */
+    .ev-header{padding:16px 18px 10px;display:flex;align-items:center;justify-content:space-between;}
+    .ev-header h1{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:var(--text);}
+    .ev-tabs{display:flex;gap:8px;padding:0 14px 14px;overflow-x:auto;}
+    .ev-tabs::-webkit-scrollbar{display:none;}
+    .ev-tab{padding:6px 14px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid rgba(255,255,255,0.15);color:var(--muted);background:none;cursor:pointer;white-space:nowrap;flex-shrink:0;}
+    .ev-tab.active{background-color:var(--pink);color:#fff;border-color:var(--pink);}
+    .ev-card{margin:0 12px 14px;background:var(--bg2);border-radius:18px;overflow:hidden;border:1px solid var(--border);}
+    .ev-img{width:100%;height:150px;position:relative;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;}
+    .ev-img i{font-size:46px;color:rgba(255,255,255,0.12);}
+    .ev-date-badge{position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.72);color:#e8c97a;font-size:11px;font-weight:500;padding:5px 11px;border-radius:999px;display:flex;align-items:center;gap:5px;}
+    .ev-tipo-badge{position:absolute;top:12px;right:12px;font-size:10px;font-weight:500;padding:4px 10px;border-radius:999px;}
+    .ev-body{padding:13px 14px 14px;}
+    .ev-name{font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:var(--text);margin-bottom:3px;}
+    .ev-loc{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);margin-bottom:10px;}
+    .ev-loc i{font-size:13px;color:var(--pink);}
+    .ev-desc{font-size:13px;color:var(--muted);line-height:1.55;margin-bottom:12px;}
+    .ev-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+    .ev-count{font-size:12px;color:var(--muted);}
+    .ev-count strong{color:var(--text);}
+
+    /* DADO */
+    .dado-hero{padding:20px 20px 0;text-align:center;}
+    .dado-hero h1{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:var(--text);}
+    .dado-hero p{font-size:12px;color:var(--hint);margin-top:4px;}
+    .terrain-badges{display:flex;gap:10px;justify-content:center;margin-top:14px;}
+    .tbadge{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-size:11px;font-weight:500;border:1px solid;}
+    .tbadge-coast{background:rgba(56,138,221,0.12);color:#85B7EB;border-color:rgba(56,138,221,0.3);}
+    .tbadge-mount{background:rgba(29,158,117,0.12);color:#5DCAA5;border-color:rgba(29,158,117,0.3);}
+    .tbadge.inactive-badge{opacity:.35;}
+    .dice-stage{display:flex;flex-direction:column;align-items:center;padding:24px 20px 16px;}
+    .dice-3d{width:120px;height:120px;cursor:pointer;user-select:none;}
+    .dice-3d:active{transform:scale(0.91);}
+    .dice-3d.rolling{animation:droll .7s cubic-bezier(.36,.07,.19,.97);}
+    @keyframes droll{0%{transform:rotate(0) scale(1);}12%{transform:rotate(-22deg) scale(.88);}28%{transform:rotate(18deg) scale(1.1);}46%{transform:rotate(-14deg) scale(.93);}64%{transform:rotate(10deg) scale(1.05);}82%{transform:rotate(-5deg) scale(.97);}100%{transform:rotate(0) scale(1);}}
+    .dice-hint{font-size:11px;color:var(--hint);text-align:center;margin-top:10px;}
+    .result-wrap{margin:0 14px 16px;opacity:0;transform:translateY(16px);transition:opacity .4s,transform .4s;pointer-events:none;}
+    .result-wrap.show{opacity:1;transform:translateY(0);pointer-events:auto;}
+    .rcard{border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);}
+    .rcard-top{padding:16px 16px 14px;position:relative;}
+    .rcard-top.coast{background:#0d2a4a;}
+    .rcard-top.mount{background:#0d2a1e;}
+    .r-type-tag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:10px;font-weight:500;margin-bottom:8px;}
+    .tag-coast{background:rgba(56,138,221,0.25);color:#85B7EB;}
+    .tag-mount{background:rgba(29,158,117,0.25);color:#5DCAA5;}
+    .r-roll-num{position:absolute;top:14px;right:16px;font-family:'Playfair Display',serif;font-size:36px;font-weight:700;color:rgba(255,255,255,0.12);line-height:1;}
+    .r-muni{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--text);line-height:1.1;}
+    .r-comarca{font-size:12px;color:var(--muted);margin-top:4px;}
+    .rcard-body{padding:14px 16px 16px;background:var(--bg2);}
+    .r-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+    .rpill{display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.55);}
+    .rpill i{font-size:12px;color:var(--yellow);}
+    .r-desc{font-size:13px;color:rgba(255,255,255,0.55);line-height:1.65;margin-bottom:14px;}
+
+    /* FEED */
+    .feed-header{padding:16px 18px 12px;display:flex;align-items:center;justify-content:space-between;}
+    .feed-header h1{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:var(--text);}
+    .search-row{display:flex;gap:8px;padding:0 14px 14px;}
+    .search-row input{flex:1;padding:9px 12px;background:var(--bg3);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:'Inter',sans-serif;outline:none;}
+    .stories-row{display:flex;gap:12px;padding:0 14px 16px;overflow-x:auto;}
+    .stories-row::-webkit-scrollbar{display:none;}
+    .story-item{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;}
+    .story-ring{width:52px;height:52px;border-radius:50%;padding:2px;background:var(--blue);}
+    .story-ring.seen{background:rgba(255,255,255,0.12);}
+    .story-av{width:100%;height:100%;border-radius:50%;background:var(--bg3);border:2px solid var(--bg);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:500;font-family:'Playfair Display',serif;overflow:hidden;}
+    .story-name{font-size:10px;color:var(--muted);max-width:52px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .feed-post{margin:0 12px 16px;background:var(--bg2);border-radius:18px;overflow:hidden;border:1px solid var(--border);}
+    .post-header{display:flex;align-items:center;gap:10px;padding:12px 14px 10px;}
+    .post-av{width:36px;height:36px;border-radius:50%;background:var(--bg3);border:1.5px solid var(--blue);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;font-family:'Playfair Display',serif;flex-shrink:0;}
+    .post-user{font-size:13px;font-weight:500;color:var(--text);}
+    .post-time{font-size:11px;color:var(--hint);margin-top:1px;}
+    .post-badge{margin-left:auto;display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:500;flex-shrink:0;}
+    .pb-coast{background:rgba(56,138,221,0.18);color:#85B7EB;}
+    .pb-mount{background:rgba(29,158,117,0.18);color:#5DCAA5;}
+    .post-img{width:100%;aspect-ratio:4/3;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;}
+    .post-img i{font-size:40px;color:rgba(255,255,255,0.08);}
+    .post-location{position:absolute;bottom:10px;left:10px;display:flex;align-items:center;gap:5px;background:rgba(0,0,0,0.65);color:white;font-size:11px;padding:4px 10px;border-radius:999px;}
+    .post-location i{font-size:12px;color:var(--blue);}
+    .post-body{padding:12px 14px 14px;}
+    .post-muni{font-family:'Playfair Display',serif;font-size:16px;font-weight:700;color:var(--text);margin-bottom:3px;}
+    .post-desc{font-size:13px;color:var(--muted);line-height:1.55;margin-bottom:12px;}
+    .post-actions{display:flex;align-items:center;gap:14px;}
+    .post-action{display:flex;align-items:center;gap:5px;color:rgba(255,255,255,0.4);font-size:12px;cursor:pointer;border:none;background:none;padding:0;}
+    .post-action.liked{color:#e84a70;}
+    .post-action i{font-size:16px;}
+    #search-results{padding:0 14px 10px;}
+
+    /* PROFILE */
+    .ph{padding:16px 18px 10px;border-bottom:1px solid var(--border);}
+    .ph h1{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:var(--text);}
+    .av-sec{display:flex;flex-direction:column;align-items:center;padding:20px 18px 16px;border-bottom:1px solid var(--border);}
+    .av-ring{width:82px;height:82px;border-radius:50%;background:var(--bg3);border:2px solid var(--orange);display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:28px;font-weight:700;color:var(--orange);cursor:pointer;position:relative;overflow:hidden;}
+    .av-ring img{width:100%;height:100%;object-fit:cover;border-radius:50%;}
+    .av-edit{position:absolute;bottom:0;right:0;background:var(--orange);color:#fff;width:23px;height:23px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;border:2px solid var(--bg);}
+    .u-name{margin-top:10px;font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:var(--text);}
+    .u-sub{font-size:12px;color:var(--muted);margin-top:2px;}
+    .u-edit-row{display:none;gap:7px;margin-top:10px;width:100%;justify-content:center;}
+    .u-edit-row input{flex:1;max-width:180px;padding:7px 10px;background:var(--bg3);border:1px solid rgba(255,255,255,0.15);border-radius:10px;font-size:13px;color:#fff;font-family:'Inter',sans-serif;}
+    .st-row{display:flex;padding:14px;gap:8px;border-bottom:1px solid var(--border);}
+    .sc2{flex:1;background:var(--bg3);border-radius:12px;padding:10px 8px;text-align:center;}
+    .sn{font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:var(--orange);}
+    .sl{font-size:10px;color:var(--hint);margin-top:2px;}
+    .gal-sec{padding:14px 14px 18px;}
+    .gal-sec h2{font-size:11px;font-weight:500;color:var(--muted);margin-bottom:10px;letter-spacing:.06em;text-transform:uppercase;}
+    .gal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;}
+    .gi{aspect-ratio:1;background:var(--bg3);border-radius:8px;overflow:hidden;position:relative;cursor:pointer;}
+    .gi img{width:100%;height:100%;object-fit:cover;}
+    .gi-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.12);font-size:20px;border:1px dashed rgba(255,255,255,0.08);border-radius:8px;}
+    .gi-hov{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.65));padding:14px 5px 5px;display:none;}
+    .gi:hover .gi-hov{display:block;}
+    .gm{font-size:9px;color:rgba(255,255,255,0.85);line-height:1.3;}
+    .pm-ov{display:none;position:absolute;inset:0;background:rgba(0,0,0,.82);z-index:20;flex-direction:column;justify-content:flex-end;}
+    .pm-ov.open{display:flex;}
+    .pmc{background:var(--bg2);border-radius:22px 22px 0 0;overflow:hidden;animation:su .22s ease;}
+    .pmc-img{width:100%;height:210px;object-fit:cover;display:block;background:var(--bg3);}
+    .pmc-meta{padding:14px 18px 22px;}
+    .mrow{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;flex-wrap:wrap;}
+    .mrow:last-child{border-bottom:none;}
+    .mrow i{font-size:15px;color:var(--orange);width:17px;}
+    .mrow span{color:var(--muted);font-size:12px;flex:1;}
+    .mrow strong{font-weight:500;color:var(--text);}
+  </style>
+</head>
+<body>
+
+<!-- ══ PANTALLA DE LOGIN ══ -->
+<div id="auth-screen">
+  <div class="auth-logo">Cantabria</div>
+  <div class="auth-sub">Explora los 102 municipios.<br>Conquístalos todos.</div>
+  <div class="auth-box">
+    <div id="auth-msg"></div>
+    <input class="auth-input" id="auth-email"    type="email"    placeholder="Email" autocomplete="email"/>
+    <input class="auth-input" id="auth-pass"     type="password" placeholder="Contraseña" autocomplete="current-password"/>
+    <div id="register-row" style="display:none">
+      <input class="auth-input" id="auth-username" type="text" placeholder="Nombre de usuario" maxlength="20" autocomplete="username"/>
+    </div>
+    <button class="btn-login-main"    id="btn-login"    onclick="doLogin()">Iniciar sesión</button>
+    <button class="btn-register-main" id="btn-register" onclick="doRegister()">Crear cuenta</button>
+    <button id="auth-toggle" onclick="toggleAuthForm()">
+      <span id="auth-toggle-txt">¿No tienes cuenta? Regístrate</span>
+    </button>
+  </div>
+</div>
+
+<!-- ══ APP ══ -->
+<div id="app">
+
+  <!-- MAPA -->
+  <div class="screen active" id="screen-map">
+    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sc">
+      <div class="map-top"><h1>Tu mapa<br>de aventuras</h1><p>Toca un municipio y sube tu evidencia</p></div>
+      <div class="prog-wrap"><div class="prog-fill" id="pfill"></div></div>
+      <div class="prog-lbl"><span id="plabel">0 municipios conquistados</span><span id="ppct">0 / 102</span></div>
+      <div class="map-cont" id="map-cont">
+        <div class="map-load" id="map-load"><div class="spin"></div><p>Cargando mapa...</p></div>
+        <svg id="map-svg" viewBox="0 0 410 200"></svg>
+      </div>
+      <div class="map-legend"><span><span class="ldot" style="background:#2a3a4a"></span>Sin visitar</span><span><span class="ldot" style="background:#22b050"></span>Conquistado</span></div>
+      <div class="muni-bar" id="muni-bar">
+        <div><div class="mn" id="bar-name">—</div><div class="ms" id="bar-st">Sin visitar</div></div>
+        <button id="btn-ev" onclick="openSheet()" style="background-color:#22b050;color:#fff;border:none;border-radius:10px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:Inter,sans-serif;">
+          <i class="ti ti-camera" aria-hidden="true"></i> Evidencia
+        </button>
+      </div>
+    </div>
+    <div class="bsheet" id="upload-sheet">
+      <div class="bhandle"></div>
+      <div class="bst" id="sht-title">Subir evidencia</div>
+      <div class="bss" id="sht-sub">Añade una foto</div>
+      <div class="vis-row">
+        <button class="vis-btn" id="vis-privado" onclick="setVis('privado')"><i class="ti ti-lock" aria-hidden="true" style="font-size:11px"></i> Privado</button>
+        <button class="vis-btn vis-active" id="vis-amigos" onclick="setVis('amigos')"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i> Amigos</button>
+        <button class="vis-btn" id="vis-publico" onclick="setVis('publico')"><i class="ti ti-world" aria-hidden="true" style="font-size:11px"></i> Público</button>
+      </div>
+      <div class="prev-w" id="prev-w"><img id="prev-img" src="" alt="preview"/><div class="prev-meta" id="prev-meta"></div></div>
+      <label class="uzone" for="file-in" id="uzone"><i class="ti ti-camera-plus" aria-hidden="true"></i>Toca para añadir foto<div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div></label>
+      <input type="file" id="file-in" accept="image/*" style="display:none">
+      <button id="btn-conf" onclick="confirmVisit()" style="display:block;width:100%;margin-top:12px;padding:13px;background-color:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">Marcar como conquistado</button>
+      <button onclick="document.getElementById('upload-sheet').classList.remove('open')" style="display:block;width:100%;margin-top:6px;padding:8px;background-color:transparent;color:rgba(255,255,255,0.45);border:none;font-size:13px;cursor:pointer;font-family:Inter,sans-serif;">Cancelar</button>
+    </div>
+    <div class="nav" id="nav-map"></div>
+  </div>
+
+  <!-- EVENTOS -->
+  <div class="screen" id="screen-eventos">
+    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sc">
+      <div class="ev-header"><h1>Eventos</h1><span style="font-size:11px;color:rgba(255,255,255,0.35)">Próximas fiestas</span></div>
+      <div class="ev-tabs">
+        <button class="ev-tab active" onclick="filterEvs(this,'todos')">Todos</button>
+        <button class="ev-tab" onclick="filterEvs(this,'fiesta')">Fiestas</button>
+        <button class="ev-tab" onclick="filterEvs(this,'mercado')">Mercados</button>
+        <button class="ev-tab" onclick="filterEvs(this,'deporte')">Deporte</button>
+        <button class="ev-tab" onclick="filterEvs(this,'cultura')">Cultura</button>
+      </div>
+      <div id="eventos-list"></div>
+    </div>
+    <div class="nav" id="nav-eventos"></div>
+  </div>
+
+  <!-- DADO -->
+  <div class="screen" id="screen-dado">
+    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sc">
+      <div class="dado-hero"><h1>Tu próximo destino</h1><p>Par = costa · Impar = montaña</p>
+        <div class="terrain-badges">
+          <div class="tbadge tbadge-coast" id="badge-coast"><i class="ti ti-waves" aria-hidden="true" style="font-size:14px"></i> Costa</div>
+          <div class="tbadge tbadge-mount" id="badge-mount"><i class="ti ti-mountain" aria-hidden="true" style="font-size:14px"></i> Montaña</div>
+        </div>
+      </div>
+      <div class="dice-stage">
+        <svg class="dice-3d" id="dice-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" onclick="rollDice()" role="button" aria-label="Lanzar dado">
+          <defs><filter id="ds"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000" flood-opacity="0.5"/></filter></defs>
+          <rect id="dice-body" x="8" y="8" width="104" height="104" rx="20" fill="#f5f0e8" filter="url(#ds)"/>
+          <rect x="8" y="8" width="104" height="104" rx="20" fill="none" stroke="rgba(0,0,0,0.12)" stroke-width="1"/>
+          <g id="dice-dots"></g>
+        </svg>
+        <div class="dice-hint" id="dice-hint">Toca el dado para descubrir tu destino</div>
+      </div>
+      <div class="result-wrap" id="result-wrap">
+        <div class="rcard">
+          <div class="rcard-top coast" id="rtop">
+            <div class="r-type-tag tag-coast" id="rtag"><i class="ti ti-waves" aria-hidden="true" style="font-size:11px"></i><span id="rtag-txt">Costa</span></div>
+            <div class="r-roll-num" id="r-num">2</div>
+            <div class="r-muni" id="r-muni">—</div>
+            <div class="r-comarca" id="r-comarca">—</div>
+          </div>
+          <div class="rcard-body">
+            <div class="r-pills"><div class="rpill"><i class="ti ti-ruler-2" aria-hidden="true"></i><span id="r-area">—</span></div><div class="rpill"><i class="ti ti-users" aria-hidden="true"></i><span id="r-pop">—</span></div></div>
+            <div class="r-desc" id="r-desc"></div>
+            <button id="btn-go" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:13px;background-color:#e8b820;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;margin-bottom:8px;">
+              <i class="ti ti-map-pin" aria-hidden="true"></i> Ver en el mapa
+            </button>
+            <button onclick="rollDice()" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:11px;background-color:#a07810;color:#fff;border:none;border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
+              <i class="ti ti-refresh" aria-hidden="true"></i> Volver a lanzar
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="no-more" style="display:none;text-align:center;padding:20px;font-size:13px;color:rgba(255,255,255,0.4);line-height:1.6;">
+        <i class="ti ti-trophy" aria-hidden="true" style="font-size:28px;color:#e8b820;display:block;margin-bottom:8px"></i>¡Increíble! Has conquistado todos de tu categoría.
+      </div>
+    </div>
+    <div class="nav" id="nav-dado"></div>
+  </div>
+
+  <!-- FEED -->
+  <div class="screen" id="screen-feed">
+    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sc">
+      <div class="feed-header"><h1>Amigos</h1></div>
+      <div class="search-row">
+        <input id="search-input" type="text" placeholder="Buscar usuario por nombre..." autocomplete="off"/>
+        <button onclick="searchUser()" style="padding:9px 14px;background-color:#2272e8;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">Buscar</button>
+      </div>
+      <div id="search-results"></div>
+      <div class="stories-row" id="stories-row"></div>
+      <div id="feed-posts"></div>
+    </div>
+    <div class="nav" id="nav-feed"></div>
+  </div>
+
+  <!-- PERFIL -->
+  <div class="screen" id="screen-profile">
+    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span>
+      <button onclick="doLogout()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">Salir</button>
+    </div>
+    <div class="sc">
+      <div class="ph"><h1>Mi perfil</h1></div>
+      <div class="av-sec">
+        <div class="av-ring" id="av-ring" onclick="document.getElementById('av-in').click()">
+          <span id="av-init">EX</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>
+        </div>
+        <input type="file" id="av-in" accept="image/*" style="display:none">
+        <div class="u-name" id="u-name">Explorador</div>
+        <div class="u-sub">Cantabria Explorer</div>
+        <div class="u-edit-row" id="u-edit-row">
+          <input type="text" id="u-inp" placeholder="Tu nombre de usuario" maxlength="20"/>
+          <button onclick="saveUser()" style="padding:7px 14px;background-color:#e86820;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">Guardar</button>
+        </div>
+        <button onclick="toggleEdit()" style="margin-top:10px;padding:7px 16px;background-color:#a04010;color:#ffd0a0;border:none;border-radius:999px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;display:inline-flex;align-items:center;gap:6px;">
+          <i class="ti ti-pencil" aria-hidden="true" style="font-size:12px"></i> Editar nombre
+        </button>
+      </div>
+      <div class="st-row">
+        <div class="sc2"><div class="sn" id="sv">0</div><div class="sl">Conquistados</div></div>
+        <div class="sc2"><div class="sn" id="sp">0%</div><div class="sl">Completado</div></div>
+        <div class="sc2"><div class="sn" id="sph">0</div><div class="sl">Fotos</div></div>
+      </div>
+      <div class="gal-sec">
+        <h2>Galería</h2>
+        <div class="gal-grid" id="gallery"></div>
+        <div id="g-empty" style="text-align:center;padding:24px 0;color:rgba(255,255,255,0.25);font-size:13px;line-height:1.7">
+          <i class="ti ti-camera" aria-hidden="true" style="font-size:28px;display:block;margin-bottom:8px"></i>Aún no hay fotos.<br>¡Conquista tu primer municipio!
+        </div>
+      </div>
+    </div>
+    <div class="pm-ov" id="photo-modal">
+      <button onclick="closePM()" aria-label="Cerrar" style="position:absolute;top:8px;right:12px;background-color:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;z-index:30;"><i class="ti ti-x" aria-hidden="true"></i></button>
+      <div class="pmc"><img class="pmc-img" id="pm-img" src="" alt="foto visita"/><div class="pmc-meta" id="pm-meta"></div></div>
+    </div>
+    <div class="nav" id="nav-profile"></div>
+  </div>
+
+</div><!-- /app -->
+
+<!-- Supabase JS -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- D3 + TopoJSON -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<!-- App -->
+<script src="app.js"></script>
+</body>
+</html>
