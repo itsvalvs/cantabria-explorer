@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Test Upload</title>
+<style>
+body { background:#0f1923; color:white; font-family:sans-serif; padding:20px; }
+button { padding:14px 20px; margin:8px 0; width:100%; border:none; border-radius:10px; font-size:16px; cursor:pointer; display:block; }
+#log { background:#1a2535; padding:12px; border-radius:8px; margin-top:10px; font-size:12px; line-height:1.6; white-space:pre-wrap; min-height:100px; }
+img { max-width:100%; border-radius:8px; margin-top:10px; display:none; }
+</style>
+</head>
+<body>
+<h2>Test subida foto iOS</h2>
+
+<!-- Test 1: input directo sin label -->
+<button onclick="document.getElementById('t1').click()" style="background:#22b050">
+  📷 Test 1: Input directo
+</button>
+<input type="file" id="t1" accept="image/*" style="display:none"/>
+
+<!-- Test 2: input con capture=camera -->
+<button onclick="document.getElementById('t2').click()" style="background:#2272e8">
+  📸 Test 2: Cámara directa
+</button>
+<input type="file" id="t2" accept="image/*" capture="environment" style="display:none"/>
+
+<!-- Test 3: input sin restricción de tipo -->
+<button onclick="document.getElementById('t3').click()" style="background:#e8288a">
+  🖼 Test 3: Sin restricción tipo
+</button>
+<input type="file" id="t3" style="display:none"/>
+
+<img id="preview"/>
+<div id="log">Esperando selección...</div>
+
+<script>
+const SUPABASE_URL  = 'https://sdsdbfjmpjbrcgrbyvkm.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkc2RiZmptcGpicmNncmJ5dmttIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMzQxMzksImV4cCI6MjA5MzkxMDEzOX0.EgNnrghpj9XbFUt0N-NlTIhH4GxcHOaen33RXAYMNcA';
+
+function log(msg) {
+  document.getElementById('log').textContent += '\n' + msg;
+  console.log(msg);
+}
+
+async function handleFile(file) {
+  if (!file) { log('❌ file es null/undefined'); return; }
+  log('✅ Archivo recibido:');
+  log('  nombre: ' + file.name);
+  log('  tipo:   ' + file.type);
+  log('  tamaño: ' + (file.size/1024).toFixed(1) + ' KB');
+
+  // Mostrar preview
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = document.getElementById('preview');
+    img.src = e.target.result;
+    img.style.display = 'block';
+    log('✅ Preview generado');
+  };
+  reader.readAsDataURL(file);
+
+  // Intentar subir a Supabase
+  log('⏳ Subiendo a Supabase...');
+  try {
+    const { createClient } = supabase;
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+    const session = await db.auth.getSession();
+    const userId = session?.data?.session?.user?.id;
+    if (!userId) { log('❌ Sin sesión — inicia sesión primero en la app'); return; }
+    log('✅ Usuario: ' + userId.substring(0,8) + '...');
+
+    const ext  = file.type.includes('png') ? 'png' : 'jpg';
+    const path = userId + '/test_' + Date.now() + '.' + ext;
+    log('📁 Path: ' + path);
+
+    const { data, error } = await db.storage
+      .from('evidencias')
+      .upload(path, file, { contentType: file.type || 'image/jpeg', upsert: true });
+
+    if (error) {
+      log('❌ Error upload: ' + JSON.stringify(error));
+    } else {
+      log('✅ SUBIDA EXITOSA: ' + JSON.stringify(data));
+    }
+  } catch(err) {
+    log('❌ Excepción: ' + err.message);
+  }
+}
+
+['t1','t2','t3'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('change', e => { log('change id=' + id); handleFile(e.target.files?.[0]); });
+  el.addEventListener('input',  e => { log('input id=' + id);  handleFile(e.target.files?.[0]); });
+});
+
+log('Página cargada. Toca un botón para probar.');
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</body>
+</html>
