@@ -259,11 +259,31 @@ function showMuniBar(name) {
 
 function openSheet() {
   if (!state.selectedMuni) return;
-  document.getElementById('sht-title').textContent = state.selectedMuni;
-  document.getElementById('sht-sub').textContent   = 'Añade una foto de tu visita a ' + state.selectedMuni;
-  // reset visibilidad
+  const muni    = state.selectedMuni;
+  const visita  = state.visited[muni];
+
+  document.getElementById('sht-title').textContent = muni;
+  document.getElementById('sht-sub').textContent   = visita
+    ? 'Ya conquistado — puedes añadir otra foto o desmarcar'
+    : 'Añade una foto de tu visita a ' + muni;
+
+  // Botón desmarcar: solo visible si ya está conquistado
+  const btnDesmarcar = document.getElementById('btn-desmarcar');
+  if (btnDesmarcar) btnDesmarcar.style.display = visita ? 'block' : 'none';
+
+  // Botón marcar: cambiar texto si ya está
+  const btnConf = document.getElementById('btn-conf');
+  if (btnConf) btnConf.textContent = visita ? 'Guardar nueva foto' : 'Marcar como conquistado';
+
+  // Reset visibilidad
   document.querySelectorAll('.vis-btn').forEach(b => b.classList.remove('vis-active'));
   document.getElementById('vis-amigos').classList.add('vis-active');
+
+  // Reset foto
+  document.getElementById('prev-w').style.display = 'none';
+  document.getElementById('uzone').style.display  = 'block';
+  document.getElementById('file-in').value        = '';
+
   document.getElementById('upload-sheet').classList.add('open');
 }
 
@@ -352,7 +372,47 @@ async function confirmVisit() {
   } catch(err) {
     alert('Error al guardar: ' + err.message);
   } finally {
-    btn.textContent = 'Marcar como conquistado';
+    btn.textContent = state.visited[state.selectedMuni] ? 'Guardar nueva foto' : 'Marcar como conquistado';
+    btn.disabled    = false;
+  }
+}
+
+async function desmarcarVisit() {
+  const muni = state.selectedMuni;
+  if (!muni || !state.user) return;
+  if (!confirm('¿Seguro que quieres desmarcar ' + muni + ' como conquistado?')) return;
+
+  const btn = document.getElementById('btn-desmarcar');
+  btn.textContent = 'Desmarcando...';
+  btn.disabled    = true;
+
+  try {
+    // Borrar visita de Supabase
+    await db.from('visits')
+      .delete()
+      .eq('user_id', state.user.id)
+      .eq('municipio', muni);
+
+    // Actualizar estado local
+    delete state.visited[muni];
+
+    // Actualizar mapa
+    document.querySelectorAll('.muni-path').forEach(p => {
+      if (p.getAttribute('data-name') === muni) {
+        p.classList.remove('visited');
+        p.classList.remove('selected');
+      }
+    });
+
+    // Actualizar barra info
+    document.getElementById('muni-bar').style.display = 'none';
+    document.getElementById('upload-sheet').classList.remove('open');
+    updateProgress();
+
+  } catch(err) {
+    alert('Error al desmarcar: ' + err.message);
+  } finally {
+    btn.textContent = 'Desmarcar como conquistado';
     btn.disabled    = false;
   }
 }
