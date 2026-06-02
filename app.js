@@ -836,8 +836,87 @@ function openMuniModal(nombre) {
     }, 250);
   };
 
+  // Cargar evidencias de amigos en esta ficha
+  loadMuniFriendEvidence(nombre);
+
   const modal = document.getElementById('muni-modal');
   modal.style.display = 'flex';
+}
+
+async function loadMuniFriendEvidence(municipio) {
+  const container = document.getElementById('mm-friend-evidence');
+  if (!container) return;
+  container.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Buscando evidencias de amigos...</div>';
+
+  if (!state.user) return;
+
+  // Obtener amigos
+  const { data: friends } = await db
+    .from('friendships')
+    .select('follower_id, following_id')
+    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+    .eq('estado', 'aceptado');
+
+  const friendIds = (friends||[]).map(f =>
+    f.follower_id === state.user.id ? f.following_id : f.follower_id
+  );
+
+  if (!friendIds.length) {
+    container.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>';
+    return;
+  }
+
+  // Visitas de amigos a este municipio
+  const { data: visitas } = await db
+    .from('visits')
+    .select('*, profiles(id, username, avatar_url)')
+    .in('user_id', friendIds)
+    .eq('municipio', municipio)
+    .order('created_at', { ascending: false });
+
+  // Fotos de amigos en este municipio
+  const { data: fotos } = await db
+    .from('photos')
+    .select('*')
+    .in('user_id', friendIds)
+    .eq('municipio', municipio)
+    .neq('storage_path', 'text_only')
+    .order('created_at', { ascending: false });
+
+  if (!visitas || !visitas.length) {
+    container.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>';
+    return;
+  }
+
+  const fotasByUser = {};
+  (fotos||[]).forEach(f => { fotasByUser[f.user_id] = f; });
+
+  container.innerHTML = `
+    <div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">
+      ${visitas.length} amigo${visitas.length!==1?'s':''} han visitado este municipio
+    </div>
+    ${visitas.map(v => {
+      const u    = v.profiles?.username || 'Usuario';
+      const init = u.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+      const av   = v.profiles?.avatar_url;
+      const foto = fotasByUser[v.user_id];
+      const imgUrl = foto ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl : null;
+      const fecha = new Date(v.created_at).toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'});
+      return \`
+      <div style="background:rgba(255,255,255,0.04);border-radius:12px;overflow:hidden;margin-bottom:10px;border:1px solid rgba(255,255,255,0.07)">
+        \${imgUrl ? \`<img src="\${imgUrl}?t=\${Date.now()}" style="width:100%;height:140px;object-fit:cover;display:block" alt="\${u}"/>\` : ''}
+        <div style="padding:10px 12px;display:flex;align-items:center;gap:10px">
+          <div style="width:32px;height:32px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">
+            \${av ? \`<img src="\${av}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="\${u}"/>\` : init}
+          </div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:500;color:#fff">\${u}</div>
+            <div style="font-size:11px;color:rgba(255,255,255,0.35)">Visitó el \${fecha}</div>
+          </div>
+        </div>
+        \${foto?.descripcion ? \`<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">\${foto.descripcion}</div>\` : ''}
+      </div>\`;
+    }).join('')}`;
 }
 
 function closeMuniModal() {
@@ -891,33 +970,54 @@ async function loadFeed() {
     return;
   }
 
-  // Visitas de amigos (con o sin foto)
+  // IDs a mostrar: amigos + yo mismo
+  const allIds = [...new Set([...friendIds, state.user.id])];
+
+  // Visitas (amigos + mías)
   const { data: visits } = await db
     .from('visits')
     .select('*, profiles(id, username, avatar_url)')
-    .in('user_id', friendIds)
-    .in('visibilidad', ['amigos','publico'])
+    .in('user_id', allIds)
     .order('created_at', { ascending: false })
-    .limit(30);
+    .limit(40);
 
-  // Fotos de amigos
-  const { data: fotos } = await db
+  // Fotos (amigos + mías) — incluir todas las visibilidades propias
+  const { data: fotasAmigos } = await db
     .from('photos')
     .select('*, profiles(id, username, avatar_url)')
     .in('user_id', friendIds)
     .in('visibilidad', ['amigos','publico'])
     .order('created_at', { ascending: false })
-    .limit(30);
+    .limit(40);
 
-  // Combinar visitas y fotos, relacionar fotos con su visita
+  const { data: fotasMias } = await db
+    .from('photos')
+    .select('*, profiles(id, username, avatar_url)')
+    .eq('user_id', state.user.id)
+    .order('created_at', { ascending: false })
+    .limit(40);
+
+  const todasFotas = [...(fotasAmigos||[]), ...(fotasMias||[])];
+
+  // Índice fotos por user_id + municipio (normalizado)
   const fotasByMuniUser = {};
-  (fotos || []).forEach(f => {
-    const key = f.user_id + '_' + f.municipio;
+  todasFotas.forEach(f => {
+    const key = f.user_id + '_' + normalizeMuni(f.municipio);
     if (!fotasByMuniUser[key]) fotasByMuniUser[key] = [];
     fotasByMuniUser[key].push(f);
   });
 
-  renderFeedPosts(visits || [], fotasByMuniUser, friendProfiles);
+  // Filtrar visitas: las mías siempre, las de amigos según visibilidad
+  const visibleVisits = (visits || []).filter(v =>
+    v.user_id === state.user.id ||
+    ['amigos','publico'].includes(v.visibilidad)
+  );
+
+  renderFeedPosts(visibleVisits, fotasByMuniUser, friendProfiles);
+}
+
+function normalizeMuni(s) {
+  return (s || '').trim().toLowerCase();
 }
 
 const STORY_COLORS = ['#c97ae8','#7ae8c9','#e87a9a','#e8b97a','#7ab3e8','#a8e87a'];
@@ -968,18 +1068,18 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
     const userId     = v.profiles?.id || v.user_id;
     const initials   = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
     const color      = STORY_COLORS[i % STORY_COLORS.length];
-    const fp         = (friendProfiles || []).find(f => f.id === userId);
+    const isMe       = userId === state.user?.id;
+    const fp         = isMe ? state.profile : (friendProfiles || []).find(f => f.id === userId);
     const avatarUrl  = fp?.avatar_url || v.profiles?.avatar_url;
     const avatarHtml = avatarUrl
       ? `<img src="${avatarUrl}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`
       : initials;
 
-    const key   = v.user_id + '_' + v.municipio;
+    const key   = v.user_id + '_' + normalizeMuni(v.municipio);
     const fotos = fotasByMuniUser[key] || [];
     const foto  = fotos[0];
-    // Usar URL pública directa (bucket es público)
-    const imgUrl = foto && foto.storage_path !== 'text_only'
-      ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl
+    const imgUrl = foto && foto.storage_path && foto.storage_path !== 'text_only'
+      ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl + '?t=' + Date.now()
       : null;
 
     const fecha = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
@@ -1040,7 +1140,7 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
 
   // Cargar likes y comentarios
   visits.forEach(v => {
-    const key  = v.user_id + '_' + v.municipio;
+    const key  = v.user_id + '_' + normalizeMuni(v.municipio);
     const foto = (fotasByMuniUser[key] || [])[0];
     if (foto) loadPhotoLikes(foto.id);
     loadVisitComments(v.id);
