@@ -1063,7 +1063,7 @@ async function getPhotoUrl(storagePath) {
   return data?.signedUrl || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || null;
 }
 
-function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
+async function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
   if (!visits.length) {
     document.getElementById('feed-posts').innerHTML = `
       <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">
@@ -1089,8 +1089,9 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
     const key   = v.user_id + '_' + normalizeMuni(v.municipio);
     const fotos = fotasByMuniUser[key] || [];
     const foto  = fotos[0];
+    // PLACEHOLDER — se reemplaza con signed URL después del render
     const imgUrl = foto && foto.storage_path && foto.storage_path !== 'text_only'
-      ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl + '?t=' + Date.now()
+      ? '__FOTO__' + (foto.id || '')
       : null;
 
     const fecha = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
@@ -1109,8 +1110,11 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
         </div>
       </div>
       <div class="post-img" style="background:${coast?'#0d2535':'#0d2a1e'}">
-        ${imgUrl
-          ? `<img src="${imgUrl}" style="width:100%;height:100%;object-fit:cover" alt="${v.municipio}"/>`
+        ${imgUrl && imgUrl.startsWith('__FOTO__')
+          ? `<img src="" data-foto-id="${imgUrl.replace('__FOTO__','')}" style="width:100%;height:100%;object-fit:cover;display:none" alt="${v.municipio}" onerror="this.style.display='none'"/>
+             <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
+               <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
+             </div>`
           : `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
                <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:38px"></i>
                <span style="font-size:11px">Sin foto de evidencia</span>
@@ -1134,14 +1138,14 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
         </div>
-        <!-- Comentarios -->
-        <div id="comments-${v.id}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+        <!-- Comentarios: usar foto.id si hay foto, visit.id como fallback -->
+        <div id="comments-${foto ? foto.id : v.id}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
           <div style="color:rgba(255,255,255,0.25);font-size:11px">Cargando comentarios...</div>
         </div>
         <div class="comment-input-row">
-          <input class="comment-input" id="comment-input-${v.id}" type="text" placeholder="Añade un comentario..." maxlength="200"
-            onkeydown="if(event.key==='Enter')postComment('${v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\'")}')"/>
-          <button class="comment-send" onclick="postComment('${v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\'")}')">
+          <input class="comment-input" id="comment-input-${foto ? foto.id : v.id}" type="text" placeholder="Añade un comentario..." maxlength="200"
+            onkeydown="if(event.key==='Enter')postComment('${foto ? foto.id : v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\\'")}')"/>
+          <button class="comment-send" onclick="postComment('${foto ? foto.id : v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\\'")}')">
             <i class="ti ti-send" aria-hidden="true"></i>
           </button>
         </div>
@@ -1149,42 +1153,68 @@ function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
     </div>`;
   }).join('');
 
-  // Cargar likes y comentarios
+  // Cargar signed URLs, likes y comentarios
   visits.forEach(v => {
     const key  = v.user_id + '_' + normalizeMuni(v.municipio);
     const foto = (fotasByMuniUser[key] || [])[0];
-    if (foto) loadPhotoLikes(foto.id);
-    loadVisitComments(v.id);
+    if (foto && foto.storage_path && foto.storage_path !== 'text_only') {
+      loadSignedFotoUrl(foto.id, foto.storage_path, v.id);
+      loadPhotoLikes(foto.id);
+    }
+    // Cargar comentarios por foto_id si existe, si no por visit_id
+    const commentId = foto?.id || v.id;
+    loadVisitComments(commentId, v.id);
   });
 }
 
-async function loadVisitComments(visitId) {
-  const container = document.getElementById('comments-' + visitId);
+async function loadSignedFotoUrl(fotoId, storagePath, visitId) {
+  try {
+    // Intentar URL firmada primero (funciona con bucket privado o público)
+    const { data: signed } = await db.storage
+      .from('evidencias')
+      .createSignedUrl(storagePath, 3600);
+
+    const url = signed?.signedUrl
+      || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl;
+
+    if (!url) return;
+
+    // Buscar la img con placeholder y reemplazar src
+    const imgEl = document.querySelector('img[data-foto-id="' + fotoId + '"]');
+    if (imgEl) {
+      imgEl.src = url;
+      imgEl.style.display = 'block';
+      imgEl.closest('.post-img')?.querySelector('.post-img-placeholder')?.remove();
+    }
+  } catch(e) {
+    console.error('Error cargando foto firmada:', e);
+  }
+}
+
+async function loadVisitComments(commentId, visitId) {
+  const id = commentId || visitId;
+  const container = document.getElementById('comments-' + id);
   if (!container) return;
 
   const { data: comments } = await db
     .from('photo_comments')
     .select('*, profiles(username, avatar_url)')
-    .eq('photo_id', visitId)
+    .eq('photo_id', id)
     .order('created_at', { ascending: true })
     .limit(20);
 
   if (!comments || !comments.length) {
-    container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px">Sin comentarios aún</div>';
+    container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;padding:4px 0">Sin comentarios aún</div>';
     return;
   }
 
   container.innerHTML = comments.map(c => {
-    const u = c.profiles?.username || 'Usuario';
+    const u        = c.profiles?.username || 'Usuario';
     const initials = u.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
     const avatar   = c.profiles?.avatar_url
-      ? `<img src="${c.profiles.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${u}"/>`
+      ? '<img src="' + c.profiles.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + u + '"/>'
       : initials;
-    return `
-    <div class="comment">
-      <div class="c-av">${avatar}</div>
-      <div class="c-text"><strong>${u}</strong> ${c.texto}</div>
-    </div>`;
+    return '<div class="comment"><div class="c-av">' + avatar + '</div><div class="c-text"><strong>' + u + '</strong> ' + c.texto + '</div></div>';
   }).join('');
 }
 
