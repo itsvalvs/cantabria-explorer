@@ -781,7 +781,10 @@ function renderMuniList() {
 }
 
 function openMuniModal(nombre) {
-  const m = state.municipiosData?.[nombre] || { nombre, tipo: 'montaña' };
+  if (!nombre) return;
+  const m = (state.municipiosData && state.municipiosData[nombre])
+    ? state.municipiosData[nombre]
+    : { nombre, tipo: isCoast(nombre) ? 'costa' : 'montaña' };
   const coast = m.tipo === 'costa';
   const visitado = state.visited[nombre];
 
@@ -984,7 +987,41 @@ async function loadFeed() {
   // IDs a mostrar: amigos + yo mismo
   const allIds = [...new Set([...friendIds, state.user.id])];
 
-  // Visitas (amigos + mías)
+  // Traer fotos directamente con todos sus datos
+  // Estrategia: una query por fotos, indexar por user_id
+  const { data: fotasAmigos } = await db
+    .from('photos')
+    .select('*')
+    .in('user_id', friendIds)
+    .in('visibilidad', ['amigos','publico'])
+    .order('created_at', { ascending: false })
+    .limit(60);
+
+  const { data: fotasMias } = await db
+    .from('photos')
+    .select('*')
+    .eq('user_id', state.user.id)
+    .order('created_at', { ascending: false })
+    .limit(60);
+
+  const todasFotas = [...(fotasAmigos||[]), ...(fotasMias||[])];
+
+  // Índice: user_id -> lista de fotos (ordenadas por fecha)
+  const fotasByUser = {};
+  todasFotas.forEach(f => {
+    if (!fotasByUser[f.user_id]) fotasByUser[f.user_id] = [];
+    fotasByUser[f.user_id].push(f);
+  });
+
+  // Índice secundario por user_id + municipio normalizado
+  const fotasByMuniUser = {};
+  todasFotas.forEach(f => {
+    const key = f.user_id + '|' + normalizeMuni(f.municipio);
+    if (!fotasByMuniUser[key]) fotasByMuniUser[key] = [];
+    fotasByMuniUser[key].push(f);
+  });
+
+  // Visitas (amigos + mías) — traer con perfil
   const { data: visits } = await db
     .from('visits')
     .select('*, profiles(id, username, avatar_url)')
@@ -992,39 +1029,13 @@ async function loadFeed() {
     .order('created_at', { ascending: false })
     .limit(40);
 
-  // Fotos (amigos + mías) — incluir todas las visibilidades propias
-  const { data: fotasAmigos } = await db
-    .from('photos')
-    .select('*, profiles(id, username, avatar_url)')
-    .in('user_id', friendIds)
-    .in('visibilidad', ['amigos','publico'])
-    .order('created_at', { ascending: false })
-    .limit(40);
-
-  const { data: fotasMias } = await db
-    .from('photos')
-    .select('*, profiles(id, username, avatar_url)')
-    .eq('user_id', state.user.id)
-    .order('created_at', { ascending: false })
-    .limit(40);
-
-  const todasFotas = [...(fotasAmigos||[]), ...(fotasMias||[])];
-
-  // Índice fotos por user_id + municipio (normalizado)
-  const fotasByMuniUser = {};
-  todasFotas.forEach(f => {
-    const key = f.user_id + '_' + normalizeMuni(f.municipio);
-    if (!fotasByMuniUser[key]) fotasByMuniUser[key] = [];
-    fotasByMuniUser[key].push(f);
-  });
-
   // Filtrar visitas: las mías siempre, las de amigos según visibilidad
   const visibleVisits = (visits || []).filter(v =>
     v.user_id === state.user.id ||
     ['amigos','publico'].includes(v.visibilidad)
   );
 
-  renderFeedPosts(visibleVisits, fotasByMuniUser, friendProfiles);
+  renderFeedPosts(visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles);
 }
 
 function normalizeMuni(s) {
@@ -1063,7 +1074,7 @@ async function getPhotoUrl(storagePath) {
   return data?.signedUrl || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || null;
 }
 
-async function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
+async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles) {
   if (!visits.length) {
     document.getElementById('feed-posts').innerHTML = `
       <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">
@@ -1086,10 +1097,14 @@ async function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
       ? `<img src="${avatarUrl}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`
       : initials;
 
-    const key   = v.user_id + '_' + normalizeMuni(v.municipio);
-    const fotos = fotasByMuniUser[key] || [];
-    const foto  = fotos[0];
-    // PLACEHOLDER — se reemplaza con signed URL después del render
+    // Buscar foto: 1) por user+municipio exacto, 2) por user+municipio normalizado, 3) cualquier foto del usuario
+    const keyExact = v.user_id + '|' + normalizeMuni(v.municipio);
+    const keyOld   = v.user_id + '_' + normalizeMuni(v.municipio);
+    const fotos    = fotasByMuniUser[keyExact] || fotasByMuniUser[keyOld] || [];
+    // Si no hay foto del municipio exacto, buscar cualquier foto del usuario para ese municipio
+    const foto = fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio))
+              || fotos[0]
+              || null;
     const imgUrl = foto && foto.storage_path && foto.storage_path !== 'text_only'
       ? '__FOTO__' + (foto.id || '')
       : null;
@@ -1131,10 +1146,10 @@ async function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
           <button class="post-action" onclick="toggleLike(this,'${foto.id}')" data-liked="false">
             <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${foto.id}">0</span>
           </button>` : `<div></div>`}
-          <button class="post-action" style="margin-left:auto" onclick="openMuniModal('${v.municipio.replace(/'/g,"\'")}')">
+          <button class="post-action" style="margin-left:auto" onclick="openMuniModal(this.dataset.muni)" data-muni="${v.municipio}">
             <i class="ti ti-info-circle" aria-hidden="true"></i><span style="font-size:11px">Ver ficha</span>
           </button>
-          <button class="post-action" onclick="goToMuniOnMap('${v.municipio.replace(/'/g,"\'")}')">
+          <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${v.municipio}">
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
         </div>
@@ -1155,8 +1170,9 @@ async function renderFeedPosts(visits, fotasByMuniUser, friendProfiles) {
 
   // Cargar signed URLs, likes y comentarios
   visits.forEach(v => {
-    const key  = v.user_id + '_' + normalizeMuni(v.municipio);
-    const foto = (fotasByMuniUser[key] || [])[0];
+    const keyE = v.user_id + '|' + normalizeMuni(v.municipio);
+    const keyO = v.user_id + '_' + normalizeMuni(v.municipio);
+    const foto = (fotasByMuniUser[keyE] || fotasByMuniUser[keyO] || [])[0];
     if (foto && foto.storage_path && foto.storage_path !== 'text_only') {
       loadSignedFotoUrl(foto.id, foto.storage_path, v.id);
       loadPhotoLikes(foto.id);
