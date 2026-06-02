@@ -891,32 +891,43 @@ async function loadMuniFriendEvidence(municipio) {
   const fotasByUser = {};
   (fotos||[]).forEach(f => { fotasByUser[f.user_id] = f; });
 
-  container.innerHTML = `
-    <div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">
-      ${visitas.length} amigo${visitas.length!==1?'s':''} han visitado este municipio
-    </div>
-    ${visitas.map(v => {
-      const u    = v.profiles?.username || 'Usuario';
-      const init = u.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
-      const av   = v.profiles?.avatar_url;
-      const foto = fotasByUser[v.user_id];
-      const imgUrl = foto ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl : null;
-      const fecha = new Date(v.created_at).toLocaleDateString('es-ES',{day:'numeric',month:'short',year:'numeric'});
-      return \`
-      <div style="background:rgba(255,255,255,0.04);border-radius:12px;overflow:hidden;margin-bottom:10px;border:1px solid rgba(255,255,255,0.07)">
-        \${imgUrl ? \`<img src="\${imgUrl}?t=\${Date.now()}" style="width:100%;height:140px;object-fit:cover;display:block" alt="\${u}"/>\` : ''}
-        <div style="padding:10px 12px;display:flex;align-items:center;gap:10px">
-          <div style="width:32px;height:32px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">
-            \${av ? \`<img src="\${av}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="\${u}"/>\` : init}
-          </div>
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:500;color:#fff">\${u}</div>
-            <div style="font-size:11px;color:rgba(255,255,255,0.35)">Visitó el \${fecha}</div>
-          </div>
-        </div>
-        \${foto?.descripcion ? \`<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">\${foto.descripcion}</div>\` : ''}
-      </div>\`;
-    }).join('')}`;
+  const header = '<div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">' +
+    visitas.length + ' amigo' + (visitas.length !== 1 ? 's' : '') + ' han visitado este municipio</div>';
+
+  const cards = visitas.map(v => {
+    const u      = v.profiles?.username || 'Usuario';
+    const init   = u.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
+    const av     = v.profiles?.avatar_url;
+    const foto   = fotasByUser[v.user_id];
+    const imgUrl = foto && foto.storage_path !== 'text_only'
+      ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl
+      : null;
+    const fecha  = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
+
+    const imgHtml = imgUrl
+      ? '<img src="' + imgUrl + '?t=' + Date.now() + '" style="width:100%;height:140px;object-fit:cover;display:block" alt="' + u + '"/>'
+      : '';
+    const avHtml = av
+      ? '<img src="' + av + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + u + '"/>'
+      : init;
+    const descHtml = foto && foto.descripcion
+      ? '<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">' + foto.descripcion + '</div>'
+      : '';
+
+    return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;overflow:hidden;margin-bottom:10px;border:1px solid rgba(255,255,255,0.07)">' +
+      imgHtml +
+      '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px">' +
+        '<div style="width:32px;height:32px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + avHtml + '</div>' +
+        '<div style="flex:1">' +
+          '<div style="font-size:13px;font-weight:500;color:#fff">' + u + '</div>' +
+          '<div style="font-size:11px;color:rgba(255,255,255,0.35)">Visitó el ' + fecha + '</div>' +
+        '</div>' +
+      '</div>' +
+      descHtml +
+    '</div>';
+  }).join('');
+
+  container.innerHTML = header + cards;
 }
 
 function closeMuniModal() {
