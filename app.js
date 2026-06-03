@@ -225,6 +225,9 @@ async function loadUserData(user) {
   if (signups) signups.forEach(s => { state.inscripciones[s.event_id] = true; });
 
   updateProgress();
+
+  // Suscribir a actividad en tiempo real de amigos
+  subscribeToFriendActivity();
 }
 
 // ── NAVEGACIÓN ────────────────────────────────────────────────
@@ -233,7 +236,7 @@ function switchScreen(name) {
   document.getElementById('screen-' + name).classList.add('active');
   updateNavColors(name);
   if (name === 'profile')  renderProfile();
-  if (name === 'feed')     loadFeed();
+  if (name === 'feed')     { clearFeedBadge(); loadFeed(); }
   if (name === 'eventos')  loadEventos();
   if (name === 'dado')     renderMuniList();
 }
@@ -432,6 +435,7 @@ async function confirmVisit() {
     state.pendingFile   = null;
     state.pendingBase64 = null;
     state.pendingMime   = null;
+    state.feedCache     = null; // invalidar cache del feed
     const descEl = document.getElementById('evidencia-desc');
     if (descEl) descEl.value = '';
     updateProgress();
@@ -938,103 +942,96 @@ function closeMuniModal() {
 }
 
 // ── FEED DE AMIGOS ────────────────────────────────────────────
-async function loadFeed() {
+async function loadFeed(forceRefresh = false) {
   if (!state.user) return;
 
-  document.getElementById('stories-row').innerHTML = '';
-  document.getElementById('feed-posts').innerHTML = `
-    <div style="text-align:center;padding:20px;color:rgba(255,255,255,0.3);font-size:12px">
-      Cargando...
-    </div>`;
-
-  // Obtener amigos aceptados CON sus perfiles
-  const { data: friends } = await db
-    .from('friendships')
-    .select(`
-      follower_id,
-      following_id,
-      follower:profiles!friendships_follower_id_fkey(id, username, avatar_url),
-      following:profiles!friendships_following_id_fkey(id, username, avatar_url)
-    `)
-    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-    .eq('estado', 'aceptado');
-
-  // Extraer los perfiles de los amigos (el que NO soy yo) — deduplicar por id
-  const seen = new Set();
-  const friendProfiles = (friends || []).map(f => {
-    if (f.follower_id === state.user.id) return f.following;
-    return f.follower;
-  }).filter(p => {
-    if (!p || seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
-  });
-
-  const friendIds = [...new Set(friendProfiles.map(p => p.id))];
-
-  // Renderizar stories con nombres y avatares reales
-  renderStories(friendProfiles);
-
-  if (!friendIds.length) {
-    document.getElementById('feed-posts').innerHTML = `
-      <div style="text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">
-        <i class="ti ti-users" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>
-        Aún no tienes amigos añadidos.<br>¡Busca a alguien por su nombre de usuario!
-      </div>`;
+  // Usar cache si existe y no se fuerza refresco (evita recargar al volver a la tab)
+  if (!forceRefresh && state.feedCache && Date.now() - state.feedCacheTime < 60000) {
+    renderFeedFromCache();
     return;
   }
 
-  // IDs a mostrar: amigos + yo mismo
+  // Skeleton loading
+  document.getElementById('stories-row').innerHTML = [1,2,3].map(() =>
+    '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:5px">' +
+    '<div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div>' +
+    '<div style="width:36px;height:8px;border-radius:4px;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div>' +
+    '</div>'
+  ).join('');
+  document.getElementById('feed-posts').innerHTML =
+    '<div style="padding:12px">' + [1,2].map(() =>
+      '<div style="background:rgba(255,255,255,0.04);border-radius:18px;height:320px;margin-bottom:14px;animation:pulse 1.5s ease infinite"></div>'
+    ).join('') + '</div>';
+
+  // Cargar amigos primero (necesitamos sus IDs)
+  const { data: friends } = await db
+    .from('friendships')
+    .select('follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)')
+    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+    .eq('estado', 'aceptado');
+
+  const seen = new Set();
+  const friendProfiles = (friends || []).map(f =>
+    f.follower_id === state.user.id ? f.following : f.follower
+  ).filter(p => { if (!p || seen.has(p.id)) return false; seen.add(p.id); return true; });
+
+  const friendIds = friendProfiles.map(p => p.id);
+  renderStories(friendProfiles);
+
+  if (!friendIds.length) {
+    document.getElementById('feed-posts').innerHTML =
+      '<div style="text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">' +
+      '<i class="ti ti-users" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>' +
+      'Aún no tienes amigos añadidos.<br>¡Busca a alguien por su nombre de usuario!</div>';
+    return;
+  }
+
   const allIds = [...new Set([...friendIds, state.user.id])];
 
-  // Traer fotos directamente con todos sus datos
-  // Estrategia: una query por fotos, indexar por user_id
-  const { data: fotasAmigos } = await db
-    .from('photos')
-    .select('*')
-    .in('user_id', friendIds)
-    .in('visibilidad', ['amigos','publico'])
-    .order('created_at', { ascending: false })
-    .limit(60);
-
-  const { data: fotasMias } = await db
-    .from('photos')
-    .select('*')
-    .eq('user_id', state.user.id)
-    .order('created_at', { ascending: false })
-    .limit(60);
+  // TODAS LAS QUERIES EN PARALELO — de ~6 llamadas secuenciales a 3 simultáneas
+  const [
+    { data: fotasAmigos },
+    { data: fotasMias },
+    { data: visits },
+  ] = await Promise.all([
+    db.from('photos').select('*')
+      .in('user_id', friendIds)
+      .in('visibilidad', ['amigos','publico'])
+      .order('created_at', { ascending: false }).limit(60),
+    db.from('photos').select('*')
+      .eq('user_id', state.user.id)
+      .order('created_at', { ascending: false }).limit(60),
+    db.from('visits').select('*, profiles(id,username,avatar_url)')
+      .in('user_id', allIds)
+      .order('created_at', { ascending: false }).limit(40),
+  ]);
 
   const todasFotas = [...(fotasAmigos||[]), ...(fotasMias||[])];
 
-  // Índice: user_id -> lista de fotos (ordenadas por fecha)
   const fotasByUser = {};
+  const fotasByMuniUser = {};
   todasFotas.forEach(f => {
     if (!fotasByUser[f.user_id]) fotasByUser[f.user_id] = [];
     fotasByUser[f.user_id].push(f);
-  });
-
-  // Índice secundario por user_id + municipio normalizado
-  const fotasByMuniUser = {};
-  todasFotas.forEach(f => {
     const key = f.user_id + '|' + normalizeMuni(f.municipio);
     if (!fotasByMuniUser[key]) fotasByMuniUser[key] = [];
     fotasByMuniUser[key].push(f);
   });
 
-  // Visitas (amigos + mías) — traer con perfil
-  const { data: visits } = await db
-    .from('visits')
-    .select('*, profiles(id, username, avatar_url)')
-    .in('user_id', allIds)
-    .order('created_at', { ascending: false })
-    .limit(40);
-
-  // Filtrar visitas: las mías siempre, las de amigos según visibilidad
   const visibleVisits = (visits || []).filter(v =>
-    v.user_id === state.user.id ||
-    ['amigos','publico'].includes(v.visibilidad)
+    v.user_id === state.user.id || ['amigos','publico'].includes(v.visibilidad)
   );
 
+  // Guardar en cache
+  state.feedCache = { visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles };
+  state.feedCacheTime = Date.now();
+
+  renderFeedPosts(visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles);
+}
+
+function renderFeedFromCache() {
+  const { visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles } = state.feedCache;
+  renderStories(friendProfiles);
   renderFeedPosts(visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles);
 }
 
@@ -1808,3 +1805,132 @@ async function init() {
 }
 
 init();
+
+
+// ══════════════════════════════════════════════════════════════
+//  NOTIFICACIONES PUSH
+// ══════════════════════════════════════════════════════════════
+
+const VAPID_PUBLIC_KEY = ''; // Rellenar después de generar las claves VAPID
+
+async function registerPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.log('Push no soportado en este dispositivo');
+    return;
+  }
+  if (!state.user) return;
+
+  try {
+    // Pedir permiso
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      console.log('Permiso de notificaciones denegado');
+      return;
+    }
+
+    if (!VAPID_PUBLIC_KEY) {
+      console.log('VAPID key no configurada todavía');
+      return;
+    }
+
+    // Obtener registro del SW
+    const reg = await navigator.serviceWorker.ready;
+
+    // Suscribirse al push
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+
+    // Guardar suscripción en Supabase
+    const subJson = sub.toJSON();
+    await db.from('push_subscriptions').upsert({
+      user_id:   state.user.id,
+      endpoint:  subJson.endpoint,
+      p256dh:    subJson.keys.p256dh,
+      auth:      subJson.keys.auth,
+      device:    navigator.userAgent.includes('iPhone') ? 'ios' : 'android',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,endpoint' });
+
+    console.log('✅ Push registrado');
+    state.pushRegistered = true;
+  } catch(err) {
+    console.error('Error registrando push:', err);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw     = window.atob(base64);
+  const output  = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+  return output;
+}
+
+// Botón para activar notificaciones — llamado desde perfil
+async function toggleNotifications() {
+  const btn = document.getElementById('btn-notif');
+  if (!btn) return;
+
+  if (state.pushRegistered) {
+    btn.textContent = '🔔 Notificaciones activas';
+    return;
+  }
+
+  btn.textContent = 'Activando...';
+  btn.disabled = true;
+  await registerPushNotifications();
+  btn.disabled = false;
+  btn.textContent = state.pushRegistered ? '🔔 Notificaciones activas' : '🔕 Activar notificaciones';
+}
+
+// Escuchar cambios en tiempo real (Supabase Realtime)
+// Esto actualiza el feed cuando un amigo sube algo nuevo
+function subscribeToFriendActivity() {
+  if (!state.user || state.realtimeSubscribed) return;
+  state.realtimeSubscribed = true;
+
+  // Escuchar nuevas visitas
+  db.channel('friend-visits')
+    .on('postgres_changes', {
+      event:  'INSERT',
+      schema: 'public',
+      table:  'visits',
+    }, payload => {
+      // Solo refrescar si es de un amigo
+      const isFriend = state.feedCache?.friendProfiles?.some(f => f.id === payload.new.user_id);
+      if (isFriend || payload.new.user_id === state.user.id) {
+        state.feedCache = null; // invalidar cache
+        showFeedBadge();
+      }
+    })
+    .on('postgres_changes', {
+      event:  'INSERT',
+      schema: 'public',
+      table:  'photo_comments',
+    }, payload => {
+      // Refrescar comentarios del post afectado
+      loadVisitComments(payload.new.photo_id, null);
+    })
+    .subscribe();
+}
+
+function showFeedBadge() {
+  // Mostrar punto rojo en el botón de amigos para indicar actividad nueva
+  const btns = document.querySelectorAll('[id^="nb-"][id$="-feed"]');
+  btns.forEach(btn => {
+    if (!btn.querySelector('.feed-badge')) {
+      const dot = document.createElement('div');
+      dot.className = 'feed-badge';
+      dot.style.cssText = 'position:absolute;top:6px;right:10px;width:8px;height:8px;background:#e8288a;border-radius:50%;border:2px solid #0f1923';
+      btn.style.position = 'relative';
+      btn.appendChild(dot);
+    }
+  });
+}
+
+function clearFeedBadge() {
+  document.querySelectorAll('.feed-badge').forEach(el => el.remove());
+}
