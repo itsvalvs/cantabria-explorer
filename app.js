@@ -1811,7 +1811,7 @@ init();
 //  NOTIFICACIONES PUSH
 // ══════════════════════════════════════════════════════════════
 
-const VAPID_PUBLIC_KEY = ''; // Rellenar después de generar las claves VAPID
+const VAPID_PUBLIC_KEY = 'BNfIzrTxXHAV3Cgsc_EKCt3AdRwUpO2Ls3s5zMg_52mYSO9F6JrZn-t1GDLxnmzd8NFo8jJfd8B_5Q6WZmZKuIg'; // Rellenar después de generar las claves VAPID
 
 async function registerPushNotifications() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
