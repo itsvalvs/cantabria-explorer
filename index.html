@@ -211,7 +211,7 @@
     .story-name{font-size:10px;color:var(--muted);max-width:52px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .feed-post{margin:0 12px 16px;background:var(--bg2);border-radius:18px;overflow:hidden;border:1px solid var(--border);}
     .post-header{display:flex;align-items:center;gap:10px;padding:12px 14px 10px;}
-    .post-av{width:36px;height:36px;border-radius:50%;background:var(--bg3);border:1.5px solid var(--blue);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;font-family:'Playfair Display',serif;flex-shrink:0;}
+    .post-av{width:34px;height:34px;border-radius:50%;background:var(--bg3);border:1.5px solid var(--blue);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;font-family:'Playfair Display',serif;flex-shrink:0;overflow:hidden;}
     .post-user{font-size:13px;font-weight:500;color:var(--text);}
     .post-time{font-size:11px;color:var(--hint);margin-top:1px;}
     .post-badge{margin-left:auto;display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:10px;font-weight:500;flex-shrink:0;}
@@ -229,6 +229,16 @@
     .post-action.liked{color:#e84a70;}
     .post-action i{font-size:16px;}
     #search-results{padding:0 14px 10px;}
+    .post-comments{margin-top:8px;}
+    .comment{display:flex;gap:7px;margin-bottom:6px;align-items:flex-start;}
+    .c-av{width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;font-size:7px;font-family:'Playfair Display',serif;flex-shrink:0;overflow:hidden;margin-top:1px;}
+    .c-av img{width:100%;height:100%;object-fit:cover;border-radius:50%;}
+    .c-text{font-size:12px;color:#ffffff;line-height:1.45;flex:1;}
+    .c-text strong{color:#fff;font-weight:600;margin-right:4px;}
+    .c-del{background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:10px;padding:0;flex-shrink:0;margin-top:2px;}
+    .comment-input-row{display:flex;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);}
+    .comment-input{flex:1;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;font-size:12px;color:#fff;font-family:Inter,sans-serif;outline:none;}
+    .comment-send{padding:6px 11px;background-color:#2272e8;color:#fff;border:none;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;}
 
     /* PROFILE */
     .ph{padding:16px 18px 10px;border-bottom:1px solid var(--border);}
@@ -544,6 +554,10 @@
         <div class="sc2"><div class="sn" id="sv">0</div><div class="sl">Conquistados</div></div>
         <div class="sc2"><div class="sn" id="sp">0%</div><div class="sl">Completado</div></div>
         <div class="sc2"><div class="sn" id="sph">0</div><div class="sl">Fotos</div></div>
+        <div class="sc2" onclick="openFriendsModal()" style="cursor:pointer;border:1px solid rgba(232,104,32,0.3)">
+          <div class="sn" id="sf">0</div>
+          <div class="sl" style="color:#e86820">Amigos</div>
+        </div>
       </div>
       <!-- SOLICITUDES DE AMISTAD -->
       <div id="solicitudes-section" style="border-bottom:1px solid rgba(255,255,255,0.07)"></div>
@@ -560,6 +574,19 @@
       <div class="pmc"><img class="pmc-img" id="pm-img" src="" alt="foto visita"/><div class="pmc-meta" id="pm-meta"></div></div>
     </div>
     <div class="nav" id="nav-profile"></div>
+  </div>
+
+  <!-- MODAL LISTA DE AMIGOS -->
+  <div id="friends-list-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100;flex-direction:column;justify-content:flex-end;">
+    <div style="background:#141e2c;border-radius:22px 22px 0 0;max-height:80vh;overflow-y:auto;animation:su .22s ease">
+      <div style="padding:16px 18px 0;position:relative;border-bottom:1px solid rgba(255,255,255,0.07)">
+        <button onclick="closeFriendsModal()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;">
+          <i class="ti ti-x" aria-hidden="true"></i>
+        </button>
+        <h2 style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#fff;margin-bottom:14px">Mis amigos</h2>
+      </div>
+      <div id="friends-list-content" style="padding:12px 14px 24px"></div>
+    </div>
   </div>
 
   <!-- MODAL PERFIL DE AMIGO -->
