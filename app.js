@@ -1882,10 +1882,9 @@ function updateClock() {
   document.querySelectorAll('.clock').forEach(el => { el.textContent = t; });
 }
 
-// ── SERVICE WORKER ────────────────────────────────────────────
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-}
+// ── SERVICE WORKER — DESACTIVADO ─────────────────────────────
+// El cache se gestiona con el script nuclear en el HTML
+// No registramos ningún SW para evitar problemas de cache en iOS
 
 // ── INIT ──────────────────────────────────────────────────────
 // ── ANTI-CACHE: detectar nueva versión y limpiar ─────────────────────────
@@ -1920,16 +1919,10 @@ async function checkForUpdates() {
 function registerSW() {}
 
 async function init() {
-  // Limpiar cache si hay nueva versión
-  await checkForUpdates();
-
   buildNavs();
   renderDice(6);
   updateClock();
   setInterval(updateClock, 30000);
-
-  // Registrar SW
-  registerSW();
 
   // Escuchar cambios de sesión
   db.auth.onAuthStateChange(async (event, session) => {
