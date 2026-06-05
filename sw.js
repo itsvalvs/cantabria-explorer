@@ -1,15 +1,9 @@
-// Service Worker — siempre red, sin cache
-// iOS Safari necesita esto para no mostrar pantalla negra al recargar
+// Service Worker — sin cache, siempre red
+// Versión: 2026-06-05
 
-const CACHE_NAME = 'cantabria-v1';
-
-self.addEventListener('install', e => {
-  // Activar inmediatamente sin esperar
-  self.skipWaiting();
-});
+self.addEventListener('install', () => self.skipWaiting());
 
 self.addEventListener('activate', e => {
-  // Borrar TODOS los caches anteriores
   e.waitUntil(
     caches.keys()
       .then(keys => Promise.all(keys.map(k => caches.delete(k))))
@@ -17,27 +11,30 @@ self.addEventListener('activate', e => {
   );
 });
 
+// Responder a mensaje de actualización forzada
+self.addEventListener('message', e => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
 self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
-
   // Solo interceptar requests del mismo origen
-  if (url.origin !== location.origin) return;
+  if (!e.request.url.startsWith(self.location.origin)) return;
 
-  // Estrategia: Network first, sin cache
-  // Si la red falla, devolver página básica de error
+  // NUNCA usar cache — siempre red directa
   e.respondWith(
-    fetch(e.request)
-      .catch(() => {
-        // Solo para navegación (no assets)
-        if (e.request.mode === 'navigate') {
-          return new Response(
-            '<html><body style="background:#0f1923;color:white;font-family:sans-serif;padding:30px;text-align:center">' +
-            '<h2>Sin conexión</h2><p>Comprueba tu conexión a internet y recarga.</p>' +
-            '<button onclick="location.reload()" style="padding:12px 24px;background:#22b050;color:white;border:none;border-radius:10px;font-size:16px;cursor:pointer;margin-top:10px">Reintentar</button>' +
-            '</body></html>',
-            { headers: { 'Content-Type': 'text/html' } }
-          );
-        }
-      })
+    fetch(e.request).catch(() => {
+      // Solo para navegación — página de error offline
+      if (e.request.mode === 'navigate') {
+        return new Response(
+          '<html><meta name="viewport" content="width=device-width"><body style="background:#0f1923;color:white;font-family:sans-serif;padding:40px 20px;text-align:center">' +
+          '<div style="font-size:40px;margin-bottom:16px">📡</div>' +
+          '<h2 style="font-family:serif;margin-bottom:8px">Sin conexión</h2>' +
+          '<p style="color:rgba(255,255,255,0.5);margin-bottom:24px">Comprueba tu conexión e inténtalo de nuevo</p>' +
+          '<button onclick="location.reload()" style="padding:12px 28px;background:#22b050;color:white;border:none;border-radius:12px;font-size:16px;cursor:pointer">Reintentar</button>' +
+          '</body></html>',
+          { headers: { 'Content-Type': 'text/html' } }
+        );
+      }
+    })
   );
 });
