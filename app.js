@@ -69,6 +69,7 @@ function updateNavColors(activeScreen) {
 
 // ── AUTH — PANTALLA DE LOGIN ──────────────────────────────────
 function showAuth(msg = '') {
+  document.getElementById('splash')?.remove();
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'flex';
   if (msg) {
@@ -79,6 +80,7 @@ function showAuth(msg = '') {
 }
 
 function showApp() {
+  document.getElementById('splash')?.remove();
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
 }
@@ -1924,8 +1926,18 @@ async function init() {
   updateClock();
   setInterval(updateClock, 30000);
 
+  // Timeout de seguridad — si Supabase no responde en 6s, mostrar login
+  const splashTimeout = setTimeout(() => {
+    const splash = document.getElementById('splash');
+    if (splash) {
+      splash.remove();
+      showAuth();
+    }
+  }, 6000);
+
   // Escuchar cambios de sesión
   db.auth.onAuthStateChange(async (event, session) => {
+    clearTimeout(splashTimeout);
     if (session?.user) {
       await loadUserData(session.user);
       showApp();
@@ -1938,6 +1950,7 @@ async function init() {
 
   // Sesión activa
   const { data: { session } } = await db.auth.getSession();
+  clearTimeout(splashTimeout);
   if (session?.user) {
     await loadUserData(session.user);
     showApp();
