@@ -278,6 +278,19 @@
   </style>
 </head>
 <body>
+<!-- PANTALLA DE CARGA — visible inmediatamente, se oculta cuando Supabase responde -->
+<div id="splash" style="
+  position:fixed;inset:0;
+  background:#0f1923;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  z-index:9999;
+  font-family:'Inter',sans-serif;
+">
+  <div style="font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:#fff;letter-spacing:.05em;margin-bottom:8px">Cantabria</div>
+  <div style="font-size:13px;color:rgba(255,255,255,0.35);margin-bottom:32px">Explorer</div>
+  <div style="width:32px;height:32px;border:3px solid rgba(255,255,255,0.1);border-top-color:#22b050;border-radius:50%;animation:spin .8s linear infinite"></div>
+</div>
 
 <!-- ══ PANTALLA DE LOGIN ══ -->
 <div id="auth-screen">
@@ -630,20 +643,46 @@
 
 <!-- Supabase JS -->
 <script>
-// NUCLEAR CACHE BUSTER — ejecuta antes que todo lo demás
-(async function() {
-  try {
-    // 1. Desregistrar TODOS los service workers
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map(r => r.unregister()));
+// ANTI-BFCACHE + ANTI-CACHE — ejecuta antes que todo
+(function() {
+  // 1. BFCache fix — cuando Safari restaura página congelada, recargar
+  window.addEventListener('pageshow', function(e) {
+    if (e.persisted) {
+      // La página viene del BFCache — forzar recarga completa
+      window.location.reload(true);
     }
-    // 2. Borrar TODOS los caches
-    if ('caches' in window) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map(k => caches.delete(k)));
+  });
+
+  // 2. Visibilitychange fix — cuando vuelves a la pestaña tras fondo
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+      // Comprobar si la app está en estado roto (pantalla negra)
+      setTimeout(function() {
+        const app = document.getElementById('app');
+        const auth = document.getElementById('auth-screen');
+        if (app && auth) {
+          const appVisible  = app.style.display !== 'none' && app.style.display !== '';
+          const authVisible = auth.style.display !== 'none' && auth.style.display !== '';
+          if (!appVisible && !authVisible) {
+            // Ninguna pantalla visible — estado roto, recargar
+            window.location.reload(true);
+          }
+        }
+      }, 500);
     }
-  } catch(e) {}
+  });
+
+  // 3. Desregistrar SW y limpiar cache
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(function(regs) {
+      regs.forEach(function(r) { r.unregister(); });
+    }).catch(function(){});
+  }
+  if ('caches' in window) {
+    caches.keys().then(function(keys) {
+      keys.forEach(function(k) { caches.delete(k); });
+    }).catch(function(){});
+  }
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
