@@ -629,6 +629,23 @@
 </div><!-- /app -->
 
 <!-- Supabase JS -->
+<script>
+// NUCLEAR CACHE BUSTER — ejecuta antes que todo lo demás
+(async function() {
+  try {
+    // 1. Desregistrar TODOS los service workers
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    // 2. Borrar TODOS los caches
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch(e) {}
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <!-- D3 + TopoJSON -->
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
