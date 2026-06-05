@@ -1149,6 +1149,10 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${v.municipio}">
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
+          ${v.user_id === state.user?.id ? `
+          <button class="post-action" onclick="deleteFeedPost('${v.id}','${foto ? foto.id : ''}','${foto ? (foto.path||foto.storage_path||'') : ''}')" style="color:rgba(232,40,40,0.5)">
+            <i class="ti ti-trash" aria-hidden="true"></i>
+          </button>` : ''}
         </div>
         <!-- Comentarios: usar foto.id si hay foto, visit.id como fallback -->
         <div id="comments-${foto ? foto.id : v.id}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -1227,7 +1231,11 @@ async function loadVisitComments(commentId, visitId) {
     const avatar   = c.profiles?.avatar_url
       ? '<img src="' + c.profiles.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + u + '"/>'
       : initials;
-    return '<div class="comment"><div class="c-av">' + avatar + '</div><div class="c-text"><strong>' + u + '</strong> ' + c.texto + '</div></div>';
+    const isMe  = c.user_id === state.user?.id;
+    const delBtn = isMe
+      ? '<button class="c-del" onclick="deleteComment(\'' + c.id + '\',\'' + id + '\')" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+      : '';
+    return '<div class="comment"><div class="c-av">' + avatar + '</div><div class="c-text"><strong>' + u + '</strong> ' + c.texto + '</div>' + delBtn + '</div>';
   }).join('');
 }
 
@@ -1251,6 +1259,29 @@ async function postComment(visitId, targetUserId, municipio) {
     alert('Error al comentar: ' + err.message);
   } finally {
     input.disabled = false;
+  }
+}
+
+async function deleteFeedPost(visitId, photoId, storagePath) {
+  if (!state.user) return;
+  if (!confirm('¿Borrar esta publicación?')) return;
+  try {
+    // Borrar foto del storage si existe
+    if (storagePath && storagePath !== 'text_only' && storagePath !== '') {
+      await db.storage.from('evidencias').remove([storagePath]);
+    }
+    // Borrar foto de la tabla
+    if (photoId) await db.from('photos').delete().eq('id', photoId).eq('user_id', state.user.id);
+    // Borrar visita
+    await db.from('visits').delete().eq('id', visitId).eq('user_id', state.user.id);
+    // Actualizar estado
+    delete state.visited[state.feedCache?.visibleVisits?.find(v => v.id === visitId)?.municipio];
+    state.feedCache = null;
+    state.photos = state.photos.filter(p => p.id !== photoId);
+    updateProgress();
+    loadFeed(true);
+  } catch(err) {
+    alert('Error al borrar: ' + err.message);
   }
 }
 
@@ -1443,7 +1474,58 @@ async function renderProfile() {
   document.getElementById('sp').textContent  = Math.round(c / state.totalMuni * 100) + '%';
   document.getElementById('sph').textContent = state.photos.length;
   renderGallery();
-  await loadSolicitudes();
+  await Promise.all([loadSolicitudes(), loadFriendCount()]);
+}
+
+async function loadFriendCount() {
+  if (!state.user) return;
+  const { count } = await db
+    .from('friendships')
+    .select('*', { count: 'exact', head: true })
+    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+    .eq('estado', 'aceptado');
+  const el = document.getElementById('sf');
+  if (el) el.textContent = count || 0;
+}
+
+async function openFriendsModal() {
+  const modal = document.getElementById('friends-list-modal');
+  const content = document.getElementById('friends-list-content');
+  if (!modal || !content) return;
+  content.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:10px 0">Cargando...</div>';
+  modal.style.display = 'flex';
+
+  const { data: friends } = await db
+    .from('friendships')
+    .select('follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)')
+    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+    .eq('estado', 'aceptado');
+
+  const seen = new Set();
+  const list = (friends || []).map(f =>
+    f.follower_id === state.user.id ? f.following : f.follower
+  ).filter(p => { if (!p || seen.has(p.id)) return false; seen.add(p.id); return true; });
+
+  if (!list.length) {
+    content.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:20px 0;text-align:center">Aún no tienes amigos añadidos</div>';
+    return;
+  }
+
+  content.innerHTML = list.map(p => {
+    const init = (p.username||'?').split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const av   = p.avatar_url
+      ? '<img src="' + p.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + p.username + '"/>'
+      : init;
+    return '<div onclick="closeFriendsModal();openFriendProfile(\'' + p.id + '\',\'' + p.username.replace(/'/g,"\\'") + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer">' +
+      '<div style="width:42px;height:42px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + av + '</div>' +
+      '<div style="flex:1"><div style="font-size:14px;font-weight:500;color:#fff">' + p.username + '</div></div>' +
+      '<i class="ti ti-chevron-right" style="color:rgba(255,255,255,0.2);font-size:16px" aria-hidden="true"></i>' +
+    '</div>';
+  }).join('');
+}
+
+function closeFriendsModal() {
+  document.getElementById('friends-list-modal').style.display = 'none';
 }
 
 async function loadSolicitudes() {
@@ -1590,6 +1672,7 @@ function renderGallery() {
 
 function openPM(i) {
   const p = state.photos[i];
+  state.currentPhotoIndex = i;
   const imgEl = document.getElementById('pm-img');
   if (p.src) {
     imgEl.src   = p.src + '?nocache=' + Date.now();
@@ -1604,6 +1687,11 @@ function openPM(i) {
     <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${p.time || '—'}</strong></div>
     <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${p.coords || '—'}</strong></div>
     ${p.desc ? `<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${p.desc}</strong></div>` : ''}
+    <div class="mrow" style="padding-bottom:4px">
+      <button onclick="deletePhoto(${i})" style="width:100%;padding:10px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">
+        <i class="ti ti-trash" aria-hidden="true"></i> Borrar foto
+      </button>
+    </div>
     <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>
       <strong style="display:flex;gap:6px;margin-top:4px">
         ${['privado','amigos','publico'].map(v => `
@@ -1630,6 +1718,32 @@ async function changePhotoVis(photoId, vis, btn) {
 }
 
 function closePM() { document.getElementById('photo-modal').classList.remove('open'); }
+
+async function deletePhoto(i) {
+  const p = state.photos[i];
+  if (!p || !state.user) return;
+  if (!confirm('¿Borrar esta foto de ' + p.muni + '? Esta acción no se puede deshacer.')) return;
+
+  try {
+    // Borrar de Storage si tiene path real
+    if (p.path && p.path !== 'text_only') {
+      await db.storage.from('evidencias').remove([p.path]);
+    }
+    // Borrar de la tabla photos
+    if (p.id) {
+      await db.from('photos').delete().eq('id', p.id).eq('user_id', state.user.id);
+    }
+    // Actualizar estado local
+    state.photos.splice(i, 1);
+    state.feedCache = null;
+    closePM();
+    renderGallery();
+    const c = Object.keys(state.visited).length;
+    document.getElementById('sph').textContent = state.photos.length;
+  } catch(err) {
+    alert('Error al borrar: ' + err.message);
+  }
+}
 
 function toggleEdit() {
   const r = document.getElementById('u-edit-row');
