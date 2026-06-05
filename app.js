@@ -1916,31 +1916,8 @@ async function checkForUpdates() {
   }
 }
 
-// ── Registrar SW con detección de actualización ───────────────────────────
-async function registerSW() {
-  if (!('serviceWorker' in navigator)) return;
-  try {
-    const reg = await navigator.serviceWorker.register('sw.js');
-
-    // Detectar cuando hay un nuevo SW listo
-    reg.addEventListener('updatefound', () => {
-      const newSW = reg.installing;
-      if (!newSW) return;
-      newSW.addEventListener('statechange', () => {
-        // Nuevo SW instalado y activo — el cache ya está limpio
-        if (newSW.state === 'activated') {
-          console.log('SW actualizado');
-        }
-      });
-    });
-
-    // Forzar que el SW activo tome control inmediatamente
-    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-
-  } catch(e) {
-    console.log('SW registro error:', e);
-  }
-}
+// SW desactivado — cache limpiado por el script nuclear en el HTML
+function registerSW() {}
 
 async function init() {
   // Limpiar cache si hay nueva versión
