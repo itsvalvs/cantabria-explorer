@@ -1774,11 +1774,71 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── INIT ──────────────────────────────────────────────────────
+// ── ANTI-CACHE: detectar nueva versión y limpiar ─────────────────────────
+async function checkForUpdates() {
+  try {
+    // Leer la versión actual del HTML
+    const currentVersion = document.querySelector('meta[name="app-version"]')?.content;
+    if (!currentVersion) return;
+
+    // Comparar con la última versión guardada
+    const savedVersion = localStorage.getItem('ce_version');
+
+    if (savedVersion && savedVersion !== currentVersion) {
+      console.log('Nueva versión detectada, limpiando cache...');
+      // Borrar todos los caches del SW
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      // Actualizar versión guardada
+      localStorage.setItem('ce_version', currentVersion);
+      // No recargar — el cache ya está limpio para la próxima vez
+    } else {
+      localStorage.setItem('ce_version', currentVersion);
+    }
+  } catch(e) {
+    console.log('checkForUpdates error:', e);
+  }
+}
+
+// ── Registrar SW con detección de actualización ───────────────────────────
+async function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js');
+
+    // Detectar cuando hay un nuevo SW listo
+    reg.addEventListener('updatefound', () => {
+      const newSW = reg.installing;
+      if (!newSW) return;
+      newSW.addEventListener('statechange', () => {
+        // Nuevo SW instalado y activo — el cache ya está limpio
+        if (newSW.state === 'activated') {
+          console.log('SW actualizado');
+        }
+      });
+    });
+
+    // Forzar que el SW activo tome control inmediatamente
+    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+
+  } catch(e) {
+    console.log('SW registro error:', e);
+  }
+}
+
 async function init() {
+  // Limpiar cache si hay nueva versión
+  await checkForUpdates();
+
   buildNavs();
   renderDice(6);
   updateClock();
   setInterval(updateClock, 30000);
+
+  // Registrar SW
+  registerSW();
 
   // Escuchar cambios de sesión
   db.auth.onAuthStateChange(async (event, session) => {
@@ -1811,7 +1871,7 @@ init();
 //  NOTIFICACIONES PUSH
 // ══════════════════════════════════════════════════════════════
 
-const VAPID_PUBLIC_KEY = 'BNfIzrTxXHAV3Cgsc_EKCt3AdRwUpO2Ls3s5zMg_52mYSO9F6JrZn-t1GDLxnmzd8NFo8jJfd8B_5Q6WZmZKuIg'; // Rellenar después de generar las claves VAPID
+const VAPID_PUBLIC_KEY = ''; // Rellenar después de generar las claves VAPID
 
 async function registerPushNotifications() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
