@@ -8,3 +8,5 @@ self.addEventListener('activate', e => {
       .then(() => self.registration.unregister())
   );
 });
+
+
