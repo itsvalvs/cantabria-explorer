@@ -321,6 +321,14 @@
     <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Cantabria</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
     <div class="sc">
       <div class="map-top"><h1>Tu mapa<br>de aventuras</h1><p>Toca un municipio y sube tu evidencia</p></div>
+      <div style="padding:0 12px 8px;position:relative">
+        <input id="map-search-input" type="text" placeholder="Buscar municipio..."
+          oninput="searchMuniOnMap(this.value)"
+          autocomplete="off" autocorrect="off" spellcheck="false"
+          style="width:100%;padding:10px 36px 10px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:14px;color:#fff;font-family:Inter,sans-serif;outline:none;"/>
+        <i class="ti ti-search" aria-hidden="true" style="position:absolute;right:22px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.3);font-size:16px;pointer-events:none"></i>
+        <div id="map-search-results" style="display:none;position:absolute;left:12px;right:12px;top:calc(100% - 4px);background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:0 0 12px 12px;z-index:20;max-height:200px;overflow-y:auto"></div>
+      </div>
       <div class="prog-wrap"><div class="prog-fill" id="pfill"></div></div>
       <div class="prog-lbl"><span id="plabel">0 municipios conquistados</span><span id="ppct">0 / 102</span></div>
       <div class="map-cont" id="map-cont">
@@ -707,6 +715,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App -->
-<script src="app.min.js?v=202606061336"></script>
+<script src="app.min.js?v=202606061403"></script>
 </body>
 </html>
