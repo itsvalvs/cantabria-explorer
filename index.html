@@ -465,7 +465,9 @@
     <div id="muni-modal" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.82);z-index:30;flex-direction:column;justify-content:flex-end;">
       <div style="background:#141e2c;border-radius:22px 22px 0 0;overflow-y:auto;max-height:88vh;animation:su .22s ease">
         <div style="position:relative">
-          <div id="mm-header" style="padding:24px 18px 16px;background:linear-gradient(135deg,#0d2a4a,#0d2a1e)">
+          <div id="mm-header" style="padding:0;background:linear-gradient(135deg,#0d2a4a,#0d2a1e);position:relative">
+            <div id="mm-img-wrap" style="width:100%;height:160px;overflow:hidden;display:none"><img id="mm-img" style="width:100%;height:100%;object-fit:cover;display:block" alt=""/></div>
+            <div style="padding:16px 18px 16px">
             <button onclick="closeMuniModal()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;">
               <i class="ti ti-x" aria-hidden="true"></i>
             </button>
@@ -475,6 +477,7 @@
             <h2 id="mm-name" style="font-family:'Playfair Display',serif;font-size:26px;font-weight:700;color:#fff;line-height:1.1"></h2>
             <p id="mm-comarca" style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:4px"></p>
             <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap" id="mm-pills"></div>
+            </div>
           </div>
           <div style="padding:16px 18px 24px">
             <!-- Descripción -->
@@ -532,7 +535,7 @@
         <button onclick="searchUser()" style="padding:9px 14px;background-color:#2272e8;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">Buscar</button>
       </div>
       <div id="search-results"></div>
-      <div class="stories-row" id="stories-row"></div>
+      <div class="stories-row" id="stories-row" style="display:none"></div>
       <div id="feed-posts"></div>
     </div>
     <div class="nav" id="nav-feed"></div>
@@ -690,6 +693,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App -->
-<script src="app.min.js?v=202606061203"></script>
+<script src="app.min.js?v=202606061235"></script>
 </body>
 </html>
