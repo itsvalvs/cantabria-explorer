@@ -458,21 +458,33 @@
       </div>
 
       <!-- LISTA DE MUNICIPIOS -->
-      <div style="padding:16px 14px 8px;display:flex;align-items:center;justify-content:space-between">
-        <h2 style="font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#fff">Todos los municipios</h2>
-        <div style="display:flex;gap:6px">
+      <div style="padding:16px 14px 4px">
+        <h2 style="font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#fff;margin-bottom:10px">Todos los municipios</h2>
+        <!-- Filtros principales -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
           <button onclick="filterMuniList('todos')" id="mf-todos"
-            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:#e8b820;color:#fff;">
-            Todos
-          </button>
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:#e8b820;color:#fff;">Todos</button>
           <button onclick="filterMuniList('costa')" id="mf-costa"
-            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">
-            Costa
-          </button>
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">🌊 Costa</button>
           <button onclick="filterMuniList('montaña')" id="mf-mont"
-            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">
-            Montaña
-          </button>
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">⛰️ Montaña</button>
+          <button onclick="filterMuniList('populares')" id="mf-pop"
+            style="padding:5px 11px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);">🔥 Populares</button>
+        </div>
+        <!-- Filtros por sello -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+          <button onclick="filterMuniList('playa_azul')" id="mf-playa_azul"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);">🏖️ Playa Azul</button>
+          <button onclick="filterMuniList('picos')" id="mf-picos"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);">🏔️ Picos</button>
+          <button onclick="filterMuniList('patrimonio')" id="mf-patrimonio"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);">🏛️ Patrimonio</button>
+          <button onclick="filterMuniList('cuevas')" id="mf-cuevas"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);">🎨 Arte rupestre</button>
+          <button onclick="filterMuniList('gastronomico')" id="mf-gastronomico"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);">🍽️ Gastronómico</button>
+          <button onclick="filterMuniList('festivo')" id="mf-festivo"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);">🎭 Festivo</button>
         </div>
       </div>
       <div style="padding:0 14px 4px">
@@ -653,6 +665,13 @@
               </h3>
               <div id="mm-comer"></div>
             </div>
+            <!-- Sin gluten -->
+            <div id="mm-sg-wrap" style="display:none;margin-bottom:16px">
+              <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">
+                🌾 Sin gluten
+              </h3>
+              <div id="mm-comer-sg"></div>
+            </div>
             <!-- Evidencias de amigos -->
             <div style="margin-bottom:16px">
               <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">
@@ -720,6 +739,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App -->
-<script src="app.min.js?v=202606070924"></script>
+<script src="app.min.js?v=202606071000"></script>
 </body>
 </html>
