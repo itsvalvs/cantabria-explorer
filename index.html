@@ -673,6 +673,19 @@
               </h3>
               <div id="mm-comer-sg"></div>
             </div>
+            <!-- Recomendaciones de amigos -->
+            <div style="margin-bottom:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase">
+                  <i class="ti ti-star" aria-hidden="true" style="color:#e8b820"></i> Lo que dicen tus amigos
+                </h3>
+                <button onclick="openRecModal(document.getElementById('mm-nombre').textContent)"
+                  style="padding:4px 10px;background:rgba(34,176,80,0.15);border:1px solid rgba(34,176,80,0.3);color:#22b050;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">
+                  + Recomendar
+                </button>
+              </div>
+              <div id="mm-recomendaciones"></div>
+            </div>
             <!-- Evidencias de amigos -->
             <div style="margin-bottom:16px">
               <h3 style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">
@@ -688,6 +701,38 @@
         </div>
       </div>
     </div>
+
+  <!-- MODAL RECOMENDAR SITIO -->
+  <div id="recomendacion-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:200;flex-direction:column;justify-content:flex-end">
+    <div style="background:#141e2c;border-radius:22px 22px 0 0;padding:20px 18px 36px;animation:su .22s ease">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h3 style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#fff">Recomendar en <span id="rec-muni-title"></span></h3>
+        <button onclick="closeRecModal()" style="background:rgba(255,255,255,0.1);border:none;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:14px">✕</button>
+      </div>
+      <!-- Tipo -->
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button id="rec-tipo-sitio" onclick="setRecTipo('sitio')"
+          style="flex:1;padding:10px;border:1.5px solid #2272e8;border-radius:12px;background:rgba(34,114,232,0.15);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">
+          📍 Sitio que ver
+        </button>
+        <button id="rec-tipo-comida" onclick="setRecTipo('comida')"
+          style="flex:1;padding:10px;border:1.5px solid rgba(255,255,255,0.1);border-radius:12px;background:transparent;color:rgba(255,255,255,0.5);font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">
+          🍽️ Comida
+        </button>
+      </div>
+      <!-- Nombre -->
+      <input id="rec-nombre" type="text" placeholder="Nombre del sitio..." maxlength="80"
+        style="width:100%;padding:11px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:14px;color:#fff;font-family:Inter,sans-serif;outline:none;margin-bottom:10px;box-sizing:border-box"/>
+      <!-- Comentario -->
+      <textarea id="rec-comentario" placeholder="Cuéntanos algo... (opcional)" maxlength="140" rows="2"
+        style="width:100%;padding:11px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:14px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;margin-bottom:14px;box-sizing:border-box"></textarea>
+      <!-- Botón -->
+      <button onclick="guardarRecomendacion()"
+        style="width:100%;padding:14px;background:#22b050;color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">
+        Guardar recomendación
+      </button>
+    </div>
+  </div>
 
 </div><!-- /app -->
 
@@ -740,6 +785,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App -->
-<script src="app.min.js?v=202606071127"></script>
+<script src="app.min.js?v=202606072005"></script>
 </body>
 </html>
