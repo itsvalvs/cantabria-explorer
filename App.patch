@@ -83,36 +83,49 @@ function setFeedFilter(filter) {
     b.style.backgroundColor = active ? '#2272e8' : 'rgba(255,255,255,0.08)';
     b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
   });
-  applyFeedFilter();
+  // Esperar a que el DOM esté listo
+  setTimeout(applyFeedFilter, 100);
 }
 
 function applyFeedFilter() {
   const posts = document.querySelectorAll('.feed-post');
+  if (!posts.length) {
+    // Feed aún cargando, reintentar
+    setTimeout(applyFeedFilter, 500);
+    return;
+  }
+
   posts.forEach(post => {
-    const muni = post.querySelector('.post-muni')?.textContent || 
-                 post.querySelector('[data-muni]')?.dataset.muni || '';
-    const isEvento = muni.startsWith('🎉');
+    // Buscar el municipio en post-location o post-muni
+    const locEl  = post.querySelector('.post-location');
+    const muniEl = post.querySelector('.post-muni');
+    const muni   = (locEl?.textContent || muniEl?.textContent || '').trim();
+    const isEvento = muni.includes('🎉');
+
     if (feedFilter === 'descubriendo') {
-      post.style.display = isEvento ? 'none' : 'block';
+      post.style.display = isEvento ? 'none' : '';
     } else if (feedFilter === 'eventos') {
-      post.style.display = isEvento ? 'block' : 'none';
+      post.style.display = isEvento ? '' : 'none';
     } else if (feedFilter === 'rutas') {
-      post.style.display = 'none'; // por implementar
+      post.style.display = 'none';
     }
   });
 
   // Mensaje si no hay posts visibles
-  const visible = [...posts].filter(p => p.style.display !== 'none');
-  const feedPosts = document.getElementById('feed-posts');
-  let emptyMsg = feedPosts?.querySelector('.feed-empty-msg');
-  if (!visible.length && feedPosts) {
+  const feedPosts  = document.getElementById('feed-posts');
+  const visible    = [...posts].filter(p => p.style.display !== 'none');
+  let emptyMsg     = feedPosts?.querySelector('.feed-empty-msg');
+
+  if (!visible.length && feedPosts && feedFilter !== 'descubriendo') {
     if (!emptyMsg) {
       emptyMsg = document.createElement('div');
       emptyMsg.className = 'feed-empty-msg';
       emptyMsg.style.cssText = 'text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px';
       feedPosts.appendChild(emptyMsg);
     }
-    emptyMsg.textContent = feedFilter === 'rutas' ? 'Las rutas están en camino 🥾' : 'Sin publicaciones en esta categoría';
+    emptyMsg.textContent = feedFilter === 'rutas'
+      ? '🥾 Las rutas están en camino...'
+      : 'Sin publicaciones de eventos';
     emptyMsg.style.display = 'block';
   } else if (emptyMsg) {
     emptyMsg.style.display = 'none';
