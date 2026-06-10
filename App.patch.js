@@ -6,17 +6,24 @@
 async function guardarNombre() {
   const v   = document.getElementById('u-inp').value.trim();
   const row = document.getElementById('u-edit-row');
-  if (!v || !state.user) return;
+  
+  console.log('guardarNombre llamado, valor:', v, 'user:', state?.user?.id);
+  
+  if (!v) { alert('Escribe un nombre'); return; }
+  if (!state?.user) { alert('No hay sesión activa'); return; }
 
   // Cerrar PRIMERO visualmente
   row.style.display = 'none';
   row.setAttribute('data-open', '0');
 
   // Luego guardar en BD
-  await db.from('profiles').update({ username: v }).eq('id', state.user.id);
+  const { error } = await db.from('profiles').update({ username: v }).eq('id', state.user.id);
+  if (error) { alert('Error: ' + error.message); return; }
+  
   if (state.profile) state.profile.username = v;
   document.getElementById('u-name').textContent  = v;
   document.getElementById('av-init').textContent = v.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+  console.log('Nombre guardado OK:', v);
 }
 
 // FIX 1b: toggleEdit limpio
