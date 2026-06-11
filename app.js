@@ -697,7 +697,7 @@ function renderEventos() {
             }),
             s = new Date(e.fecha),
             r = (new Date - s) / 864e5,
-            d = r >= 0 && r < 2 ? `<button onclick="openEventFotoSheet('${e.id}','${e.nombre.replace(/'/g,"\\'")}','${e.source||"local"}')"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
+            d = (t || r >= 0) ? `<button onclick="openEventFotoSheet('${e.id}','${e.nombre.replace(/'/g,"\\'")}','${e.source||"local"}')"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
         return `\n    <div class="ev-card">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${esc(e.nombre)}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>\n        <div class="ev-desc">${esc(e.descripcion||"")}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
     }).join(""), n.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); })
 }
@@ -1722,13 +1722,14 @@ async function loadMap() {
             // Tierra unificada
             g.append("path")
                 .datum(topojson.merge(i, vecinos))
-                .attr("d", l).attr("fill", "#41504a")
-                .attr("stroke", "none").attr("pointer-events", "none");
+                .attr("d", l).attr("fill", "#5d665a")
+                .attr("stroke", "rgba(255,255,255,0.07)").attr("stroke-width", "0.5px")
+                .attr("pointer-events", "none");
             // Límites entre provincias vecinas (sutil)
             g.append("path")
                 .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a !== b && provOf(a.id) !== provOf(b.id)))
                 .attr("d", l).attr("fill", "none")
-                .attr("stroke", "rgba(15,25,35,0.55)").attr("stroke-width", "0.7px")
+                .attr("stroke", "rgba(25,35,30,0.45)").attr("stroke-width", "0.7px")
                 .attr("pointer-events", "none").attr("class", "map-mesh-prov");
             // Costa/borde exterior de la tierra vecina
             g.append("path")
@@ -1737,6 +1738,19 @@ async function loadMap() {
                 .attr("stroke", "rgba(15,25,35,0.4)").attr("stroke-width", "0.5px")
                 .attr("pointer-events", "none");
         }
+
+        // Sombra bajo Cantabria: profundidad sobre el mar/tierra
+        const shadowF = defs.append("filter").attr("id", "cant-shadow")
+            .attr("x", "-20%").attr("y", "-20%").attr("width", "140%").attr("height", "140%");
+        shadowF.append("feGaussianBlur").attr("in", "SourceAlpha").attr("stdDeviation", "2.5");
+        shadowF.append("feOffset").attr("dy", "1.5");
+        shadowF.append("feComponentTransfer").append("feFuncA").attr("type", "linear").attr("slope", "0.45");
+        const cantGeoms = i.objects.municipalities.geometries.filter(gm => String(gm.id || "").startsWith("39") || 53072 === gm.id || "53072" === gm.id);
+        g.append("path")
+            .datum(topojson.merge(i, cantGeoms))
+            .attr("d", l).attr("fill", "#000")
+            .attr("filter", "url(#cant-shadow)")
+            .attr("pointer-events", "none");
 
         g.selectAll("path.muni-path").data(n.features).join("path").attr("class", e => {
             const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "Mun-" + e.id;
