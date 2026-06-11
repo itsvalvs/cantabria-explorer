@@ -233,19 +233,27 @@ async function loadUserData(user) {
   // Fotos
   const { data: photos } = await db
     .from('photos').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-  if (photos) state.photos = photos.map(p => ({
-    id:       p.id,
-    src:      p.storage_path && p.storage_path !== 'text_only'
-              ? (db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '')
-              : null,
-    muni:     p.municipio,
-    date:     p.fecha,
-    time:     p.hora || '',
-    coords:   p.coords || '',
-    desc:     p.descripcion || '',
-    vis:      p.visibilidad,
-    path:     p.storage_path,
-  }));
+  if (photos) {
+    state.photos = photos.map(p => ({
+      id:       p.id,
+      src:      null, // se rellena abajo con URL firmada (bucket privado)
+      muni:     p.municipio,
+      date:     p.fecha,
+      time:     p.hora || '',
+      coords:   p.coords || '',
+      desc:     p.descripcion || '',
+      vis:      p.visibilidad,
+      path:     p.storage_path,
+    }));
+    // UNA llamada firmada para todas las fotos (no una por foto)
+    const paths = [...new Set(photos.filter(p => p.storage_path && p.storage_path !== 'text_only').map(p => p.storage_path))];
+    if (paths.length) {
+      const { data: signed } = await db.storage.from('evidencias').createSignedUrls(paths, 3600);
+      const urlByPath = {};
+      (signed || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
+      state.photos.forEach(p => { if (p.path && urlByPath[p.path]) p.src = urlByPath[p.path]; });
+    }
+  }
 
   // Inscripciones
   const { data: signups } = await db
@@ -408,8 +416,9 @@ async function confirmVisit() {
         hora:         now2.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
       }).select().single();
 
-      // Añadir a estado local
-      const publicUrl = db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || '';
+      // Añadir a estado local (URL firmada, bucket privado)
+      const { data: signedNew } = await db.storage.from('evidencias').createSignedUrl(storagePath, 3600);
+      const publicUrl = signedNew?.signedUrl || '';
       state.photos.unshift({
         id:    photoData?.id,
         src:   publicUrl,
@@ -544,20 +553,64 @@ function getCoords() {
   });
 }
 
-// uzone click handled by overlapping input
-function handleFileSelected(file) {
-  if (!file) return;
-  console.log('Archivo seleccionado:', file.name, file.type, file.size);
+// ── COMPRESIÓN DE IMÁGENES EN CLIENTE ────────────────────────
+// Una foto de iPhone pesa 3-8 MB. Redimensionada a 1600px y
+// comprimida a JPEG ~82% pesa 150-400 KB: sube 10-20x más rápido
+// y el coste de Storage/egress de Supabase se divide igual.
+async function compressImage(file, maxDim = 1600, quality = 0.82) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = e => res(e.target.result);
+    r.onerror = () => rej(new Error('No se pudo leer la foto'));
+    r.readAsDataURL(file);
+  });
 
-  // Leer como base64 INMEDIATAMENTE y guardar en state
-  // Esto es lo único que persiste en Safari iOS después de que el usuario
-  // navega entre pantallas o la app va a background
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const base64 = ev.target.result; // data:image/jpeg;base64,....
+  // Decodificar (si el formato no se puede decodificar, ej. HEIC raro,
+  // devolvemos el original sin comprimir)
+  const img = await new Promise((res, rej) => {
+    const im = new Image();
+    im.onload  = () => res(im);
+    im.onerror = () => rej(new Error('decode'));
+    im.src = dataUrl;
+  }).catch(() => null);
+
+  if (!img || !img.width) {
+    return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
+  }
+
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.round(img.width  * scale);
+  const h = Math.round(img.height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+
+  const out = canvas.toDataURL('image/jpeg', quality);
+  // Si por lo que sea la "comprimida" sale más grande, usar la original
+  if (out.length >= dataUrl.length) {
+    return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
+  }
+  return { base64: out, mime: 'image/jpeg', compressed: true };
+}
+
+// uzone click handled by overlapping input
+async function handleFileSelected(file) {
+  if (!file) return;
+  console.log('Archivo seleccionado:', file.name, file.type, (file.size/1024).toFixed(0) + 'KB');
+
+  try {
+    // Comprimir y guardar como base64 INMEDIATAMENTE en state.
+    // El base64 es lo único que persiste en Safari iOS si el usuario
+    // navega entre pantallas o la app va a background.
+    const { base64, mime, compressed } = await compressImage(file);
     state.pendingBase64 = base64;
-    state.pendingMime   = file.type || 'image/jpeg';
-    state.pendingFile   = null; // ya no lo necesitamos
+    state.pendingMime   = mime;
+    state.pendingFile   = null;
+    console.log('Foto lista' + (compressed ? ' (comprimida)' : ' (original)') +
+      ', tamaño base64: ' + (base64.length/1024).toFixed(0) + 'KB');
 
     document.getElementById('prev-img').src = base64;
     const now = new Date();
@@ -568,10 +621,9 @@ function handleFileSelected(file) {
     // Ocultar el wrapper del input
     const uzoneParent = document.getElementById('uzone')?.parentElement;
     if (uzoneParent) uzoneParent.style.display = 'none';
-    console.log('Base64 guardado, longitud:', base64.length);
-  };
-  reader.onerror = () => alert('Error al leer la foto. Inténtalo de nuevo.');
-  reader.readAsDataURL(file);
+  } catch(err) {
+    alert('Error al leer la foto. Inténtalo de nuevo.');
+  }
   getCoords();
 }
 
@@ -912,6 +964,14 @@ async function loadMuniFriendEvidence(municipio) {
   const fotasByUser = {};
   (fotos||[]).forEach(f => { fotasByUser[f.user_id] = f; });
 
+  // URLs firmadas en lote para las evidencias de amigos
+  const evPaths = [...new Set((fotos||[]).filter(f => f.storage_path && f.storage_path !== 'text_only').map(f => f.storage_path))];
+  const evUrlByPath = {};
+  if (evPaths.length) {
+    const { data: signed } = await db.storage.from('evidencias').createSignedUrls(evPaths, 3600);
+    (signed || []).forEach(s => { if (s.signedUrl) evUrlByPath[s.path] = s.signedUrl; });
+  }
+
   const header = '<div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">' +
     visitas.length + ' amigo' + (visitas.length !== 1 ? 's' : '') + ' han visitado este municipio</div>';
 
@@ -921,7 +981,7 @@ async function loadMuniFriendEvidence(municipio) {
     const av     = v.profiles?.avatar_url;
     const foto   = fotasByUser[v.user_id];
     const imgUrl = foto && foto.storage_path !== 'text_only'
-      ? db.storage.from('evidencias').getPublicUrl(foto.storage_path).data?.publicUrl
+      ? evUrlByPath[foto.storage_path]
       : null;
     const fecha  = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
 
@@ -1008,14 +1068,14 @@ async function loadFeed(forceRefresh = false) {
     { data: fotasMias },
     { data: visits },
   ] = await Promise.all([
-    db.from('photos').select('*')
+    db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at')
       .in('user_id', friendIds)
       .in('visibilidad', ['amigos','publico'])
       .order('created_at', { ascending: false }).limit(60),
-    db.from('photos').select('*')
+    db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at')
       .eq('user_id', state.user.id)
       .order('created_at', { ascending: false }).limit(60),
-    db.from('visits').select('*, profiles(id,username,avatar_url)')
+    db.from('visits').select('id,user_id,municipio,visibilidad,created_at, profiles(id,username,avatar_url)')
       .in('user_id', allIds)
       .order('created_at', { ascending: false }).limit(40),
   ]);
@@ -1244,43 +1304,67 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
   // Aplicar el filtro activo (Descubriendo / Eventos / Rutas) tras renderizar
   applyFeedFilter();
 
-  // Cargar signed URLs, likes y comentarios
+  // Cargar URLs firmadas, likes y comentarios — EN LOTE (3 llamadas
+  // totales, antes eran 3 llamadas POR CADA post del feed)
+  const fotosConStorage = [];
+  const commentIds      = [];
   visits.forEach(v => {
-    const keyE = v.user_id + '|' + normalizeMuni(v.municipio);
-    const keyO = v.user_id + '_' + normalizeMuni(v.municipio);
-    const foto = (fotasByMuniUser[keyE] || fotasByMuniUser[keyO] || [])[0];
-    if (foto && foto.storage_path && foto.storage_path !== 'text_only') {
-      loadSignedFotoUrl(foto.id, foto.storage_path, v.id);
-      loadPhotoLikes(foto.id);
-    }
-    // Cargar comentarios por foto_id si existe, si no por visit_id
-    const commentId = foto?.id || v.id;
-    loadVisitComments(commentId, v.id);
+    // Misma lógica de selección de foto que en el render de arriba
+    const keyE  = v.user_id + '|' + normalizeMuni(v.municipio);
+    const keyO  = v.user_id + '_' + normalizeMuni(v.municipio);
+    const fotos = fotasByMuniUser[keyE] || fotasByMuniUser[keyO] || [];
+    const foto  = fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio)) || fotos[0] || null;
+    if (foto && foto.storage_path && foto.storage_path !== 'text_only') fotosConStorage.push(foto);
+    commentIds.push(foto?.id || v.id);
   });
-}
 
-async function loadSignedFotoUrl(fotoId, storagePath, visitId) {
-  try {
-    // Intentar URL firmada primero (funciona con bucket privado o público)
-    const { data: signed } = await db.storage
-      .from('evidencias')
-      .createSignedUrl(storagePath, 3600);
+  const fotoIds = [...new Set(fotosConStorage.map(f => f.id))];
+  const paths   = [...new Set(fotosConStorage.map(f => f.storage_path))];
 
-    const url = signed?.signedUrl
-      || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl;
+  const [signedRes, likesRes, commentsRes] = await Promise.all([
+    paths.length   ? db.storage.from('evidencias').createSignedUrls(paths, 3600) : Promise.resolve({ data: [] }),
+    fotoIds.length ? db.from('photo_likes').select('photo_id,user_id').in('photo_id', fotoIds) : Promise.resolve({ data: [] }),
+    commentIds.length ? db.from('photo_comments')
+      .select('id,photo_id,user_id,texto,created_at, profiles(username,avatar_url)')
+      .in('photo_id', commentIds).order('created_at', { ascending: true }) : Promise.resolve({ data: [] }),
+  ]);
 
+  // 1) URLs firmadas → imágenes
+  const urlByPath = {};
+  (signedRes.data || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
+  fotosConStorage.forEach(f => {
+    const url = urlByPath[f.storage_path];
     if (!url) return;
-
-    // Buscar la img con placeholder y reemplazar src
-    const imgEl = document.querySelector('img[data-foto-id="' + fotoId + '"]');
+    const imgEl = document.querySelector('img[data-foto-id="' + f.id + '"]');
     if (imgEl) {
       imgEl.src = url;
       imgEl.style.display = 'block';
       imgEl.closest('.post-img')?.querySelector('.post-img-placeholder')?.remove();
     }
-  } catch(e) {
-    console.error('Error cargando foto firmada:', e);
-  }
+  });
+
+  // 2) Likes → contador + estado "ya le di like" correcto
+  const likeCount = {}; const iLiked = {};
+  (likesRes.data || []).forEach(l => {
+    likeCount[l.photo_id] = (likeCount[l.photo_id] || 0) + 1;
+    if (l.user_id === state.user?.id) iLiked[l.photo_id] = true;
+  });
+  fotoIds.forEach(fid => {
+    const span = document.getElementById('likes-' + fid);
+    if (span) span.textContent = likeCount[fid] || 0;
+    const btn = span?.closest('.post-action');
+    if (btn && iLiked[fid]) { btn.setAttribute('data-liked', 'true'); btn.classList.add('liked'); }
+  });
+
+  // 3) Comentarios → agrupar y pintar
+  const commentsByPhoto = {};
+  (commentsRes.data || []).forEach(c => {
+    (commentsByPhoto[c.photo_id] = commentsByPhoto[c.photo_id] || []).push(c);
+  });
+  commentIds.forEach(cid => {
+    const container = document.getElementById('comments-' + cid);
+    if (container) renderComments(container, commentsByPhoto[cid] || [], cid);
+  });
 }
 
 async function loadVisitComments(commentId, visitId) {
@@ -1295,7 +1379,12 @@ async function loadVisitComments(commentId, visitId) {
     .order('created_at', { ascending: true })
     .limit(20);
 
-  if (!comments || !comments.length) {
+  renderComments(container, comments || [], id);
+}
+
+// Pintar lista de comentarios (compartido entre carga en lote y refresco individual)
+function renderComments(container, comments, id) {
+  if (!comments.length) {
     container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;padding:4px 0">Sin comentarios aún</div>';
     return;
   }
@@ -1464,11 +1553,17 @@ async function openFriendProfile(userId, username) {
     fpMap.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin visitas públicas</div>';
   }
 
-  // Galería fotos
+  // Galería fotos (URLs firmadas en lote)
   const gallery = document.getElementById('fp-gallery');
   if (photos.length) {
+    const fpPaths = [...new Set(photos.filter(p => p.storage_path && p.storage_path !== 'text_only').map(p => p.storage_path))];
+    const urlByPath = {};
+    if (fpPaths.length) {
+      const { data: signed } = await db.storage.from('evidencias').createSignedUrls(fpPaths, 3600);
+      (signed || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
+    }
     gallery.innerHTML = photos.map(p => {
-      const url = db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '';
+      const url = urlByPath[p.storage_path] || '';
       return `<div style="aspect-ratio:1;border-radius:8px;overflow:hidden;background:#1a2535">
         ${url ? `<img src="${esc(url)}" style="width:100%;height:100%;object-fit:cover" alt="${esc(p.municipio)}"/>` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.15);font-size:20px"><i class="ti ti-camera" aria-hidden="true"></i></div>`}
       </div>`;
@@ -1769,7 +1864,7 @@ function renderGallery() {
   g.innerHTML = state.photos.map((p,i) => `
     <div class="gi" onclick="openPM(${i})">
       ${p.src
-        ? `<img src="${esc(p.src)}?nocache=${Date.now()}" alt="${esc(p.muni)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
+        ? `<img src="${esc(p.src)}" alt="${esc(p.muni)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
         : `<div class="gi-ph" style="background:rgba(34,176,80,0.08);flex-direction:column;gap:4px">
              <i class="ti ti-message-circle" aria-hidden="true" style="font-size:18px;color:rgba(255,255,255,0.2)"></i>
              <span style="font-size:9px;color:rgba(255,255,255,0.2);text-align:center;padding:0 4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(p.desc||'')}</span>
@@ -1788,7 +1883,7 @@ function openPM(i) {
   state.currentPhotoIndex = i;
   const imgEl = document.getElementById('pm-img');
   if (p.src) {
-    imgEl.src   = p.src + '?nocache=' + Date.now();
+    imgEl.src   = p.src; // URL firmada: ya es única, no necesita anticache
     imgEl.style.display = 'block';
   } else {
     imgEl.src   = '';
@@ -1905,17 +2000,20 @@ document.getElementById('av-in').addEventListener('change', async function(e) {
   ring.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;width:100%;height:100%">...</div>`;
 
   try {
-    const ext      = file.name.split('.').pop().replace(/[^a-z0-9]/gi,'').toLowerCase() || 'jpg';
+    // Comprimir a 512px (un avatar se ve a ~100px, no necesita más)
+    const { base64, mime } = await compressImage(file, 512, 0.85);
+    const blob = await (await fetch(base64)).blob();
+    const ext      = mime.includes('png') ? 'png' : 'jpg';
     const fileName = `${state.user.id}.${ext}`;
 
     // Borrar anterior si existe
     await db.storage.from('avatares').remove([fileName]);
 
-    // Subir directo
+    // Subir comprimido
     const { data: upData, error: upErr } = await db.storage
       .from('avatares')
-      .upload(fileName, file, {
-        contentType:  file.type || 'image/jpeg',
+      .upload(fileName, blob, {
+        contentType:  mime,
         upsert:       true,
         cacheControl: '3600',
       });
