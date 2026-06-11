@@ -1,1983 +1,26 @@
-// ══════════════════════════════════════════════════════════════
-//  CANTABRIA EXPLORER — app.js
-//  Conectado a Supabase
-// ══════════════════════════════════════════════════════════════
-
-const SUPABASE_URL  = 'https://sdsdbfjmpjbrcgrbyvkm.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkc2RiZmptcGpicmNncmJ5dmttIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMzQxMzksImV4cCI6MjA5MzkxMDEzOX0.EgNnrghpj9XbFUt0N-NlTIhH4GxcHOaen33RXAYMNcA';
-
-// ── CLIENTE SUPABASE ──────────────────────────────────────────
-const { createClient } = supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_ANON);
-
-// ── ESTADO GLOBAL ─────────────────────────────────────────────
-const state = {
-  user:          null,
-  profile:       null,
-  visited:       {},       // { municipio: true }
-  photos:        [],       // fotos propias
-  totalMuni:     102,
-  coast:         [],
-  mountain:      [],
-  rolling:       false,
-  selectedMuni:  null,
-  eventos:       [],
-  inscripciones: {},       // { event_id: true }
-  feedPosts:     [],
-};
-
-// ── SEGURIDAD: escape de HTML ─────────────────────────────────
-// TODO dato que venga del usuario o de la BD pasa por aquí antes
-// de insertarse con innerHTML. Evita XSS (inyección de scripts).
+// ═══════════════════════════════════════════════════════════
+//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js)
+// ═══════════════════════════════════════════════════════════
 function esc(s) {
   return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
-
-// Iniciales seguras a partir de un nombre
 function getInitials(name) {
   return esc((name || '?').split(' ').map(w => w[0] || '').join('').toUpperCase().substring(0, 2));
 }
 
-// @menciones en azul (aplicar SIEMPRE sobre texto ya escapado)
-function renderMentions(textoEscapado) {
-  return textoEscapado.replace(/@(\w+)/g, (match, user) =>
-    '<span class="mention" data-user="' + esc(user) + '" onclick="openMentionProfile(this.dataset.user)" ' +
-    'style="cursor:pointer;color:#2272e8;font-weight:600">@' + esc(user) + '</span>');
-}
-
-// ── COLORES NAV ───────────────────────────────────────────────
-const NAV_ITEMS = [
-  { id:'map',     icon:'ti-map-2',       label:'Mapa',    bg:'#1a7a3e', fg:'#b8f5d0', abg:'#22b050', afg:'#ffffff' },
-  { id:'eventos', icon:'ti-confetti',    label:'Eventos', bg:'#aa1060', fg:'#ffc0e0', abg:'#e8288a', afg:'#ffffff' },
-  { id:'dado',    icon:'ti-dice',        label:'Destino', bg:'#a07810', fg:'#fff0b0', abg:'#e8b820', afg:'#ffffff' },
-  { id:'feed',    icon:'ti-users',       label:'Amigos',  bg:'#1848a8', fg:'#b0d4ff', abg:'#2272e8', afg:'#ffffff' },
-  { id:'profile', icon:'ti-user-circle', label:'Perfil',  bg:'#a04010', fg:'#ffd0a0', abg:'#e86820', afg:'#ffffff' },
-];
-
-function buildNavs() {
-  ['map','eventos','dado','feed','profile'].forEach(screen => {
-    const container = document.getElementById('nav-' + screen);
-    if (!container) return;
-    container.innerHTML = NAV_ITEMS.map(item => {
-      const isActive = item.id === screen;
-      const bg = isActive ? item.abg : item.bg;
-      const fg = isActive ? item.afg : item.fg;
-      return `<button
-        onclick="switchScreen('${item.id}')"
-        id="nb-${screen}-${item.id}"
-        aria-label="${item.label}"
-        style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 4px 8px;border:none;border-radius:14px;font-size:9px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:${bg};color:${fg};">
-        <i class="ti ${item.icon}" style="font-size:20px;color:inherit" aria-hidden="true"></i>
-        <span>${item.label}</span>
-      </button>`;
-    }).join('');
-  });
-}
-
-function updateNavColors(activeScreen) {
-  ['map','eventos','dado','feed','profile'].forEach(screen => {
-    NAV_ITEMS.forEach(item => {
-      const btn = document.getElementById(`nb-${screen}-${item.id}`);
-      if (!btn) return;
-      const isActive = item.id === activeScreen;
-      btn.style.backgroundColor = isActive ? item.abg : item.bg;
-      btn.style.color            = isActive ? item.afg : item.fg;
-    });
-  });
-}
-
-// ── AUTH — PANTALLA DE LOGIN ──────────────────────────────────
-function showAuth(msg = '') {
-  document.getElementById('splash')?.remove();
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('auth-screen').style.display = 'flex';
-  if (msg) {
-    const el = document.getElementById('auth-msg');
-    el.textContent = msg;
-    el.style.display = 'block';
-  }
-}
-
-function showApp() {
-  document.getElementById('splash')?.remove();
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-}
-
-async function doLogin() {
-  const email = document.getElementById('auth-email').value.trim();
-  const pass  = document.getElementById('auth-pass').value;
-  const msg   = document.getElementById('auth-msg');
-  if (!email || !pass) { msg.textContent = 'Rellena email y contraseña'; msg.style.display='block'; return; }
-  setAuthLoading(true);
-  const { error } = await db.auth.signInWithPassword({ email, password: pass });
-  setAuthLoading(false);
-  if (error) { msg.textContent = 'Email o contraseña incorrectos'; msg.style.display='block'; }
-}
-
-async function doRegister() {
-  const email    = document.getElementById('auth-email').value.trim();
-  const pass     = document.getElementById('auth-pass').value;
-  const username = document.getElementById('auth-username').value.trim();
-  const msg      = document.getElementById('auth-msg');
-  msg.style.color = '#e8288a';
-
-  // Validaciones básicas
-  if (!email || !pass || !username) {
-    msg.textContent = 'Rellena todos los campos';
-    msg.style.display = 'block'; return;
-  }
-  if (pass.length < 6) {
-    msg.textContent = 'La contraseña debe tener al menos 6 caracteres';
-    msg.style.display = 'block'; return;
-  }
-  if (username.length < 3) {
-    msg.textContent = 'El nombre de usuario debe tener al menos 3 caracteres';
-    msg.style.display = 'block'; return;
-  }
-  if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
-    msg.textContent = 'El nombre solo puede tener letras, números, guiones y puntos';
-    msg.style.display = 'block'; return;
-  }
-
-  setAuthLoading(true);
-
-  // Comprobar si el username ya existe ANTES de crear la cuenta
-  const { data: existing } = await db
-    .from('profiles')
-    .select('username')
-    .ilike('username', username)
-    .limit(1);
-
-  if (existing && existing.length > 0) {
-    msg.textContent = 'Ese nombre de usuario ya está en uso, elige otro';
-    msg.style.display = 'block';
-    setAuthLoading(false); return;
-  }
-
-  // Crear cuenta
-  const { error } = await db.auth.signUp({
-    email, password: pass,
-    options: { data: { username } }
-  });
-
-  setAuthLoading(false);
-
-  if (error) {
-    if (error.code === '23505' || error.message.includes('duplicate key')) {
-      msg.textContent = 'Ese nombre de usuario ya está en uso, elige otro';
-    } else if (error.message.includes('already registered')) {
-      msg.textContent = 'Ese email ya tiene una cuenta. Inicia sesión.';
-    } else {
-      msg.textContent = error.message;
-    }
-    msg.style.display = 'block';
-  } else {
-    msg.style.color = '#22b050';
-    msg.textContent = '¡Cuenta creada! Revisa tu email para confirmar.';
-    msg.style.display = 'block';
-  }
-}
-
-function setAuthLoading(on) {
-  document.getElementById('btn-login').disabled    = on;
-  document.getElementById('btn-register').disabled = on;
-}
-
-function toggleAuthForm() {
-  const regRow = document.getElementById('register-row');
-  const isReg  = regRow.style.display === 'flex';
-  regRow.style.display = isReg ? 'none' : 'flex';
-  document.getElementById('auth-toggle-txt').textContent = isReg
-    ? '¿No tienes cuenta? Regístrate'
-    : '¿Ya tienes cuenta? Inicia sesión';
-  document.getElementById('auth-msg').style.display = 'none';
-}
-
-async function doLogout() {
-  await db.auth.signOut();
-  state.user = null; state.profile = null;
-  state.visited = {}; state.photos = [];
-  showAuth();
-}
-
-// ── CARGAR PERFIL Y DATOS DEL USUARIO ────────────────────────
-async function loadUserData(user) {
-  state.user = user;
-
-  // Perfil
-  const { data: profile } = await db
-    .from('profiles').select('*').eq('id', user.id).single();
-  state.profile = profile;
-
-  if (profile) {
-    document.getElementById('u-name').textContent  = profile.username;
-    document.getElementById('av-init').textContent = profile.username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
-    if (profile.avatar_url) {
-      const ring = document.getElementById('av-ring');
-      const urlFresh = esc(profile.avatar_url) + '?t=' + Date.now();
-      ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
-    }
-  }
-
-  // Visitas
-  const { data: visits } = await db
-    .from('visits').select('municipio').eq('user_id', user.id);
-  if (visits) visits.forEach(v => { state.visited[v.municipio] = true; });
-
-  // Fotos
-  const { data: photos } = await db
-    .from('photos').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-  if (photos) {
-    state.photos = photos.map(p => ({
-      id:       p.id,
-      src:      null, // se rellena abajo con URL firmada (bucket privado)
-      muni:     p.municipio,
-      date:     p.fecha,
-      time:     p.hora || '',
-      coords:   p.coords || '',
-      desc:     p.descripcion || '',
-      vis:      p.visibilidad,
-      path:     p.storage_path,
-    }));
-    // UNA llamada firmada para todas las fotos (no una por foto)
-    const paths = [...new Set(photos.filter(p => p.storage_path && p.storage_path !== 'text_only').map(p => p.storage_path))];
-    if (paths.length) {
-      const { data: signed } = await db.storage.from('evidencias').createSignedUrls(paths, 3600);
-      const urlByPath = {};
-      (signed || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
-      state.photos.forEach(p => { if (p.path && urlByPath[p.path]) p.src = urlByPath[p.path]; });
-    }
-  }
-
-  // Inscripciones
-  const { data: signups } = await db
-    .from('event_signups').select('event_id').eq('user_id', user.id);
-  if (signups) signups.forEach(s => { state.inscripciones[s.event_id] = true; });
-
-  updateProgress();
-
-  // Suscribir a actividad en tiempo real de amigos
-  subscribeToFriendActivity();
-}
-
-// ── NAVEGACIÓN ────────────────────────────────────────────────
-function switchScreen(name) {
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-' + name).classList.add('active');
-  updateNavColors(name);
-  if (name === 'profile')  renderProfile();
-  if (name === 'feed')     { clearFeedBadge(); loadFeed(); }
-  if (name === 'eventos')  loadEventos();
-  if (name === 'dado')     renderMuniList();
-}
-
-// ── MAPA ──────────────────────────────────────────────────────
-function updateProgress() {
-  const c = Object.keys(state.visited).length;
-  const t = state.totalMuni;
-  document.getElementById('pfill').style.width = Math.round(c / t * 100) + '%';
-  document.getElementById('plabel').textContent = c + ' municipio' + (c !== 1 ? 's' : '') + ' conquistado' + (c !== 1 ? 's' : '');
-  document.getElementById('ppct').textContent = c + ' / ' + t;
-}
-
-function showMuniBar(name) {
-  document.getElementById('muni-bar').style.display = 'flex';
-  document.getElementById('bar-name').textContent = name;
-  const vis = state.visited[name];
-  document.getElementById('bar-st').textContent = vis ? '✓ Conquistado' : 'Sin visitar';
-  const btn = document.getElementById('btn-ev');
-  btn.style.backgroundColor = vis ? '#1a7a3e' : '#22b050';
-  btn.style.color = '#ffffff';
-  btn.innerHTML = vis
-    ? '<i class="ti ti-check" aria-hidden="true"></i> Conquistado'
-    : '<i class="ti ti-camera" aria-hidden="true"></i> Evidencia';
-}
-
-function openSheet() {
-  if (!state.selectedMuni) return;
-  const muni   = state.selectedMuni;
-  const visita = state.visited[muni];
-
-  document.getElementById('sht-title').textContent = muni;
-  document.getElementById('sht-sub').textContent   = visita
-    ? 'Ya conquistado — añade foto o descripción'
-    : 'Foto, descripción o ambas (todo opcional)';
-
-  const btnDesmarcar = document.getElementById('btn-desmarcar');
-  if (btnDesmarcar) btnDesmarcar.style.display = visita ? 'block' : 'none';
-  const btnConf = document.getElementById('btn-conf');
-  if (btnConf) btnConf.textContent = visita ? 'Guardar' : 'Marcar como conquistado';
-
-  document.querySelectorAll('.vis-btn').forEach(b => b.classList.remove('vis-active'));
-  document.getElementById('vis-amigos').classList.add('vis-active');
-
-  // Reset foto y descripción
-  clearPhoto();
-  const desc = document.getElementById('evidencia-desc');
-  if (desc) desc.value = '';
-
-  document.getElementById('upload-sheet').classList.add('open');
-}
-
-function clearPhoto() {
-  document.getElementById('prev-w').style.display   = 'none';
-  const uzoneParent = document.getElementById('uzone')?.parentElement;
-  if (uzoneParent) uzoneParent.style.display = 'block';
-  try { document.getElementById('file-in').value = ''; } catch(e){}
-  state.pendingFile   = null;
-  state.pendingBase64 = null;
-  state.pendingMime   = null;
-}
-
-let selectedVisibilidad = 'amigos';
-function setVis(v) {
-  selectedVisibilidad = v;
-  document.querySelectorAll('.vis-btn').forEach(b => b.classList.remove('vis-active'));
-  document.getElementById('vis-' + v).classList.add('vis-active');
-}
-
-async function confirmVisit() {
-  const muni = state.selectedMuni;
-  if (!muni || !state.user) return;
-
-  const btn  = document.getElementById('btn-conf');
-  const desc = (document.getElementById('evidencia-desc')?.value || '').trim();
-
-  btn.textContent = 'Guardando...';
-  btn.disabled    = true;
-
-  try {
-    let storagePath = null;
-
-    // 1. Subir foto si hay (desde base64 guardado en state)
-    if (state.pendingBase64) {
-      // Refrescar sesión
-      const { data: sessionData } = await db.auth.getSession();
-      const freshUser = sessionData?.session?.user;
-      if (!freshUser) throw new Error('Sesión expirada — sal y vuelve a entrar');
-      const userId = freshUser.id;
-
-      // Convertir base64 a Blob (más fiable que File en iOS)
-      const base64Data = state.pendingBase64.split(',')[1];
-      const mime       = state.pendingMime || 'image/jpeg';
-      const byteChars  = atob(base64Data);
-      const byteArrays = [];
-      for (let i = 0; i < byteChars.length; i += 512) {
-        const slice = byteChars.slice(i, i + 512);
-        const bytes = new Uint8Array(slice.length);
-        for (let j = 0; j < slice.length; j++) bytes[j] = slice.charCodeAt(j);
-        byteArrays.push(bytes);
-      }
-      const blob = new Blob(byteArrays, { type: mime });
-      const ext  = mime.includes('png') ? 'png' : 'jpg';
-      const path = `${userId}/${Date.now()}.${ext}`;
-
-      console.log('Subiendo evidencia desde base64:', path, mime, blob.size + 'b');
-
-      const { data: upData, error: upErr } = await db.storage
-        .from('evidencias')
-        .upload(path, blob, { contentType: mime, cacheControl: '3600', upsert: false });
-
-      if (upErr) {
-        console.error('Upload error:', JSON.stringify(upErr));
-        throw new Error('Error foto: ' + (upErr.message || JSON.stringify(upErr)));
-      }
-      console.log('Subida OK:', path);
-      storagePath = path;
-    }
-
-    // 2. Registrar visita
-    await db.from('visits').upsert({
-      user_id:     state.user.id,
-      municipio:   muni,
-      visibilidad: selectedVisibilidad,
-      coords:      state.lastCoords || null,
-      fecha:       new Date().toISOString().split('T')[0],
-    });
-
-    // 3. Registrar foto si hay
-    if (storagePath) {
-      const now = new Date();
-      const now2 = new Date();
-      const { data: photoData } = await db.from('photos').insert({
-        user_id:      state.user.id,
-        municipio:    muni,
-        storage_path: storagePath,
-        descripcion:  desc || null,
-        visibilidad:  selectedVisibilidad,
-        coords:       state.lastCoords || null,
-        fecha:        now2.toISOString().split('T')[0],
-        hora:         now2.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
-      }).select().single();
-
-      // Añadir a estado local (URL firmada, bucket privado)
-      const { data: signedNew } = await db.storage.from('evidencias').createSignedUrl(storagePath, 3600);
-      const publicUrl = signedNew?.signedUrl || '';
-      state.photos.unshift({
-        id:    photoData?.id,
-        src:   publicUrl,
-        muni,
-        date:  now2.toLocaleDateString('es-ES'),
-        time:  now2.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
-        coords: state.lastCoords || '',
-        desc:  desc || '',
-        vis:   selectedVisibilidad,
-        path:  storagePath,
-      });
-    } else if (desc) {
-      // Solo descripción sin foto — guardar como foto sin storage_path
-      const now3 = new Date();
-      await db.from('photos').insert({
-        user_id:      state.user.id,
-        municipio:    muni,
-        storage_path: 'text_only',
-        descripcion:  desc,
-        visibilidad:  selectedVisibilidad,
-        coords:       state.lastCoords || null,
-        fecha:        now3.toISOString().split('T')[0],
-        hora:         now3.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
-      });
-      state.photos.unshift({
-        src:   null,
-        muni,
-        date:  now3.toLocaleDateString('es-ES'),
-        time:  now3.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'}),
-        coords: '',
-        desc:  desc,
-        vis:   selectedVisibilidad,
-      });
-    }
-
-    // 4. Actualizar estado local
-    state.visited[muni] = true;
-    document.querySelectorAll('.muni-path').forEach(p => {
-      if (p.getAttribute('data-name') === muni) { p.classList.remove('is-coast'); p.classList.add('visited'); }
-    });
-    showMuniBar(muni);
-    document.getElementById('upload-sheet').classList.remove('open');
-    document.getElementById('file-in').value = '';
-    document.getElementById('prev-w').style.display = 'none';
-    document.getElementById('uzone').style.display  = 'block';
-    state.pendingFile   = null;
-    state.pendingBase64 = null;
-    state.pendingMime   = null;
-    state.feedCache     = null; // invalidar cache del feed
-    const descEl = document.getElementById('evidencia-desc');
-    if (descEl) descEl.value = '';
-    updateProgress();
-
-  } catch(err) {
-    console.error('confirmVisit error:', err);
-    // Si el error es solo de la foto, guardar la visita igualmente
-    if (err.message && err.message.includes('foto')) {
-      try {
-        await db.from('visits').upsert({
-          user_id:     state.user.id,
-          municipio:   muni,
-          visibilidad: selectedVisibilidad,
-          coords:      state.lastCoords || null,
-          fecha:       new Date().toISOString().split('T')[0],
-        });
-        state.visited[muni] = true;
-        document.querySelectorAll('.muni-path').forEach(p => {
-          if (p.getAttribute('data-name') === muni) p.classList.add('visited');
-        });
-        showMuniBar(muni);
-        document.getElementById('upload-sheet').classList.remove('open');
-        updateProgress();
-        alert('⚠️ Visita guardada pero sin foto. Error: ' + err.message);
-      } catch(e2) {
-        alert('Error al guardar: ' + err.message);
-      }
-    } else {
-      alert('Error al guardar: ' + err.message);
-    }
-  } finally {
-    btn.textContent = state.visited[state.selectedMuni] ? 'Guardar nueva foto' : 'Marcar como conquistado';
-    btn.disabled    = false;
-  }
-}
-
-async function desmarcarVisit() {
-  const muni = state.selectedMuni;
-  if (!muni || !state.user) return;
-  if (!confirm('¿Seguro que quieres desmarcar ' + muni + ' como conquistado?')) return;
-
-  const btn = document.getElementById('btn-desmarcar');
-  btn.textContent = 'Desmarcando...';
-  btn.disabled    = true;
-
-  try {
-    // Borrar visita de Supabase
-    await db.from('visits')
-      .delete()
-      .eq('user_id', state.user.id)
-      .eq('municipio', muni);
-
-    // Actualizar estado local
-    delete state.visited[muni];
-
-    // Actualizar mapa
-    document.querySelectorAll('.muni-path').forEach(p => {
-      if (p.getAttribute('data-name') === muni) {
-        p.classList.remove('visited');
-        p.classList.remove('selected');
-        if (isCoast(muni) || state.coast.includes(muni)) p.classList.add('is-coast');
-      }
-    });
-
-    // Actualizar barra info
-    document.getElementById('muni-bar').style.display = 'none';
-    document.getElementById('upload-sheet').classList.remove('open');
-    updateProgress();
-
-  } catch(err) {
-    alert('Error al desmarcar: ' + err.message);
-  } finally {
-    btn.textContent = 'Desmarcar como conquistado';
-    btn.disabled    = false;
-  }
-}
-
-// Geolocalización automática
-function getCoords() {
-  if (!navigator.geolocation) return;
-  navigator.geolocation.getCurrentPosition(pos => {
-    state.lastCoords = pos.coords.latitude.toFixed(4) + '°N, ' + Math.abs(pos.coords.longitude).toFixed(4) + '°W';
-  });
-}
-
-// ── COMPRESIÓN DE IMÁGENES EN CLIENTE ────────────────────────
-// Una foto de iPhone pesa 3-8 MB. Redimensionada a 1600px y
-// comprimida a JPEG ~82% pesa 150-400 KB: sube 10-20x más rápido
-// y el coste de Storage/egress de Supabase se divide igual.
-async function compressImage(file, maxDim = 1600, quality = 0.82) {
-  const dataUrl = await new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload  = e => res(e.target.result);
-    r.onerror = () => rej(new Error('No se pudo leer la foto'));
-    r.readAsDataURL(file);
-  });
-
-  // Decodificar (si el formato no se puede decodificar, ej. HEIC raro,
-  // devolvemos el original sin comprimir)
-  const img = await new Promise((res, rej) => {
-    const im = new Image();
-    im.onload  = () => res(im);
-    im.onerror = () => rej(new Error('decode'));
-    im.src = dataUrl;
-  }).catch(() => null);
-
-  if (!img || !img.width) {
-    return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
-  }
-
-  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-  const w = Math.round(img.width  * scale);
-  const h = Math.round(img.height * scale);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, w, h);
-
-  const out = canvas.toDataURL('image/jpeg', quality);
-  // Si por lo que sea la "comprimida" sale más grande, usar la original
-  if (out.length >= dataUrl.length) {
-    return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
-  }
-  return { base64: out, mime: 'image/jpeg', compressed: true };
-}
-
-// uzone click handled by overlapping input
-async function handleFileSelected(file) {
-  if (!file) return;
-  console.log('Archivo seleccionado:', file.name, file.type, (file.size/1024).toFixed(0) + 'KB');
-
-  try {
-    // Comprimir y guardar como base64 INMEDIATAMENTE en state.
-    // El base64 es lo único que persiste en Safari iOS si el usuario
-    // navega entre pantallas o la app va a background.
-    const { base64, mime, compressed } = await compressImage(file);
-    state.pendingBase64 = base64;
-    state.pendingMime   = mime;
-    state.pendingFile   = null;
-    console.log('Foto lista' + (compressed ? ' (comprimida)' : ' (original)') +
-      ', tamaño base64: ' + (base64.length/1024).toFixed(0) + 'KB');
-
-    document.getElementById('prev-img').src = base64;
-    const now = new Date();
-    document.getElementById('prev-meta').textContent =
-      now.toLocaleDateString('es-ES') + ' · ' +
-      now.toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
-    document.getElementById('prev-w').style.display = 'block';
-    // Ocultar el wrapper del input
-    const uzoneParent = document.getElementById('uzone')?.parentElement;
-    if (uzoneParent) uzoneParent.style.display = 'none';
-  } catch(err) {
-    alert('Error al leer la foto. Inténtalo de nuevo.');
-  }
-  getCoords();
-}
-
-const fileInput = document.getElementById('file-in');
-fileInput.addEventListener('input',  function(e) {
-  const file = e.target.files && e.target.files[0];
-  if (file) handleFileSelected(file);
-});
-fileInput.addEventListener('change', function(e) {
-  const file = e.target.files && e.target.files[0];
-  if (file) handleFileSelected(file);
-});
-
-// ── EVENTOS ───────────────────────────────────────────────────
-let currentFilter = 'todos';
-
-async function loadEventos() {
-  const { data } = await db.from('eventos').select('*').eq('activo', true).order('fecha');
-  if (data) state.eventos = data;
-  renderEventos();
-}
-
-function filterEvs(btn, tipo) {
-  currentFilter = tipo;
-  document.querySelectorAll('.ev-tab').forEach(t => t.classList.remove('active'));
-  btn.classList.add('active');
-  renderEventos();
-}
-
-function renderEventos() {
-  const filtered = currentFilter === 'todos'
-    ? state.eventos
-    : state.eventos.filter(e => e.tipo === currentFilter);
-
-  document.getElementById('eventos-list').innerHTML = filtered.map(ev => {
-    const insc   = state.inscripciones[ev.id];
-    const btnBg  = insc ? '#1a7a3e' : '#aa1060';
-    const btnTxt = insc ? 'Apuntado' : 'Apuntarme';
-    const btnIco = insc ? 'ti-check'  : 'ti-plus';
-    const fecha  = new Date(ev.fecha).toLocaleDateString('es-ES', {day:'numeric', month:'short'});
-    return `
-    <div class="ev-card">
-      <div class="ev-img" style="background-color:${ev.color_bg || '#1a3a5a'}">
-        <i class="ti ${ev.icon || 'ti-confetti'}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>
-        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${esc(ev.dia_semana || '')} ${fecha}</div>
-        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${esc(ev.tipo_badge || ev.tipo)}</div>
-      </div>
-      <div class="ev-body">
-        <div class="ev-name">${esc(ev.nombre)}</div>
-        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(ev.lugar)}</div>
-        <div class="ev-desc">${esc(ev.descripcion || '')}</div>
-        <div class="ev-footer">
-          <div class="ev-count" id="ev-count-${ev.id}"><strong>...</strong> van</div>
-          <button onclick="toggleInscripcion(${ev.id})"
-            style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${btnBg};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">
-            <i class="ti ${btnIco}" aria-hidden="true"></i>${btnTxt}
-          </button>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  // Cargar contadores de inscritos
-  filtered.forEach(ev => loadEventCount(ev.id));
-}
-
-async function loadEventCount(eventId) {
-  const { count } = await db
-    .from('event_signups')
-    .select('*', { count: 'exact', head: true })
-    .eq('event_id', eventId);
-  const el = document.getElementById('ev-count-' + eventId);
-  if (el) el.innerHTML = `<strong>${count || 0}</strong> van`;
-}
-
-async function toggleInscripcion(eventId) {
-  if (!state.user) return;
-  const insc = state.inscripciones[eventId];
-  if (insc) {
-    await db.from('event_signups').delete()
-      .eq('user_id', state.user.id).eq('event_id', eventId);
-    delete state.inscripciones[eventId];
-  } else {
-    await db.from('event_signups').insert({ user_id: state.user.id, event_id: eventId });
-    state.inscripciones[eventId] = true;
-  }
-  renderEventos();
-}
-
-// ── DADO ──────────────────────────────────────────────────────
-const COMARCAS   = ["Costa Occidental","Saja-Nansa","Liébana","Besaya","Campoo","Valles Pasiegos","Trasmiera","Bahía de Santander","Asón-Agüera","Costa Oriental"];
-const COAST_MUNIS = ["Santander","Castro-Urdiales","Santoña","Laredo","Comillas","San Vicente de la Barquera","Suances","Miengo","Piélagos","Camargo","El Astillero","Noja","Bareyo","Arnuero","Colindres","Limpias","Marina de Cudeyo","Ribamontán al Mar","Escalante","Argoños","Meruelo","Voto"];
-const LOREM      = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.";
-
-const DOT_POS = {
-  1:[[60,60]],
-  2:[[35,35],[85,85]],
-  3:[[35,35],[60,60],[85,85]],
-  4:[[35,35],[85,35],[35,85],[85,85]],
-  5:[[35,35],[85,35],[60,60],[35,85],[85,85]],
-  6:[[35,32],[85,32],[35,60],[85,60],[35,88],[85,88]],
-};
-
-function renderDice(num, col) {
-  const g = document.getElementById('dice-dots');
-  g.innerHTML = '';
-  document.getElementById('dice-body').setAttribute('fill', col || '#f5f0e8');
-  (DOT_POS[num] || []).forEach(([cx,cy]) => {
-    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    c.setAttribute('cx',cx); c.setAttribute('cy',cy);
-    c.setAttribute('r','7'); c.setAttribute('fill','#1a1a2e');
-    g.appendChild(c);
-  });
-}
-
-function isCoast(n) {
-  if (!n) return false;
-  const nl = n.toLowerCase();
-  // FIX: Los Corrales de Buelna NO es costa (falso positivo del matching por substring)
-  if (nl.includes('corrales de buelna') || nl.includes('los corrales')) return false;
-  return COAST_MUNIS.some(c => nl.includes(c.toLowerCase()));
-}
-
-function rollDice() {
-  if (state.rolling) return;
-  state.rolling = true;
-  document.getElementById('dice-hint').textContent = 'Lanzando...';
-  document.getElementById('result-wrap').classList.remove('show');
-  document.getElementById('no-more').style.display = 'none';
-  const svg = document.getElementById('dice-svg');
-  svg.classList.remove('rolling'); void svg.offsetWidth; svg.classList.add('rolling');
-  let t = 0;
-  const iv = setInterval(() => {
-    renderDice(Math.floor(Math.random()*6)+1); t++;
-    if (t >= 12) {
-      clearInterval(iv); svg.classList.remove('rolling');
-      const fin = Math.floor(Math.random()*6)+1;
-      renderDice(fin); state.rolling = false; showDiceResult(fin);
-    }
-  }, 55);
-}
-
-function showDiceResult(num) {
-  const even  = num % 2 === 0;
-  document.getElementById('badge-coast').classList.toggle('inactive-badge', !even);
-  document.getElementById('badge-mount').classList.toggle('inactive-badge',  even);
-  const pool = (even ? state.coast : state.mountain).filter(m => !state.visited[m]);
-  const all  =  even ? state.coast : state.mountain;
-  if (!all.length) { document.getElementById('no-more').style.display='block'; return; }
-  const muni = (pool.length ? pool : all)[Math.floor(Math.random()*(pool.length||all.length))];
-
-  // Buscar descripción en BD
-  const muniData = state.municipiosData?.[muni] || {};
-
-  renderDice(num, even ? '#dce8f5' : '#d5ede3');
-  document.getElementById('rtop').className = 'rcard-top ' + (even ? 'coast' : 'mount');
-  const rtag = document.getElementById('rtag');
-  rtag.className = 'r-type-tag ' + (even ? 'tag-coast' : 'tag-mount');
-  rtag.querySelector('i').className = 'ti ' + (even ? 'ti-waves' : 'ti-mountain');
-  document.getElementById('rtag-txt').textContent  = even ? 'Costa' : 'Montaña';
-  document.getElementById('r-num').textContent      = num;
-  document.getElementById('r-muni').textContent     = muni;
-  document.getElementById('r-comarca').textContent  = 'Comarca de ' + (muniData.comarca || COMARCAS[Math.floor(Math.random()*COMARCAS.length)]);
-  document.getElementById('r-area').textContent     = muniData.area_km2 ? muniData.area_km2 + ' km²' : Math.round(Math.random()*200+5) + ' km²';
-  document.getElementById('r-pop').textContent      = muniData.poblacion ? muniData.poblacion.toLocaleString('es-ES') + ' hab.' : Math.round(Math.random()*30000+100).toLocaleString('es-ES') + ' hab.';
-  document.getElementById('r-desc').textContent     = muniData.descripcion || LOREM;
-  document.getElementById('dice-hint').textContent  = pool.length ? '¡Tu próxima aventura te espera!' : 'Ya lo visitaste — aquí de nuevo';
-  setTimeout(() => document.getElementById('result-wrap').classList.add('show'), 60);
-
-  document.getElementById('btn-go').onclick = () => selectMuniOnMap(muni, true);
-
-  const btnSaber = document.getElementById('btn-saber-mas');
-  if (btnSaber) btnSaber.onclick = () => openMuniModal(muni);
-}
-
-// ── LISTA DE MUNICIPIOS ──────────────────────────────────────
-let muniListFilter = 'todos';
-
-function filterMuniList(tipo) {
-  if (tipo) {
-    muniListFilter = tipo;
-    // Actualizar botones filtro
-    ['todos','costa','montaña'].forEach(t => {
-      const id = t === 'todos' ? 'mf-todos' : t === 'costa' ? 'mf-costa' : 'mf-mont';
-      const btn = document.getElementById(id);
-      if (!btn) return;
-      const active = t === tipo;
-      btn.style.backgroundColor = active ? '#e8b820' : 'rgba(255,255,255,0.1)';
-      btn.style.color = active ? '#fff' : 'rgba(255,255,255,0.6)';
-    });
-  }
-  renderMuniList();
-}
-
-function renderMuniList() {
-  const container = document.getElementById('muni-list');
-  if (!container) return;
-
-  const search = (document.getElementById('muni-search')?.value || '').toLowerCase().trim();
-  const allMunis = Object.values(state.municipiosData || {});
-
-  const filtered = allMunis.filter(m => {
-    const tipoOk = muniListFilter === 'todos' || m.tipo === muniListFilter;
-    const searchOk = !search || m.nombre.toLowerCase().includes(search);
-    return tipoOk && searchOk;
-  }).sort((a,b) => a.nombre.localeCompare(b.nombre));
-
-  if (!filtered.length) {
-    container.innerHTML = '<p style="color:rgba(255,255,255,0.3);font-size:13px;text-align:center;padding:20px 0">No se encontraron municipios</p>';
-    return;
-  }
-
-  container.innerHTML = filtered.map(m => {
-    const visitado = state.visited[m.nombre];
-    const coast    = m.tipo === 'costa';
-    return `
-    <div data-muni="${esc(m.nombre)}" onclick="openMuniModal(this.dataset.muni)"
-      style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:#141e2c;border-radius:14px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);">
-      <div style="width:38px;height:38px;border-radius:10px;background:${coast?'#0d2a4a':'#0d2a1e'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-        <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:18px;color:${coast?'#85B7EB':'#5DCAA5'}"></i>
-      </div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.nombre)}</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${esc(m.comarca || '')}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-        ${visitado ? '<span style="width:8px;height:8px;border-radius:50%;background:#22b050;display:block"></span>' : ''}
-        <i class="ti ti-chevron-right" aria-hidden="true" style="font-size:16px;color:rgba(255,255,255,0.2)"></i>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function openMuniModal(nombre) {
-  if (!nombre) return;
-  const m = (state.municipiosData && state.municipiosData[nombre])
-    ? state.municipiosData[nombre]
-    : { nombre, tipo: isCoast(nombre) ? 'costa' : 'montaña' };
-  const coast = m.tipo === 'costa';
-  const visitado = state.visited[nombre];
-
-  // Header
-  document.getElementById('mm-header').style.background = coast
-    ? 'linear-gradient(135deg,#0d2a4a,#153a60)'
-    : 'linear-gradient(135deg,#0d2a1e,#153020)';
-
-  const badge = document.getElementById('mm-badge');
-  badge.innerHTML = `<i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:10px"></i> ${coast?'Costa':'Montaña'}`;
-  badge.style.background = coast ? 'rgba(56,138,221,0.25)' : 'rgba(29,158,117,0.25)';
-  badge.style.color = coast ? '#85B7EB' : '#5DCAA5';
-
-  document.getElementById('mm-name').textContent = nombre;
-  document.getElementById('mm-comarca').textContent = m.comarca ? 'Comarca de ' + m.comarca : '';
-
-  // Pills
-  const pills = [];
-  if (m.poblacion) pills.push(`<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.1);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.7)"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i>${m.poblacion.toLocaleString('es-ES')} hab.</div>`);
-  if (m.area_km2) pills.push(`<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.1);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.7)"><i class="ti ti-ruler-2" aria-hidden="true" style="font-size:11px"></i>${m.area_km2} km²</div>`);
-  if (visitado) pills.push(`<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,176,80,0.2);border-radius:999px;padding:4px 10px;font-size:11px;color:#22b050"><i class="ti ti-check" aria-hidden="true" style="font-size:11px"></i>Conquistado</div>`);
-  document.getElementById('mm-pills').innerHTML = pills.join(' ');
-
-  // Contenido
-  document.getElementById('mm-desc').textContent = m.descripcion || 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.';
-  document.getElementById('mm-curiosidad').textContent = m.curiosidad || 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.';
-
-  const visitasItems = (m.visitas || ['Lugar de interés 1 — Lorem ipsum dolor sit amet.','Lugar de interés 2 — Ut enim ad minim veniam quis.','Lugar de interés 3 — Duis aute irure dolor reprehenderit.']);
-  document.getElementById('mm-visitas').innerHTML = visitasItems.map((v,i) => `
-    <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
-      <div style="width:24px;height:24px;border-radius:50%;background:rgba(34,176,80,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#22b050;flex-shrink:0">${i+1}</div>
-      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${esc(v)}</p>
-    </div>`).join('');
-
-  const comerItems = (m.comer || ['Restaurante 1 — Lorem ipsum especialidad local.','Restaurante 2 — Ut enim ad minim cocina tradicional.','Bar / Sidrería 3 — Gastronomía local y productos de temporada.']);
-  document.getElementById('mm-comer').innerHTML = comerItems.map((c,i) => `
-    <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
-      <div style="width:24px;height:24px;border-radius:50%;background:rgba(232,40,138,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#e8288a;flex-shrink:0">${i+1}</div>
-      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${esc(c)}</p>
-    </div>`).join('');
-
-  // Botón ver en mapa
-  document.getElementById('mm-btn-mapa').onclick = () => {
-    closeMuniModal();
-    selectMuniOnMap(nombre, true);
-  };
-
-  // Cargar evidencias de amigos en esta ficha
-  loadMuniFriendEvidence(nombre);
-
-  const modal = document.getElementById('muni-modal');
-  modal.style.display = 'flex';
-}
-
-async function loadMuniFriendEvidence(municipio) {
-  const container = document.getElementById('mm-friend-evidence');
-  if (!container) return;
-  container.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Buscando evidencias de amigos...</div>';
-
-  if (!state.user) return;
-
-  // Obtener amigos
-  const { data: friends } = await db
-    .from('friendships')
-    .select('follower_id, following_id')
-    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-    .eq('estado', 'aceptado');
-
-  const friendIds = (friends||[]).map(f =>
-    f.follower_id === state.user.id ? f.following_id : f.follower_id
-  );
-
-  if (!friendIds.length) {
-    container.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>';
-    return;
-  }
-
-  // Visitas de amigos a este municipio
-  const { data: visitas } = await db
-    .from('visits')
-    .select('*, profiles(id, username, avatar_url)')
-    .in('user_id', friendIds)
-    .eq('municipio', municipio)
-    .order('created_at', { ascending: false });
-
-  // Fotos de amigos en este municipio
-  const { data: fotos } = await db
-    .from('photos')
-    .select('*')
-    .in('user_id', friendIds)
-    .eq('municipio', municipio)
-    .neq('storage_path', 'text_only')
-    .order('created_at', { ascending: false });
-
-  if (!visitas || !visitas.length) {
-    container.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>';
-    return;
-  }
-
-  const fotasByUser = {};
-  (fotos||[]).forEach(f => { fotasByUser[f.user_id] = f; });
-
-  // URLs firmadas en lote para las evidencias de amigos
-  const evPaths = [...new Set((fotos||[]).filter(f => f.storage_path && f.storage_path !== 'text_only').map(f => f.storage_path))];
-  const evUrlByPath = {};
-  if (evPaths.length) {
-    const { data: signed } = await db.storage.from('evidencias').createSignedUrls(evPaths, 3600);
-    (signed || []).forEach(s => { if (s.signedUrl) evUrlByPath[s.path] = s.signedUrl; });
-  }
-
-  const header = '<div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">' +
-    visitas.length + ' amigo' + (visitas.length !== 1 ? 's' : '') + ' han visitado este municipio</div>';
-
-  const cards = visitas.map(v => {
-    const u      = v.profiles?.username || 'Usuario';
-    const init   = getInitials(u);
-    const av     = v.profiles?.avatar_url;
-    const foto   = fotasByUser[v.user_id];
-    const imgUrl = foto && foto.storage_path !== 'text_only'
-      ? evUrlByPath[foto.storage_path]
-      : null;
-    const fecha  = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
-
-    const imgHtml = imgUrl
-      ? '<img src="' + esc(imgUrl) + '?t=' + Date.now() + '" style="width:100%;height:140px;object-fit:cover;display:block" alt="' + esc(u) + '"/>'
-      : '';
-    const avHtml = av
-      ? '<img src="' + esc(av) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
-      : init;
-    const descHtml = foto && foto.descripcion
-      ? '<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">' + renderMentions(esc(foto.descripcion)) + '</div>'
-      : '';
-
-    return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;overflow:hidden;margin-bottom:10px;border:1px solid rgba(255,255,255,0.07)">' +
-      imgHtml +
-      '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px">' +
-        '<div style="width:32px;height:32px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + avHtml + '</div>' +
-        '<div style="flex:1">' +
-          '<div style="font-size:13px;font-weight:500;color:#fff">' + esc(u) + '</div>' +
-          '<div style="font-size:11px;color:rgba(255,255,255,0.35)">Visitó el ' + fecha + '</div>' +
-        '</div>' +
-      '</div>' +
-      descHtml +
-    '</div>';
-  }).join('');
-
-  container.innerHTML = header + cards;
-}
-
-function closeMuniModal() {
-  document.getElementById('muni-modal').style.display = 'none';
-}
-
-// ── FEED DE AMIGOS ────────────────────────────────────────────
-async function loadFeed(forceRefresh = false) {
-  if (!state.user) return;
-
-  // Usar cache si existe y no se fuerza refresco (evita recargar al volver a la tab)
-  if (!forceRefresh && state.feedCache && Date.now() - state.feedCacheTime < 60000) {
-    renderFeedFromCache();
-    return;
-  }
-
-  // Skeleton loading
-  document.getElementById('stories-row').innerHTML = [1,2,3].map(() =>
-    '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:5px">' +
-    '<div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div>' +
-    '<div style="width:36px;height:8px;border-radius:4px;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div>' +
-    '</div>'
-  ).join('');
-  document.getElementById('feed-posts').innerHTML =
-    '<div style="padding:12px">' + [1,2].map(() =>
-      '<div style="background:rgba(255,255,255,0.04);border-radius:18px;height:320px;margin-bottom:14px;animation:pulse 1.5s ease infinite"></div>'
-    ).join('') + '</div>';
-
-  // Cargar amigos primero (necesitamos sus IDs)
-  const { data: friends } = await db
-    .from('friendships')
-    .select('follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)')
-    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-    .eq('estado', 'aceptado');
-
-  const seen = new Set();
-  const friendProfiles = (friends || []).map(f =>
-    f.follower_id === state.user.id ? f.following : f.follower
-  ).filter(p => { if (!p || seen.has(p.id)) return false; seen.add(p.id); return true; });
-
-  const friendIds = friendProfiles.map(p => p.id);
-  renderStories(friendProfiles);
-
-  if (!friendIds.length) {
-    document.getElementById('feed-posts').innerHTML =
-      '<div style="text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">' +
-      '<i class="ti ti-users" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>' +
-      'Aún no tienes amigos añadidos.<br>¡Busca a alguien por su nombre de usuario!</div>';
-    return;
-  }
-
-  const allIds = [...new Set([...friendIds, state.user.id])];
-
-  // TODAS LAS QUERIES EN PARALELO — de ~6 llamadas secuenciales a 3 simultáneas
-  const [
-    { data: fotasAmigos },
-    { data: fotasMias },
-    { data: visits },
-  ] = await Promise.all([
-    db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at')
-      .in('user_id', friendIds)
-      .in('visibilidad', ['amigos','publico'])
-      .order('created_at', { ascending: false }).limit(60),
-    db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at')
-      .eq('user_id', state.user.id)
-      .order('created_at', { ascending: false }).limit(60),
-    db.from('visits').select('id,user_id,municipio,visibilidad,created_at, profiles(id,username,avatar_url)')
-      .in('user_id', allIds)
-      .order('created_at', { ascending: false }).limit(40),
-  ]);
-
-  const todasFotas = [...(fotasAmigos||[]), ...(fotasMias||[])];
-
-  const fotasByUser = {};
-  const fotasByMuniUser = {};
-  todasFotas.forEach(f => {
-    if (!fotasByUser[f.user_id]) fotasByUser[f.user_id] = [];
-    fotasByUser[f.user_id].push(f);
-    const key = f.user_id + '|' + normalizeMuni(f.municipio);
-    if (!fotasByMuniUser[key]) fotasByMuniUser[key] = [];
-    fotasByMuniUser[key].push(f);
-  });
-
-  const visibleVisits = (visits || []).filter(v =>
-    v.user_id === state.user.id || ['amigos','publico'].includes(v.visibilidad)
-  );
-
-  // Guardar en cache
-  state.feedCache = { visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles };
-  state.feedCacheTime = Date.now();
-
-  renderFeedPosts(visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles);
-}
-
-function renderFeedFromCache() {
-  const { visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles } = state.feedCache;
-  renderStories(friendProfiles);
-  renderFeedPosts(visibleVisits, fotasByMuniUser, fotasByUser, friendProfiles);
-}
-
-function normalizeMuni(s) {
-  return (s || '').trim().toLowerCase();
-}
-
-const STORY_COLORS = ['#c97ae8','#7ae8c9','#e87a9a','#e8b97a','#7ab3e8','#a8e87a'];
-
-function renderStories(friendProfiles) {
-  if (!friendProfiles.length) {
-    document.getElementById('stories-row').innerHTML = '';
-    return;
-  }
-  document.getElementById('stories-row').innerHTML = friendProfiles.slice(0,8).map((p, i) => {
-    const initials = getInitials(p.username);
-    const color    = STORY_COLORS[i % STORY_COLORS.length];
-    const avatar   = p.avatar_url
-      ? `<img src="${esc(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${esc(p.username)}"/>`
-      : `<span style="color:${color};font-family:'Playfair Display',serif;font-size:14px;font-weight:500">${initials}</span>`;
-    return `
-      <div class="story-item">
-        <div class="story-ring">
-          <div class="story-av">${avatar}</div>
-        </div>
-        <div class="story-name">${esc(p.username || '?')}</div>
-      </div>`;
-  }).join('');
-}
-
-async function getPhotoUrl(storagePath) {
-  if (!storagePath || storagePath === 'text_only') return null;
-  // Crear URL firmada válida 1 hora (funciona para buckets privados y públicos)
-  const { data } = await db.storage
-    .from('evidencias')
-    .createSignedUrl(storagePath, 3600);
-  return data?.signedUrl || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || null;
-}
-
-// ── FILTROS DEL FEED (Descubriendo / Eventos / Rutas) ────────
-let feedFilter = 'descubriendo';
-
-function setFeedFilter(filter) {
-  feedFilter = filter;
-  document.querySelectorAll('.feed-filter-btn').forEach(b => {
-    const active = b.dataset.filter === filter;
-    b.style.backgroundColor = active ? '#2272e8' : 'rgba(255,255,255,0.08)';
-    b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
-  });
-  applyFeedFilter();
-}
-
-function applyFeedFilter() {
-  const posts = document.querySelectorAll('.feed-post');
-
-  let visibles = 0;
-  posts.forEach(post => {
-    const locEl  = post.querySelector('.post-location');
-    const muniEl = post.querySelector('.post-muni');
-    const muni   = (locEl?.textContent || muniEl?.textContent || '').trim();
-    const isEvento = muni.includes('🎉');
-
-    let show = true;
-    if (feedFilter === 'descubriendo') show = !isEvento;
-    else if (feedFilter === 'eventos')  show = isEvento;
-    else if (feedFilter === 'rutas')    show = false;
-
-    post.style.display = show ? '' : 'none';
-    if (show) visibles++;
-  });
-
-  // Mensaje cuando el filtro no muestra nada
-  const feedPosts = document.getElementById('feed-posts');
-  let emptyMsg = feedPosts?.querySelector('.feed-empty-msg');
-  if (!visibles && feedPosts && posts.length) {
-    if (!emptyMsg) {
-      emptyMsg = document.createElement('div');
-      emptyMsg.className = 'feed-empty-msg';
-      emptyMsg.style.cssText = 'text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px';
-      feedPosts.appendChild(emptyMsg);
-    }
-    emptyMsg.textContent = feedFilter === 'rutas'
-      ? '🥾 Las rutas están en camino...'
-      : feedFilter === 'eventos'
-      ? '🎉 Aún no hay fotos de eventos'
-      : '';
-    emptyMsg.style.display = 'block';
-  } else if (emptyMsg) {
-    emptyMsg.style.display = 'none';
-  }
-}
-
-async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles) {
-  if (!visits.length) {
-    document.getElementById('feed-posts').innerHTML = `
-      <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7">
-        <i class="ti ti-map-2" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>
-        Tus amigos aún no han conquistado municipios.
-      </div>`;
-    return;
-  }
-
-  document.getElementById('feed-posts').innerHTML = visits.map((v, i) => {
-    const coast      = isCoast(v.municipio);
-    const muniSafe   = esc(v.municipio);
-    const username   = v.profiles?.username || 'Usuario';
-    const userSafe   = esc(username);
-    const userId     = v.profiles?.id || v.user_id;
-    const initials   = getInitials(username);
-    const color      = STORY_COLORS[i % STORY_COLORS.length];
-    const isMe       = userId === state.user?.id;
-    const fp         = isMe ? state.profile : (friendProfiles || []).find(f => f.id === userId);
-    const avatarUrl  = fp?.avatar_url || v.profiles?.avatar_url;
-    const avatarHtml = avatarUrl
-      ? `<img src="${esc(avatarUrl)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
-      : initials;
-
-    // Buscar foto: 1) por user+municipio exacto, 2) por user+municipio normalizado, 3) cualquier foto del usuario
-    const keyExact = v.user_id + '|' + normalizeMuni(v.municipio);
-    const keyOld   = v.user_id + '_' + normalizeMuni(v.municipio);
-    const fotos    = fotasByMuniUser[keyExact] || fotasByMuniUser[keyOld] || [];
-    // Si no hay foto del municipio exacto, buscar cualquier foto del usuario para ese municipio
-    const foto = fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio))
-              || fotos[0]
-              || null;
-    const imgUrl = foto && foto.storage_path && foto.storage_path !== 'text_only'
-      ? '__FOTO__' + (foto.id || '')
-      : null;
-
-    const fecha = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
-
-    return `
-    <div class="feed-post">
-      <div class="post-header" data-uid="${esc(userId)}" data-uname="${userSafe}" onclick="openFriendProfile(this.dataset.uid, this.dataset.uname)" style="cursor:pointer">
-        <div class="post-av" style="color:${color};overflow:hidden">${avatarHtml}</div>
-        <div>
-          <div class="post-user">${userSafe}</div>
-          <div class="post-time">${fecha}</div>
-        </div>
-        <div class="post-badge ${coast?'pb-coast':'pb-mount'}">
-          <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:10px"></i>
-          ${coast?'Costa':'Montaña'}
-        </div>
-      </div>
-      <div class="post-img" style="background:${coast?'#0d2535':'#0d2a1e'}">
-        ${imgUrl && imgUrl.startsWith('__FOTO__')
-          ? `<img src="" data-foto-id="${esc(imgUrl.replace('__FOTO__',''))}" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
-             <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
-               <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
-             </div>`
-          : `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
-               <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:38px"></i>
-               <span style="font-size:11px">Sin foto de evidencia</span>
-             </div>`}
-        <div class="post-location">
-          <i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}
-        </div>
-      </div>
-      <div class="post-body">
-        <div class="post-muni">${muniSafe}</div>
-        ${foto?.descripcion ? `<div class="post-desc">${renderMentions(esc(foto.descripcion))}</div>` : ''}
-        <div class="post-actions">
-          ${foto ? `
-          <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleLike(this, this.dataset.fid)" data-liked="false">
-            <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${esc(foto.id)}">0</span>
-          </button>` : `<div></div>`}
-          <button class="post-action" style="margin-left:auto" onclick="openMuniModal(this.dataset.muni)" data-muni="${muniSafe}">
-            <i class="ti ti-info-circle" aria-hidden="true"></i><span style="font-size:11px">Ver ficha</span>
-          </button>
-          <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${muniSafe}">
-            <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
-          </button>
-          ${v.user_id === state.user?.id ? `
-          <button class="post-action" data-vid="${esc(v.id)}" data-fid="${esc(foto ? foto.id : '')}" data-path="${esc(foto ? (foto.path||foto.storage_path||'') : '')}"
-            onclick="deleteFeedPost(this.dataset.vid, this.dataset.fid, this.dataset.path)" style="color:rgba(232,40,40,0.5)">
-            <i class="ti ti-trash" aria-hidden="true"></i>
-          </button>` : ''}
-        </div>
-        <!-- Comentarios: usar foto.id si hay foto, visit.id como fallback -->
-        <div id="comments-${esc(foto ? foto.id : v.id)}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
-          <div style="color:rgba(255,255,255,0.25);font-size:11px">Cargando comentarios...</div>
-        </div>
-        <div class="comment-input-row">
-          <input class="comment-input" id="comment-input-${esc(foto ? foto.id : v.id)}" type="text" placeholder="Añade un comentario..." maxlength="200"
-            data-cid="${esc(foto ? foto.id : v.id)}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
-            onkeydown="if(event.key==='Enter')postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)"/>
-          <button class="comment-send" data-cid="${esc(foto ? foto.id : v.id)}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
-            onclick="postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)">
-            <i class="ti ti-send" aria-hidden="true"></i>
-          </button>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  // Aplicar el filtro activo (Descubriendo / Eventos / Rutas) tras renderizar
-  applyFeedFilter();
-
-  // Cargar URLs firmadas, likes y comentarios — EN LOTE (3 llamadas
-  // totales, antes eran 3 llamadas POR CADA post del feed)
-  const fotosConStorage = [];
-  const commentIds      = [];
-  visits.forEach(v => {
-    // Misma lógica de selección de foto que en el render de arriba
-    const keyE  = v.user_id + '|' + normalizeMuni(v.municipio);
-    const keyO  = v.user_id + '_' + normalizeMuni(v.municipio);
-    const fotos = fotasByMuniUser[keyE] || fotasByMuniUser[keyO] || [];
-    const foto  = fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio)) || fotos[0] || null;
-    if (foto && foto.storage_path && foto.storage_path !== 'text_only') fotosConStorage.push(foto);
-    commentIds.push(foto?.id || v.id);
-  });
-
-  const fotoIds = [...new Set(fotosConStorage.map(f => f.id))];
-  const paths   = [...new Set(fotosConStorage.map(f => f.storage_path))];
-
-  const [signedRes, likesRes, commentsRes] = await Promise.all([
-    paths.length   ? db.storage.from('evidencias').createSignedUrls(paths, 3600) : Promise.resolve({ data: [] }),
-    fotoIds.length ? db.from('photo_likes').select('photo_id,user_id').in('photo_id', fotoIds) : Promise.resolve({ data: [] }),
-    commentIds.length ? db.from('photo_comments')
-      .select('id,photo_id,user_id,texto,created_at, profiles(username,avatar_url)')
-      .in('photo_id', commentIds).order('created_at', { ascending: true }) : Promise.resolve({ data: [] }),
-  ]);
-
-  // 1) URLs firmadas → imágenes
-  const urlByPath = {};
-  (signedRes.data || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
-  fotosConStorage.forEach(f => {
-    const url = urlByPath[f.storage_path];
-    if (!url) return;
-    const imgEl = document.querySelector('img[data-foto-id="' + f.id + '"]');
-    if (imgEl) {
-      imgEl.src = url;
-      imgEl.style.display = 'block';
-      imgEl.closest('.post-img')?.querySelector('.post-img-placeholder')?.remove();
-    }
-  });
-
-  // 2) Likes → contador + estado "ya le di like" correcto
-  const likeCount = {}; const iLiked = {};
-  (likesRes.data || []).forEach(l => {
-    likeCount[l.photo_id] = (likeCount[l.photo_id] || 0) + 1;
-    if (l.user_id === state.user?.id) iLiked[l.photo_id] = true;
-  });
-  fotoIds.forEach(fid => {
-    const span = document.getElementById('likes-' + fid);
-    if (span) span.textContent = likeCount[fid] || 0;
-    const btn = span?.closest('.post-action');
-    if (btn && iLiked[fid]) { btn.setAttribute('data-liked', 'true'); btn.classList.add('liked'); }
-  });
-
-  // 3) Comentarios → agrupar y pintar
-  const commentsByPhoto = {};
-  (commentsRes.data || []).forEach(c => {
-    (commentsByPhoto[c.photo_id] = commentsByPhoto[c.photo_id] || []).push(c);
-  });
-  commentIds.forEach(cid => {
-    const container = document.getElementById('comments-' + cid);
-    if (container) renderComments(container, commentsByPhoto[cid] || [], cid);
-  });
-}
-
-async function loadVisitComments(commentId, visitId) {
-  const id = commentId || visitId;
-  const container = document.getElementById('comments-' + id);
-  if (!container) return;
-
-  const { data: comments } = await db
-    .from('photo_comments')
-    .select('*, profiles(username, avatar_url)')
-    .eq('photo_id', id)
-    .order('created_at', { ascending: true })
-    .limit(20);
-
-  renderComments(container, comments || [], id);
-}
-
-// Pintar lista de comentarios (compartido entre carga en lote y refresco individual)
-function renderComments(container, comments, id) {
-  if (!comments.length) {
-    container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;padding:4px 0">Sin comentarios aún</div>';
-    return;
-  }
-
-  container.innerHTML = comments.map(c => {
-    const u        = c.profiles?.username || 'Usuario';
-    const initials = getInitials(u);
-    const avatar   = c.profiles?.avatar_url
-      ? '<img src="' + esc(c.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
-      : initials;
-    const isMe  = c.user_id === state.user?.id;
-    const delBtn = isMe
-      ? '<button class="c-del" data-cid="' + esc(c.id) + '" data-pid="' + esc(id) + '" onclick="deleteComment(this.dataset.cid, this.dataset.pid)" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
-      : '';
-    return '<div class="comment"><div class="c-av">' + avatar + '</div><div class="c-text"><strong>' + esc(u) + '</strong> ' + renderMentions(esc(c.texto)) + '</div>' + delBtn + '</div>';
-  }).join('');
-}
-
-// FIX: esta función se llamaba desde el botón de borrar pero no existía
-async function deleteComment(commentId, photoId) {
-  if (!state.user || !commentId) return;
-  if (!confirm('¿Borrar este comentario?')) return;
-  try {
-    await db.from('photo_comments').delete()
-      .eq('id', commentId)
-      .eq('user_id', state.user.id); // solo puede borrar los suyos
-    await loadVisitComments(photoId);
-  } catch(err) {
-    alert('Error al borrar el comentario');
-  }
-}
-
-// Abrir perfil al tocar una @mención (y poder enviar solicitud)
-async function openMentionProfile(username) {
-  if (!state?.user || !username) return;
-  const { data: profile } = await db
-    .from('profiles').select('id, username, avatar_url')
-    .ilike('username', username).single();
-  if (!profile) { alert('@' + username + ' no encontrado'); return; }
-  if (profile.id === state.user.id) return;
-
-  // Comprobar amistad
-  const { data: fs } = await db.from('friendships')
-    .select('estado')
-    .or('and(follower_id.eq.' + state.user.id + ',following_id.eq.' + profile.id + '),' +
-        'and(follower_id.eq.' + profile.id + ',following_id.eq.' + state.user.id + ')')
-    .limit(1);
-
-  const rel = fs?.[0];
-  if (rel?.estado === 'aceptado') {
-    openFriendProfile(profile.id, profile.username);
-  } else if (rel?.estado === 'pendiente') {
-    alert('Ya tienes una solicitud pendiente con @' + profile.username);
-  } else {
-    if (confirm('¿Enviar solicitud de amistad a @' + profile.username + '?')) {
-      await db.from('friendships').insert({
-        follower_id: state.user.id, following_id: profile.id, estado: 'pendiente'
-      });
-      alert('Solicitud enviada a @' + profile.username);
-    }
-  }
-}
-
-async function postComment(visitId, targetUserId, municipio) {
-  const input = document.getElementById('comment-input-' + visitId);
-  if (!input || !state.user) return;
-  const texto = input.value.trim();
-  if (!texto) return;
-
-  input.value = '';
-  input.disabled = true;
-
-  try {
-    await db.from('photo_comments').insert({
-      user_id:  state.user.id,
-      photo_id: visitId,
-      texto,
-    });
-    await loadVisitComments(visitId);
-  } catch(err) {
-    alert('Error al comentar: ' + err.message);
-  } finally {
-    input.disabled = false;
-  }
-}
-
-async function deleteFeedPost(visitId, photoId, storagePath) {
-  if (!state.user) return;
-  if (!confirm('¿Borrar esta publicación?')) return;
-  try {
-    // Borrar foto del storage si existe
-    if (storagePath && storagePath !== 'text_only' && storagePath !== '') {
-      await db.storage.from('evidencias').remove([storagePath]);
-    }
-    // Borrar foto de la tabla
-    if (photoId) await db.from('photos').delete().eq('id', photoId).eq('user_id', state.user.id);
-    // Borrar visita
-    await db.from('visits').delete().eq('id', visitId).eq('user_id', state.user.id);
-    // Actualizar estado
-    delete state.visited[state.feedCache?.visibleVisits?.find(v => v.id === visitId)?.municipio];
-    state.feedCache = null;
-    state.photos = state.photos.filter(p => p.id !== photoId);
-    updateProgress();
-    loadFeed(true);
-  } catch(err) {
-    alert('Error al borrar: ' + err.message);
-  }
-}
-
-function goToMuniOnMap(muni) {
-  selectMuniOnMap(muni, true);
-}
-
-// ── PERFIL DE AMIGO ──────────────────────────────────────────
-async function openFriendProfile(userId, username) {
-  const modal = document.getElementById('friend-profile-modal');
-  if (!modal) return;
-
-  // Limpiar y mostrar loading
-  document.getElementById('fp-username').textContent  = username;
-  document.getElementById('fp-avatar').textContent    = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
-  document.getElementById('fp-visits-count').textContent = '...';
-  document.getElementById('fp-photos-count').textContent = '...';
-  document.getElementById('fp-gallery').innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Cargando...</div>';
-  document.getElementById('fp-map').innerHTML = '';
-  modal.style.display = 'flex';
-
-  // Cargar datos del amigo
-  const [profileRes, visitsRes, photosRes] = await Promise.all([
-    db.from('profiles').select('username, avatar_url').eq('id', userId).single(),
-    db.from('visits').select('municipio, fecha, created_at').eq('user_id', userId).in('visibilidad',['amigos','publico']).order('created_at',{ascending:false}),
-    db.from('photos').select('*').eq('user_id', userId).in('visibilidad',['amigos','publico']).order('created_at',{ascending:false}).limit(9),
-  ]);
-
-  const profile = profileRes.data;
-  const visits  = visitsRes.data || [];
-  const photos  = photosRes.data || [];
-
-  // Avatar
-  if (profile?.avatar_url) {
-    document.getElementById('fp-avatar').innerHTML = `<img src="${esc(profile.avatar_url)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${esc(username)}"/>`;
-  }
-
-  // Stats
-  document.getElementById('fp-visits-count').textContent = visits.length;
-  document.getElementById('fp-photos-count').textContent = photos.length;
-
-  // Últimas visitas (lista)
-  const fpMap = document.getElementById('fp-map');
-  if (visits.length) {
-    fpMap.innerHTML = visits.slice(0,10).map(v => {
-      const coast = isCoast(v.municipio);
-      const fecha = new Date(v.created_at).toLocaleDateString('es-ES',{day:'numeric',month:'short'});
-      return `
-      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
-        <div style="width:32px;height:32px;border-radius:8px;background:${coast?'#0d2a4a':'#0d2a1e'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-          <i class="ti ${coast?'ti-waves':'ti-mountain'}" style="font-size:15px;color:${coast?'#85B7EB':'#5DCAA5'}" aria-hidden="true"></i>
-        </div>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:500;color:#fff">${esc(v.municipio)}</div>
-        </div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.35)">${fecha}</div>
-      </div>`;
-    }).join('');
-  } else {
-    fpMap.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin visitas públicas</div>';
-  }
-
-  // Galería fotos (URLs firmadas en lote)
-  const gallery = document.getElementById('fp-gallery');
-  if (photos.length) {
-    const fpPaths = [...new Set(photos.filter(p => p.storage_path && p.storage_path !== 'text_only').map(p => p.storage_path))];
-    const urlByPath = {};
-    if (fpPaths.length) {
-      const { data: signed } = await db.storage.from('evidencias').createSignedUrls(fpPaths, 3600);
-      (signed || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
-    }
-    gallery.innerHTML = photos.map(p => {
-      const url = urlByPath[p.storage_path] || '';
-      return `<div style="aspect-ratio:1;border-radius:8px;overflow:hidden;background:#1a2535">
-        ${url ? `<img src="${esc(url)}" style="width:100%;height:100%;object-fit:cover" alt="${esc(p.municipio)}"/>` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.15);font-size:20px"><i class="ti ti-camera" aria-hidden="true"></i></div>`}
-      </div>`;
-    }).join('');
-  } else {
-    gallery.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin fotos públicas</div>';
-  }
-}
-
-function closeFriendProfile() {
-  document.getElementById('friend-profile-modal').style.display = 'none';
-}
-
-async function loadPhotoLikes(photoId) {
-  const { count } = await db
-    .from('photo_likes')
-    .select('*', { count:'exact', head:true })
-    .eq('photo_id', photoId);
-  const el = document.getElementById('likes-' + photoId);
-  if (el) el.textContent = count || 0;
-}
-
-async function toggleLike(btn, photoId) {
-  if (!state.user) return;
-  const liked = btn.getAttribute('data-liked') === 'true';
-  btn.setAttribute('data-liked', String(!liked));
-  btn.classList.toggle('liked', !liked);
-  const span = btn.querySelector('span');
-  if (!liked) {
-    await db.from('photo_likes').insert({ user_id: state.user.id, photo_id: photoId });
-    span.textContent = parseInt(span.textContent) + 1;
-  } else {
-    await db.from('photo_likes').delete().eq('user_id', state.user.id).eq('photo_id', photoId);
-    span.textContent = parseInt(span.textContent) - 1;
-  }
-}
-
-// ── BUSCAR AMIGOS ─────────────────────────────────────────────
-async function searchUser() {
-  const q = document.getElementById('search-input').value.trim();
-  if (!q) return;
-  const res = document.getElementById('search-results');
-  res.innerHTML = '<div style="color:rgba(255,255,255,0.35);font-size:12px;padding:8px 0">Buscando...</div>';
-
-  const { data } = await db
-    .from('profiles')
-    .select('id, username')
-    .ilike('username', `%${q}%`)
-    .neq('id', state.user.id)
-    .limit(10);
-
-  if (!data || !data.length) {
-    res.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">No se encontró ningún usuario</div>';
-    return;
-  }
-
-  // Obtener estado de amistad con cada resultado
-  const { data: friendships } = await db
-    .from('friendships')
-    .select('follower_id, following_id, estado')
-    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`);
-
-  res.innerHTML = data.map(u => {
-    const rel = (friendships || []).find(f =>
-      (f.follower_id === state.user.id && f.following_id === u.id) ||
-      (f.following_id === state.user.id && f.follower_id === u.id)
-    );
-    const initials = getInitials(u.username);
-    let btnHtml = '';
-    if (!rel) {
-      btnHtml = `<button data-uid="${esc(u.id)}" data-uname="${esc(u.username)}" onclick="sendFriendRequest(this.dataset.uid, this.dataset.uname, this)"
-        style="padding:6px 13px;background-color:#2272e8;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
-        + Añadir
-      </button>`;
-    } else if (rel.estado === 'pendiente') {
-      btnHtml = `<span style="font-size:11px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
-        <i class="ti ti-clock" aria-hidden="true" style="font-size:10px"></i> Pendiente
-      </span>`;
-    } else if (rel.estado === 'aceptado') {
-      btnHtml = `<span style="font-size:11px;color:#22b050;background:rgba(34,176,80,0.12);padding:5px 10px;border-radius:999px">
-        <i class="ti ti-check" aria-hidden="true" style="font-size:10px"></i> Amigos
-      </span>`;
-    }
-    return `
-    <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
-      <div style="width:34px;height:34px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:#7ab3e8;flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
-      <span style="color:#fff;font-size:13px;flex:1">${esc(u.username)}</span>
-      ${btnHtml}
-    </div>`;
-  }).join('');
-}
-
-async function sendFriendRequest(toId, toUsername, btn) {
-  if (!state.user) return;
-  // Cambiar botón a pendiente inmediatamente
-  if (btn) {
-    btn.outerHTML = `<span style="font-size:11px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
-      <i class="ti ti-clock" aria-hidden="true" style="font-size:10px"></i> Pendiente
-    </span>`;
-  }
-  const { error } = await db.from('friendships').insert({
-    follower_id:  state.user.id,
-    following_id: toId,
-    estado:       'pendiente',
-  });
-  if (error && error.code !== '23505') {
-    alert('Error al enviar solicitud. Inténtalo de nuevo.');
-    searchUser(); // refrescar
-  }
-}
-
-// ── PERFIL ────────────────────────────────────────────────────
-async function renderProfile() {
-  const c = Object.keys(state.visited).length;
-  document.getElementById('sv').textContent  = c;
-  document.getElementById('sp').textContent  = Math.round(c / state.totalMuni * 100) + '%';
-  document.getElementById('sph').textContent = state.photos.length;
-  renderGallery();
-  await Promise.all([loadSolicitudes(), loadFriendCount()]);
-}
-
-async function loadFriendCount() {
-  if (!state.user) return;
-  const { count } = await db
-    .from('friendships')
-    .select('*', { count: 'exact', head: true })
-    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-    .eq('estado', 'aceptado');
-  const el = document.getElementById('sf');
-  if (el) el.textContent = count || 0;
-}
-
-async function openFriendsModal() {
-  const modal = document.getElementById('friends-list-modal');
-  const content = document.getElementById('friends-list-content');
-  if (!modal || !content) return;
-  content.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:10px 0">Cargando...</div>';
-  modal.style.display = 'flex';
-
-  const { data: friends } = await db
-    .from('friendships')
-    .select('follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)')
-    .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-    .eq('estado', 'aceptado');
-
-  const seen = new Set();
-  const list = (friends || []).map(f =>
-    f.follower_id === state.user.id ? f.following : f.follower
-  ).filter(p => { if (!p || seen.has(p.id)) return false; seen.add(p.id); return true; });
-
-  if (!list.length) {
-    content.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:20px 0;text-align:center">Aún no tienes amigos añadidos</div>';
-    return;
-  }
-
-  content.innerHTML = list.map(p => {
-    const init = getInitials(p.username);
-    const av   = p.avatar_url
-      ? '<img src="' + esc(p.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(p.username) + '"/>'
-      : init;
-    return '<div data-uid="' + esc(p.id) + '" data-uname="' + esc(p.username) + '" onclick="closeFriendsModal();openFriendProfile(this.dataset.uid, this.dataset.uname)" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer">' +
-      '<div style="width:42px;height:42px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + av + '</div>' +
-      '<div style="flex:1"><div style="font-size:14px;font-weight:500;color:#fff">' + esc(p.username) + '</div></div>' +
-      '<i class="ti ti-chevron-right" style="color:rgba(255,255,255,0.2);font-size:16px" aria-hidden="true"></i>' +
-    '</div>';
-  }).join('');
-}
-
-function closeFriendsModal() {
-  document.getElementById('friends-list-modal').style.display = 'none';
-}
-
-async function loadSolicitudes() {
-  if (!state.user) return;
-
-  const { data: recibidas } = await db
-    .from('friendships')
-    .select('follower_id, created_at, profiles!friendships_follower_id_fkey(username)')
-    .eq('following_id', state.user.id)
-    .eq('estado', 'pendiente');
-
-  const { data: enviadas } = await db
-    .from('friendships')
-    .select('following_id, created_at, profiles!friendships_following_id_fkey(username)')
-    .eq('follower_id', state.user.id)
-    .eq('estado', 'pendiente');
-
-  const container = document.getElementById('solicitudes-section');
-  if (!container) return;
-
-  const totalPendientes = (recibidas?.length || 0) + (enviadas?.length || 0);
-
-  if (totalPendientes === 0) {
-    container.innerHTML = '';
-    return;
-  }
-
-  let html = `
-    <div style="padding:14px 14px 0">
-      <h2 style="font-size:11px;font-weight:500;color:rgba(255,255,255,0.4);margin-bottom:10px;letter-spacing:.06em;text-transform:uppercase">
-        Solicitudes de amistad
-        <span style="background:#e8288a;color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;margin-left:6px">${totalPendientes}</span>
-      </h2>`;
-
-  if (recibidas?.length > 0) {
-    html += `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:8px">Recibidas</div>`;
-    html += recibidas.map(s => {
-      const username = s.profiles?.username || 'Usuario';
-      const initials = getInitials(username);
-      const fecha    = new Date(s.created_at).toLocaleDateString('es-ES');
-      return `
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
-        <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid #e8288a;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:#e8288a;flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:500;color:#fff">${esc(username)}</div>
-          <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${fecha}</div>
-        </div>
-        <div style="display:flex;gap:6px">
-          <button data-uid="${esc(s.follower_id)}" data-uname="${esc(username)}" onclick="aceptarSolicitud(this.dataset.uid, this.dataset.uname)"
-            style="padding:7px 12px;background-color:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
-            <i class="ti ti-check" aria-hidden="true"></i> Aceptar
-          </button>
-          <button data-uid="${esc(s.follower_id)}" data-uname="${esc(username)}" onclick="rechazarSolicitud(this.dataset.uid, this.dataset.uname)"
-            style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">
-            <i class="ti ti-x" aria-hidden="true"></i>
-          </button>
-        </div>
-      </div>`;
-    }).join('');
-  }
-
-  if (enviadas?.length > 0) {
-    html += `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:12px;margin-bottom:8px">Enviadas</div>`;
-    html += enviadas.map(s => {
-      const username = s.profiles?.username || 'Usuario';
-      const initials = getInitials(username);
-      const fecha    = new Date(s.created_at).toLocaleDateString('es-ES');
-      return `
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
-        <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:rgba(255,255,255,0.5);flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:500;color:#fff">${esc(username)}</div>
-          <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${fecha}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:11px;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
-            <i class="ti ti-clock" aria-hidden="true" style="font-size:11px"></i> Pendiente
-          </span>
-          <button data-uid="${esc(s.following_id)}" data-uname="${esc(username)}" onclick="cancelarSolicitud(this.dataset.uid, this.dataset.uname)"
-            style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">
-            <i class="ti ti-x" aria-hidden="true"></i>
-          </button>
-        </div>
-      </div>`;
-    }).join('');
-  }
-
-  html += `</div>`;
-  container.innerHTML = html;
-}
-
-async function aceptarSolicitud(fromUserId, username) {
-  await db.from('friendships')
-    .update({ estado: 'aceptado' })
-    .eq('follower_id', fromUserId)
-    .eq('following_id', state.user.id);
-  await db.from('friendships').upsert({
-    follower_id:  state.user.id,
-    following_id: fromUserId,
-    estado:       'aceptado',
-  });
-  await loadSolicitudes();
-}
-
-async function rechazarSolicitud(fromUserId, username) {
-  if (!confirm('Rechazar la solicitud de ' + username + '?')) return;
-  await db.from('friendships')
-    .delete()
-    .eq('follower_id', fromUserId)
-    .eq('following_id', state.user.id);
-  await loadSolicitudes();
-}
-
-async function cancelarSolicitud(toUserId, username) {
-  if (!confirm('Cancelar la solicitud enviada a ' + username + '?')) return;
-  await db.from('friendships')
-    .delete()
-    .eq('follower_id', state.user.id)
-    .eq('following_id', toUserId);
-  await loadSolicitudes();
-}
-
-function renderGallery() {
-  const g = document.getElementById('gallery');
-  const e = document.getElementById('g-empty');
-  if (!state.photos.length) { g.innerHTML = ''; e.style.display = 'block'; return; }
-  e.style.display = 'none';
-  g.innerHTML = state.photos.map((p,i) => `
-    <div class="gi" onclick="openPM(${i})">
-      ${p.src
-        ? `<img src="${esc(p.src)}" alt="${esc(p.muni)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
-        : `<div class="gi-ph" style="background:rgba(34,176,80,0.08);flex-direction:column;gap:4px">
-             <i class="ti ti-message-circle" aria-hidden="true" style="font-size:18px;color:rgba(255,255,255,0.2)"></i>
-             <span style="font-size:9px;color:rgba(255,255,255,0.2);text-align:center;padding:0 4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(p.desc||'')}</span>
-           </div>`}
-      <div class="gi-hov">
-        <div class="gm">
-          <div style="font-weight:500">${esc(p.muni.length>14?p.muni.substring(0,12)+'…':p.muni)}</div>
-          <div>${p.date}</div>
-        </div>
-      </div>
-    </div>`).join('');
-}
-
-function openPM(i) {
-  const p = state.photos[i];
-  state.currentPhotoIndex = i;
-  const imgEl = document.getElementById('pm-img');
-  if (p.src) {
-    imgEl.src   = p.src; // URL firmada: ya es única, no necesita anticache
-    imgEl.style.display = 'block';
-  } else {
-    imgEl.src   = '';
-    imgEl.style.display = 'none';
-  }
-  document.getElementById('pm-meta').innerHTML = `
-    <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${esc(p.muni)}</strong></div>
-    <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${esc(p.date)}</strong></div>
-    <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${esc(p.time || '—')}</strong></div>
-    <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${esc(p.coords || '—')}</strong></div>
-    ${p.desc ? `<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${esc(p.desc)}</strong></div>` : ''}
-    <div class="mrow" style="padding-bottom:4px">
-      <button onclick="deletePhoto(${i})" style="width:100%;padding:10px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">
-        <i class="ti ti-trash" aria-hidden="true"></i> Borrar foto
-      </button>
-    </div>
-    <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>
-      <strong style="display:flex;gap:6px;margin-top:4px">
-        ${['privado','amigos','publico'].map(v => `
-          <button onclick="changePhotoVis('${p.id}','${v}',this)"
-            style="padding:4px 10px;border:none;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;
-              background-color:${p.vis===v?'#2272e8':'rgba(255,255,255,0.1)'};
-              color:${p.vis===v?'#fff':'rgba(255,255,255,0.6)'};">
-            ${v}
-          </button>`).join('')}
-      </strong>
-    </div>`;
-}
-
-async function changePhotoVis(photoId, vis, btn) {
-  if (!photoId) return;
-  await db.from('photos').update({ visibilidad: vis }).eq('id', photoId);
-  const photo = state.photos.find(p => p.id === photoId);
-  if (photo) photo.vis = vis;
-  // actualizar botones
-  btn.closest('strong').querySelectorAll('button').forEach(b => {
-    b.style.backgroundColor = b.textContent.trim() === vis ? '#2272e8' : 'rgba(255,255,255,0.1)';
-    b.style.color = b.textContent.trim() === vis ? '#fff' : 'rgba(255,255,255,0.6)';
-  });
-}
-
-function closePM() { document.getElementById('photo-modal').classList.remove('open'); }
-
-async function deletePhoto(i) {
-  const p = state.photos[i];
-  if (!p || !state.user) return;
-  if (!confirm('¿Borrar esta foto de ' + p.muni + '? Esta acción no se puede deshacer.')) return;
-
-  try {
-    // Borrar de Storage si tiene path real
-    if (p.path && p.path !== 'text_only') {
-      await db.storage.from('evidencias').remove([p.path]);
-    }
-    // Borrar de la tabla photos
-    if (p.id) {
-      await db.from('photos').delete().eq('id', p.id).eq('user_id', state.user.id);
-    }
-    // Actualizar estado local
-    state.photos.splice(i, 1);
-    state.feedCache = null;
-    closePM();
-    renderGallery();
-    const c = Object.keys(state.visited).length;
-    document.getElementById('sph').textContent = state.photos.length;
-  } catch(err) {
-    alert('Error al borrar: ' + err.message);
-  }
-}
-
-function toggleEdit() {
-  const r = document.getElementById('u-edit-row');
-  r.style.display = r.style.display === 'flex' ? 'none' : 'flex';
-  if (r.style.display === 'flex') {
-    document.getElementById('u-inp').value = state.profile?.username || '';
-    document.getElementById('u-inp').focus();
-  }
-}
-
-// El HTML llama a guardarNombre() al pulsar Guardar.
-// Cierra el editor SIEMPRE y guarda en BD si hay valor válido.
+// Guardar nombre de usuario (el HTML llama a esta función)
 async function guardarNombre() {
   const row = document.getElementById('u-edit-row');
   const v   = document.getElementById('u-inp').value.trim();
-
-  // Cerrar siempre, aunque esté vacío
   row.style.display = 'none';
   row.setAttribute('data-open', '0');
-
   if (!v || !state?.user) return;
   if (v.length < 3 || !/^[a-zA-Z0-9_. -]+$/.test(v)) {
     alert('El nombre debe tener al menos 3 caracteres y solo letras, números, espacios, guiones y puntos');
     return;
   }
-
   const { error } = await db.from('profiles').update({ username: v }).eq('id', state.user.id);
   if (error) {
     alert(error.code === '23505' ? 'Ese nombre ya está en uso' : 'No se pudo guardar el nombre');
@@ -1988,429 +31,1943 @@ async function guardarNombre() {
   document.getElementById('av-init').textContent = v.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
 }
 
-// Alias por compatibilidad (por si alguna parte llama todavía a saveUser)
-const saveUser = guardarNombre;
-
-document.getElementById('av-in').addEventListener('change', async function(e) {
-  const file = e.target.files[0];
-  if (!file || !state.user) return;
-
-  const ring     = document.getElementById('av-ring');
-  const initials = ring.querySelector('#av-init')?.textContent || 'EX';
-  ring.innerHTML = `<div style="font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;width:100%;height:100%">...</div>`;
-
-  try {
-    // Comprimir a 512px (un avatar se ve a ~100px, no necesita más)
-    const { base64, mime } = await compressImage(file, 512, 0.85);
-    const blob = await (await fetch(base64)).blob();
-    const ext      = mime.includes('png') ? 'png' : 'jpg';
-    const fileName = `${state.user.id}.${ext}`;
-
-    // Borrar anterior si existe
-    await db.storage.from('avatares').remove([fileName]);
-
-    // Subir comprimido
-    const { data: upData, error: upErr } = await db.storage
-      .from('avatares')
-      .upload(fileName, blob, {
-        contentType:  mime,
-        upsert:       true,
-        cacheControl: '3600',
-      });
-
-    if (upErr) {
-      console.error('Upload error:', upErr);
-      throw new Error(upErr.message);
+// Filtros del feed (Descubriendo / Eventos / Rutas)
+let feedFilter = 'descubriendo';
+function setFeedFilter(filter) {
+  feedFilter = filter;
+  document.querySelectorAll('.feed-filter-btn').forEach(b => {
+    const active = b.dataset.filter === filter;
+    b.style.backgroundColor = active ? '#2272e8' : 'rgba(255,255,255,0.08)';
+    b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
+  });
+  applyFeedFilter();
+}
+function applyFeedFilter() {
+  const posts = document.querySelectorAll('.feed-post');
+  let visibles = 0;
+  posts.forEach(post => {
+    const locEl  = post.querySelector('.post-location');
+    const muniEl = post.querySelector('.post-muni');
+    const muni   = (locEl?.textContent || muniEl?.textContent || '').trim();
+    const isEvento = muni.includes('🎉');
+    let show = true;
+    if (feedFilter === 'descubriendo') show = !isEvento;
+    else if (feedFilter === 'eventos')  show = isEvento;
+    else if (feedFilter === 'rutas')    show = false;
+    post.style.display = show ? '' : 'none';
+    if (show) visibles++;
+  });
+  const feedPosts = document.getElementById('feed-posts');
+  let emptyMsg = feedPosts?.querySelector('.feed-empty-msg');
+  if (!visibles && feedPosts && posts.length) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('div');
+      emptyMsg.className = 'feed-empty-msg';
+      emptyMsg.style.cssText = 'text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px';
+      feedPosts.appendChild(emptyMsg);
     }
-
-    // URL pública directa (bucket público)
-    const { data: urlData } = db.storage.from('avatares').getPublicUrl(fileName);
-    const url = urlData?.publicUrl;
-
-    if (!url) throw new Error('No se pudo obtener la URL pública');
-
-    const urlFresh = url + '?t=' + Date.now();
-
-    // Guardar en perfil
-    const { error: dbErr } = await db.from('profiles')
-      .update({ avatar_url: url })
-      .eq('id', state.user.id);
-
-    if (dbErr) throw dbErr;
-
-    // Actualizar estado local
-    if (state.profile) state.profile.avatar_url = url;
-
-    // Mostrar imagen
-    ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
-
-  } catch(err) {
-    console.error('Avatar error:', err);
-    ring.innerHTML = `<span id="av-init">${initials}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
-    alert('No se pudo subir el avatar: ' + err.message);
-  }
-});
-
-// ── MAPA GEOGRÁFICO REAL ──────────────────────────────────────
-// Helper único para "llévame a este municipio en el mapa"
-// (antes había 3 copias de este bloque con setTimeout)
-function selectMuniOnMap(muni, withZoom = true) {
-  state.selectedMuni = muni;
-  switchScreen('map');
-  // Pequeña espera a que la pantalla esté visible
-  setTimeout(() => {
-    document.querySelectorAll('.muni-path').forEach(p => {
-      p.classList.toggle('selected', p.getAttribute('data-name') === muni);
-    });
-    showMuniBar(muni);
-    if (withZoom) zoomToMuni(muni);
-  }, 250);
+    emptyMsg.textContent = feedFilter === 'rutas' ? '🥾 Las rutas están en camino...'
+      : feedFilter === 'eventos' ? '🎉 Aún no hay fotos de eventos' : '';
+    emptyMsg.style.display = 'block';
+  } else if (emptyMsg) emptyMsg.style.display = 'none';
 }
 
-// Vuelo animado hasta un municipio (zoom x4 centrado en él)
+// Tocar una @mención: abrir perfil o enviar solicitud
+async function openMentionProfile(username) {
+  if (!state?.user || !username) return;
+  const { data: profile } = await db.from('profiles')
+    .select('id, username, avatar_url').ilike('username', username).single();
+  if (!profile) { alert('@' + username + ' no encontrado'); return; }
+  if (profile.id === state.user.id) return;
+  const { data: fs } = await db.from('friendships').select('estado')
+    .or('and(follower_id.eq.' + state.user.id + ',following_id.eq.' + profile.id + '),' +
+        'and(follower_id.eq.' + profile.id + ',following_id.eq.' + state.user.id + ')')
+    .limit(1);
+  const rel = fs?.[0];
+  if (rel?.estado === 'aceptado') openFriendProfile(profile.id, profile.username);
+  else if (rel?.estado === 'pendiente') alert('Ya tienes una solicitud pendiente con @' + profile.username);
+  else if (confirm('¿Enviar solicitud de amistad a @' + profile.username + '?')) {
+    await db.from('friendships').insert({ follower_id: state.user.id, following_id: profile.id, estado: 'pendiente' });
+    alert('Solicitud enviada a @' + profile.username);
+  }
+}
+
+// Compresión de imágenes antes de subir (3-8MB → 150-400KB)
+async function compressImage(file, maxDim = 1600, quality = 0.82) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload  = e => res(e.target.result);
+    r.onerror = () => rej(new Error('No se pudo leer la foto'));
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise((res, rej) => {
+    const im = new Image();
+    im.onload  = () => res(im);
+    im.onerror = () => rej(new Error('decode'));
+    im.src = dataUrl;
+  }).catch(() => null);
+  if (!img || !img.width) return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  const out = canvas.toDataURL('image/jpeg', quality);
+  if (out.length >= dataUrl.length) return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
+  return { base64: out, mime: 'image/jpeg', compressed: true };
+}
+
+// Zoom del mapa: volar hasta un municipio / resetear
 function zoomToMuni(muni) {
   if (!state.mapZoom || !state.mapDims) return;
-  const node = document.querySelector(`.muni-path[data-name="${(window.CSS && CSS.escape) ? CSS.escape(muni) : muni}"]`);
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(muni) : muni;
+  const node = document.querySelector('.muni-path[data-name="' + sel + '"]');
   if (!node) return;
   const b = node.getBBox();
   const { W, H } = state.mapDims;
   const scale = Math.min(8, Math.max(2, 0.5 / Math.max(b.width / W, b.height / H)));
-  const tx = W / 2 - scale * (b.x + b.width  / 2);
+  const tx = W / 2 - scale * (b.x + b.width / 2);
   const ty = H / 2 - scale * (b.y + b.height / 2);
   d3.select('#map-svg').transition().duration(750)
     .call(state.mapZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
-
 function resetMapZoom() {
   if (!state.mapZoom) return;
   d3.select('#map-svg').transition().duration(500)
     .call(state.mapZoom.transform, d3.zoomIdentity);
 }
 
-async function loadMap() {
-  try {
-    // Cargar datos de municipios desde Supabase
-    const { data: muniData } = await db.from('municipios').select('*');
-    if (muniData) {
-      state.municipiosData = {};
-      muniData.forEach(m => { state.municipiosData[m.nombre] = m; });
-      state.coast    = muniData.filter(m => m.tipo === 'costa').map(m => m.nombre);
-      state.mountain = muniData.filter(m => m.tipo === 'montaña').map(m => m.nombre);
-    }
+const SUPABASE_URL = "https://sdsdbfjmpjbrcgrbyvkm.supabase.co",
+    SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNkc2RiZmptcGpicmNncmJ5dmttIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMzQxMzksImV4cCI6MjA5MzkxMDEzOX0.EgNnrghpj9XbFUt0N-NlTIhH4GxcHOaen33RXAYMNcA",
+    {
+        createClient: createClient
+    } = supabase,
+    db = createClient(SUPABASE_URL, SUPABASE_ANON),
+    state = {
+        user: null,
+        profile: null,
+        visited: {},
+        photos: [],
+        totalMuni: 102,
+        coast: [],
+        mountain: [],
+        rolling: !1,
+        selectedMuni: null,
+        eventos: [],
+        inscripciones: {},
+        feedPosts: []
+    },
+    NAV_ITEMS = [{
+        id: "map",
+        icon: "ti-map-2",
+        label: "Mapa",
+        bg: "#1a7a3e",
+        fg: "#b8f5d0",
+        abg: "#22b050",
+        afg: "#ffffff"
+    }, {
+        id: "eventos",
+        icon: "ti-confetti",
+        label: "Eventos",
+        bg: "#aa1060",
+        fg: "#ffc0e0",
+        abg: "#e8288a",
+        afg: "#ffffff"
+    }, {
+        id: "dado",
+        icon: "ti-dice",
+        label: "Destino",
+        bg: "#a07810",
+        fg: "#fff0b0",
+        abg: "#e8b820",
+        afg: "#ffffff"
+    }, {
+        id: "feed",
+        icon: "ti-users",
+        label: "Amigos",
+        bg: "#1848a8",
+        fg: "#b0d4ff",
+        abg: "#2272e8",
+        afg: "#ffffff"
+    }, {
+        id: "profile",
+        icon: "ti-user-circle",
+        label: "Perfil",
+        bg: "#a04010",
+        fg: "#ffd0a0",
+        abg: "#e86820",
+        afg: "#ffffff"
+    }];
 
-    const topo = await d3.json('https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json');
-    const all  = topojson.feature(topo, topo.objects.municipalities);
-    const cant = {
-      type: 'FeatureCollection',
-      features: all.features.filter(f => String(f.id || '').startsWith('39')),
+function buildNavs() {
+    ["map", "eventos", "dado", "feed", "profile"].forEach(e => {
+        const t = document.getElementById("nav-" + e);
+        t && (t.innerHTML = NAV_ITEMS.map(t => {
+            const i = t.id === e,
+                n = i ? t.abg : t.bg,
+                o = i ? t.afg : t.fg;
+            return `<button\n        onclick="switchScreen('${t.id}')"\n        id="nb-${e}-${t.id}"\n        aria-label="${t.label}"\n        style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 4px 8px;border:none;border-radius:14px;font-size:9px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:${n};color:${o};">\n        <i class="ti ${t.icon}" style="font-size:20px;color:inherit" aria-hidden="true"></i>\n        <span>${t.label}</span>\n      </button>`
+        }).join(""))
+    })
+}
+
+function updateNavColors(e) {
+    ["map", "eventos", "dado", "feed", "profile"].forEach(t => {
+        NAV_ITEMS.forEach(i => {
+            const n = document.getElementById(`nb-${t}-${i.id}`);
+            if (!n) return;
+            const o = i.id === e;
+            n.style.backgroundColor = o ? i.abg : i.bg, n.style.color = o ? i.afg : i.fg
+        })
+    })
+}
+
+function showAuth(e = "") {
+    if (document.getElementById("splash")?.remove(), document.getElementById("app").style.display = "none", document.getElementById("auth-screen").style.display = "flex", e) {
+        const t = document.getElementById("auth-msg");
+        t.textContent = e, t.style.display = "block"
+    }
+}
+
+function showApp() {
+    document.getElementById("splash")?.remove(), document.getElementById("auth-screen").style.display = "none", document.getElementById("app").style.display = "flex"
+}
+async function doLogin() {
+    const e = document.getElementById("auth-email").value.trim(),
+        t = document.getElementById("auth-pass").value,
+        i = document.getElementById("auth-msg");
+    if (!e || !t) return i.textContent = "Rellena email y contraseña", void(i.style.display = "block");
+    setAuthLoading(!0);
+    const {
+        error: n
+    } = await db.auth.signInWithPassword({
+        email: e,
+        password: t
+    });
+    setAuthLoading(!1), n && (i.textContent = "Email o contraseña incorrectos", i.style.display = "block")
+}
+async function doRegister() {
+    const e = document.getElementById("auth-email").value.trim(),
+        t = document.getElementById("auth-pass").value,
+        i = document.getElementById("auth-username").value.trim(),
+        n = document.getElementById("auth-msg");
+    if (n.style.color = "#e8288a", !e || !t || !i) return n.textContent = "Rellena todos los campos", void(n.style.display = "block");
+    if (t.length < 6) return n.textContent = "La contraseña debe tener al menos 6 caracteres", void(n.style.display = "block");
+    if (i.length < 3) return n.textContent = "El nombre de usuario debe tener al menos 3 caracteres", void(n.style.display = "block");
+    if (!/^[a-zA-Z0-9_.-]+$/.test(i)) return n.textContent = "El nombre solo puede tener letras, números, guiones y puntos", void(n.style.display = "block");
+    setAuthLoading(!0);
+    const {
+        data: o
+    } = await db.from("profiles").select("username").ilike("username", i).limit(1);
+    if (o && o.length > 0) return n.textContent = "Ese nombre de usuario ya está en uso, elige otro", n.style.display = "block", void setAuthLoading(!1);
+    const {
+        error: a
+    } = await db.auth.signUp({
+        email: e,
+        password: t,
+        options: {
+            data: {
+                username: i
+            }
+        }
+    });
+    setAuthLoading(!1), a ? (a.message.includes("already registered") ? n.textContent = "Ese email ya tiene una cuenta. Inicia sesión." : n.textContent = a.message, n.style.display = "block") : (n.style.color = "#22b050", n.textContent = "¡Cuenta creada! Revisa tu email para confirmar.", n.style.display = "block")
+}
+
+function setAuthLoading(e) {
+    document.getElementById("btn-login").disabled = e, document.getElementById("btn-register").disabled = e
+}
+
+function toggleAuthForm() {
+    const e = document.getElementById("register-row"),
+        t = "flex" === e.style.display;
+    e.style.display = t ? "none" : "flex", document.getElementById("auth-toggle-txt").textContent = t ? "¿No tienes cuenta? Regístrate" : "¿Ya tienes cuenta? Inicia sesión", document.getElementById("auth-msg").style.display = "none"
+}
+async function doLogout() {
+    await db.auth.signOut(), state.user = null, state.profile = null, state.visited = {}, state.photos = [], showAuth()
+}
+async function loadUserData(e) {
+    state.user = e;
+    const [t, i, n, o] = await Promise.all([db.from("profiles").select("*").eq("id", e.id).single(), db.from("visits").select("municipio").eq("user_id", e.id), db.from("photos").select("*").eq("user_id", e.id).order("created_at", {
+        ascending: !1
+    }), db.from("event_signups").select("event_id").eq("user_id", e.id)]), a = t.data;
+    if (state.profile = a, a && (document.getElementById("u-name").textContent = a.username, document.getElementById("av-init").textContent = a.username.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2), a.avatar_url)) {
+        const e = document.getElementById("av-ring"),
+            t = a.avatar_url + "?t=" + Date.now();
+        e.innerHTML = '<img src="' + t + '" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>'
+    }
+    i.data && (i.data.forEach(e => {
+        state.visited[e.municipio] = !0
+    }), refreshMapVisited());
+    if (n.data) {
+        state.photos = n.data.map(e => ({
+            id: e.id, src: null, muni: e.municipio, date: e.fecha,
+            time: e.hora || "", coords: e.coords || "", desc: e.descripcion || "",
+            vis: e.visibilidad, path: e.storage_path
+        }));
+        const paths = [...new Set(n.data.filter(e => e.storage_path && "text_only" !== e.storage_path).map(e => e.storage_path))];
+        if (paths.length) {
+            const { data: signed } = await db.storage.from("evidencias").createSignedUrls(paths, 3600);
+            const byPath = {};
+            (signed || []).forEach(s => { if (s.signedUrl) byPath[s.path] = s.signedUrl; });
+            state.photos.forEach(p => { if (p.path && byPath[p.path]) p.src = byPath[p.path]; });
+        }
+    }
+    o.data && o.data.forEach(e => {
+        state.inscripciones[e.event_id] = !0
+    }), updateProgress(), subscribeToFriendActivity()
+}
+
+function switchScreen(e) {
+    document.querySelectorAll(".screen").forEach(e => e.classList.remove("active")), document.getElementById("screen-" + e).classList.add("active"), updateNavColors(e), "profile" === e && renderProfile(), "feed" === e && (clearFeedBadge(), loadFeed()), "eventos" === e && loadEventos(), "dado" === e && renderMuniList()
+}
+
+function searchMuniOnMap(e) {
+    const t = document.getElementById("map-search-results");
+    if (!e || e.length < 2) return t.style.display = "none", void d3.selectAll(".muni-path").classed("selected", !1);
+    const i = [];
+    d3.selectAll(".muni-path").each(function() {
+        i.push(d3.select(this).attr("data-name"))
+    });
+    const n = i.filter(t => t && t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(e.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""))).slice(0, 8);
+    n.length ? (t.style.display = "block", t.innerHTML = n.map(e => {
+        const t = state.visited[e];
+        return '<div data-muni="' + esc(e) + '" onclick="selectMuniFromSearch(this.dataset.muni)" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#fff"><span>' + esc(e) + "</span>" + (t ? '<span style="font-size:10px;color:#22b050;background:rgba(34,176,80,0.15);padding:2px 8px;border-radius:999px">✓ Conquistado</span>' : '<span style="font-size:10px;color:rgba(255,255,255,0.3)">Sin visitar</span>') + "</div>"
+    }).join("")) : t.style.display = "none"
+}
+
+function selectMuniFromSearch(e) {
+    document.getElementById("map-search-results").style.display = "none", document.getElementById("map-search-input").value = "", highlightMuniOnMap(e), document.getElementById("map-cont").scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+    })
+}
+
+function highlightMuniOnMap(e) {
+    d3.selectAll(".muni-path").classed("selected", !1);
+    const sel = (window.CSS && CSS.escape) ? CSS.escape(e) : e;
+    const node = document.querySelector('.muni-path[data-name="' + sel + '"]');
+    if (node) {
+        node.classList.add("selected");
+        node.parentNode.appendChild(node); // que el borde no quede tapado
+    }
+    state.selectedMuni = e, showMuniBar(e), zoomToMuni(e)
+}
+
+function updateProgress() {
+    const e = Object.keys(state.visited).length,
+        t = state.totalMuni;
+    document.getElementById("pfill").style.width = Math.round(e / t * 100) + "%", document.getElementById("plabel").textContent = e + " municipio" + (1 !== e ? "s" : "") + " conquistado" + (1 !== e ? "s" : ""), document.getElementById("ppct").textContent = e + " / " + t, checkInsignia(e, t)
+}
+document.addEventListener("click", function(e) {
+    if (!e.target.closest("#map-search-input") && !e.target.closest("#map-search-results")) {
+        const e = document.getElementById("map-search-results");
+        e && (e.style.display = "none")
+    }
+});
+let mapFilter = "todos";
+
+function setMapFilter(e) {
+    mapFilter = e, document.querySelectorAll(".map-filter-btn").forEach(t => {
+        const i = t.dataset.filter === e;
+        t.style.backgroundColor = i ? "#22b050" : "rgba(255,255,255,0.08)", t.style.color = i ? "#fff" : "rgba(255,255,255,0.5)"
+    }), applyMapFilter()
+}
+
+function applyMapFilter() {
+    d3.selectAll(".muni-path").each(function() {
+        const e = d3.select(this).attr("data-name"),
+            t = state.municipiosData?.[e] || {},
+            i = "costa" === t.tipo,
+            n = !!state.visited[e],
+            o = t.sellos || [];
+        let a = !0;
+        "costa" === mapFilter && (a = i), "montaña" === mapFilter && (a = !i), "pendientes" === mapFilter && (a = !n), "populares" === mapFilter && (a = (state.popularidad?.[e] || 0) > 0), SELLOS[mapFilter] && (a = o.includes(mapFilter)), d3.select(this).style("opacity", a ? 1 : .15)
+    })
+}
+
+function showMuniBar(e) {
+    document.getElementById("muni-bar").style.display = "flex", document.getElementById("bar-name").textContent = e;
+    const t = state.visited[e];
+    document.getElementById("bar-st").textContent = t ? "✓ Conquistado" : "Sin visitar";
+    const i = document.getElementById("btn-ev");
+    i.style.backgroundColor = t ? "#1a7a3e" : "#22b050", i.style.color = "#ffffff", i.innerHTML = t ? '<i class="ti ti-camera" aria-hidden="true"></i> Añadir foto' : '<i class="ti ti-camera" aria-hidden="true"></i> Evidencia'
+}
+
+function openSheet() {
+    if (!state.selectedMuni) return;
+    const e = state.selectedMuni,
+        t = state.visited[e];
+    document.getElementById("sht-title").textContent = e, document.getElementById("sht-sub").textContent = t ? "Ya conquistado — añade foto o descripción" : "Foto, descripción o ambas (todo opcional)";
+    const i = document.getElementById("btn-desmarcar");
+    i && (i.style.display = t ? "block" : "none");
+    const n = document.getElementById("btn-conf");
+    n && (n.textContent = t ? "Guardar" : "Marcar como conquistado"), document.querySelectorAll(".vis-btn").forEach(e => e.classList.remove("vis-active")), document.getElementById("vis-amigos").classList.add("vis-active"), clearPhoto();
+    const o = document.getElementById("evidencia-desc");
+    o && (o.value = ""), document.getElementById("upload-sheet").classList.add("open")
+}
+
+function clearPhoto() {
+    document.getElementById("prev-w").style.display = "none";
+    const e = document.getElementById("uzone")?.parentElement;
+    e && (e.style.display = "block");
+    try {
+        document.getElementById("file-in").value = ""
+    } catch (e) {}
+    state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null
+}
+let selectedVisibilidad = "amigos";
+
+function setVis(e) {
+    selectedVisibilidad = e, document.querySelectorAll(".vis-btn").forEach(e => e.classList.remove("vis-active")), document.getElementById("vis-" + e).classList.add("vis-active")
+}
+async function confirmVisit() {
+    if (pendingEventId) return void await confirmEventPhoto();
+    const e = state.selectedMuni;
+    if (!e || !state.user) return;
+    const t = document.getElementById("btn-conf"),
+        i = (document.getElementById("evidencia-desc")?.value || "").trim();
+    state.pendingBase64, t.textContent = "Guardando...", t.disabled = !0;
+    try {
+        let n = null;
+        if (state.pendingBase64) {
+            const {
+                data: e
+            } = await db.auth.getSession(), t = e?.session?.user;
+            if (!t) throw new Error("Sesión expirada — sal y vuelve a entrar");
+            const i = t.id,
+                o = state.pendingBase64.split(",")[1],
+                a = state.pendingMime || "image/jpeg",
+                s = atob(o),
+                r = [];
+            for (let e = 0; e < s.length; e += 512) {
+                const t = s.slice(e, e + 512),
+                    i = new Uint8Array(t.length);
+                for (let e = 0; e < t.length; e++) i[e] = t.charCodeAt(e);
+                r.push(i)
+            }
+            const d = new Blob(r, {
+                    type: a
+                }),
+                l = a.includes("png") ? "png" : "jpg",
+                c = `${i}/${Date.now()}.${l}`;
+            console.log("Subiendo evidencia desde base64:", c, a, d.size + "b");
+            const {
+                data: u,
+                error: p
+            } = await db.storage.from("evidencias").upload(c, d, {
+                contentType: a,
+                cacheControl: "3600",
+                upsert: !1
+            });
+            if (p) throw console.error("Upload error:", JSON.stringify(p)), new Error("Error foto: " + (p.message || JSON.stringify(p)));
+            console.log("Subida OK:", c), n = c
+        }
+        const {
+            data: o,
+            error: a
+        } = await db.from("visits").upsert({
+            user_id: state.user.id,
+            municipio: e,
+            visibilidad: selectedVisibilidad,
+            coords: state.lastCoords || null,
+            fecha: (new Date).toISOString().split("T")[0]
+        }).select();
+        if (a) return console.error("Error guardando visita:", JSON.stringify(a)), alert("Error al guardar la visita: " + a.message), t.textContent = "Marcar como conquistado", void(t.disabled = !1);
+        if (console.log("Visita guardada en Supabase:", o), n) {
+            new Date;
+            const t = new Date,
+                {
+                    data: o
+                } = await db.from("photos").insert({
+                    user_id: state.user.id,
+                    municipio: e,
+                    storage_path: n,
+                    descripcion: i || null,
+                    visibilidad: selectedVisibilidad,
+                    coords: state.lastCoords || null,
+                    fecha: t.toISOString().split("T")[0],
+                    hora: t.toLocaleTimeString("es-ES", {
+                        hour: "2-digit",
+                        minute: "2-digit"
+                    })
+                }).select().single(),
+                a = (await db.storage.from("evidencias").createSignedUrl(n, 3600)).data?.signedUrl || "";
+            state.photos.unshift({
+                id: o?.id,
+                src: a,
+                muni: e,
+                date: t.toLocaleDateString("es-ES"),
+                time: t.toLocaleTimeString("es-ES", {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                }),
+                coords: state.lastCoords || "",
+                desc: i || "",
+                vis: selectedVisibilidad,
+                path: n
+            })
+        } else if (i) {
+            const t = new Date;
+            await db.from("photos").insert({
+                user_id: state.user.id,
+                municipio: e,
+                storage_path: "text_only",
+                descripcion: i,
+                visibilidad: selectedVisibilidad,
+                coords: state.lastCoords || null,
+                fecha: t.toISOString().split("T")[0],
+                hora: t.toLocaleTimeString("es-ES", {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                })
+            }), state.photos.unshift({
+                src: null,
+                muni: e,
+                date: t.toLocaleDateString("es-ES"),
+                time: t.toLocaleTimeString("es-ES", {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                }),
+                coords: "",
+                desc: i,
+                vis: selectedVisibilidad
+            })
+        }
+        state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
+            t.getAttribute("data-name") === e && t.classList.add("visited")
+        }), showMuniBar(e), document.getElementById("upload-sheet").classList.remove("open"), document.getElementById("file-in").value = "", document.getElementById("prev-w").style.display = "none", document.getElementById("uzone").style.display = "block", state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null, state.feedCache = null;
+        const s = document.getElementById("evidencia-desc");
+        s && (s.value = ""), document.querySelectorAll(".muni-path").forEach(t => {
+            t.getAttribute("data-name") === e && t.classList.add("visited")
+        }), updateProgress(), launchConfetti(), console.log("Visita guardada OK:", e, selectedVisibilidad), setTimeout(() => {
+            confirm("¿Quieres recomendar algún sitio o restaurante en " + e + "?") && openRecModal(e)
+        }, 1500)
+    } catch (t) {
+        if (console.error("confirmVisit error:", t), t.message && t.message.includes("foto")) try {
+            await db.from("visits").upsert({
+                user_id: state.user.id,
+                municipio: e,
+                visibilidad: selectedVisibilidad,
+                coords: state.lastCoords || null,
+                fecha: (new Date).toISOString().split("T")[0]
+            }), state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
+                t.getAttribute("data-name") === e && t.classList.add("visited")
+            }), showMuniBar(e), document.getElementById("upload-sheet").classList.remove("open"), updateProgress(), alert("⚠️ Visita guardada pero sin foto. Error: " + t.message)
+        } catch (e) {
+            alert("Error al guardar: " + t.message)
+        } else alert("Error al guardar: " + t.message)
+    } finally {
+        t.textContent = state.visited[state.selectedMuni] ? "Guardar nueva foto" : "Marcar como conquistado", t.disabled = !1
+    }
+}
+async function desmarcarVisit() {
+    const e = state.selectedMuni;
+    if (!e || !state.user) return;
+    if (!confirm("¿Seguro que quieres desmarcar " + e + " como conquistado?")) return;
+    const t = document.getElementById("btn-desmarcar");
+    t.textContent = "Desmarcando...", t.disabled = !0;
+    try {
+        await db.from("visits").delete().eq("user_id", state.user.id).eq("municipio", e), delete state.visited[e], document.querySelectorAll(".muni-path").forEach(t => {
+            t.getAttribute("data-name") === e && (t.classList.remove("visited"), t.classList.remove("selected"))
+        }), document.getElementById("muni-bar").style.display = "none", document.getElementById("upload-sheet").classList.remove("open"), updateProgress()
+    } catch (e) {
+        alert("Error al desmarcar: " + e.message)
+    } finally {
+        t.textContent = "Desmarcar como conquistado", t.disabled = !1
+    }
+}
+
+function getCoords() {
+    navigator.geolocation && navigator.geolocation.getCurrentPosition(e => {
+        state.lastCoords = e.coords.latitude.toFixed(4) + "°N, " + Math.abs(e.coords.longitude).toFixed(4) + "°W"
+    })
+}
+
+async function handleFileSelected(file) {
+    if (!file) return;
+    try {
+        const { base64, mime, compressed } = await compressImage(file);
+        state.pendingBase64 = base64;
+        state.pendingMime   = mime;
+        state.pendingFile   = null;
+        console.log('Foto lista' + (compressed ? ' (comprimida)' : ' (original)') + ', ' + (base64.length / 1024).toFixed(0) + 'KB');
+        document.getElementById('prev-img').src = base64;
+        const now = new Date();
+        document.getElementById('prev-meta').textContent =
+            now.toLocaleDateString('es-ES') + ' · ' +
+            now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('prev-w').style.display = 'block';
+        const uz = document.getElementById('uzone')?.parentElement;
+        if (uz) uz.style.display = 'none';
+    } catch (err) {
+        alert('Error al leer la foto. Inténtalo de nuevo.');
+    }
+    getCoords();
+}
+const fileInput = document.getElementById("file-in");
+fileInput.addEventListener("input", function(e) {
+    const t = e.target.files && e.target.files[0];
+    t && handleFileSelected(t)
+}), fileInput.addEventListener("change", function(e) {
+    const t = e.target.files && e.target.files[0];
+    t && handleFileSelected(t)
+});
+let currentFilter = "todos";
+async function loadEventos() {
+    const {
+        data: e
+    } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
+    e && (state.eventos = e), renderEventos()
+}
+
+function filterEvs(e, t) {
+    currentFilter = t, document.querySelectorAll(".ev-tab").forEach(e => e.classList.remove("active")), e.classList.add("active"), renderEventos()
+}
+
+function renderEventos() {
+    const e = new Date;
+    e.setHours(0, 0, 0, 0);
+    const t = state.eventos.filter(t => {
+            const i = new Date(t.fecha);
+            return i.setHours(0, 0, 0, 0), i >= e
+        }),
+        i = state.eventos.filter(t => {
+            const i = new Date(t.fecha);
+            return i.setHours(0, 0, 0, 0), i < e && state.inscripciones[t.id]
+        }),
+        n = "todos" === currentFilter ? t : "inscritos" === currentFilter ? t.filter(e => state.inscripciones[e.id]) : "pasados" === currentFilter ? i : t.filter(e => e.tipo === currentFilter),
+        o = document.getElementById("tab-inscritos");
+    if (o) {
+        const e = t.filter(e => state.inscripciones[e.id]).length;
+        o.textContent = e > 0 ? "Mis eventos (" + e + ")" : "Mis eventos"
+    }
+    document.getElementById("eventos-list").innerHTML = n.map(e => {
+        const t = state.inscripciones[e.id],
+            i = t ? "#1a7a3e" : "#aa1060",
+            n = t ? "Apuntado" : "Apuntarme",
+            o = t ? "ti-check" : "ti-plus",
+            a = new Date(e.fecha).toLocaleDateString("es-ES", {
+                day: "numeric",
+                month: "short"
+            }),
+            s = new Date(e.fecha),
+            r = (new Date - s) / 864e5,
+            d = r >= 0 && r < 2 ? `<button onclick="openEventFotoSheet('${e.id}','${e.nombre.replace(/'/g,"\\'")}','${e.source||"local"}')"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
+        return `\n    <div class="ev-card">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${e.nombre}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${e.lugar}</div>\n        <div class="ev-desc">${e.descripcion||""}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
+    }).join(""), n.forEach(e => loadEventCount(e.id))
+}
+async function loadEventCount(e) {
+    const {
+        count: t
+    } = await db.from("event_signups").select("*", {
+        count: "exact",
+        head: !0
+    }).eq("event_id", e), i = document.getElementById("ev-count-" + e);
+    i && (i.innerHTML = `<strong>${t||0}</strong> van`)
+}
+async function toggleInscripcion(e) {
+    if (!state.user) return;
+    state.inscripciones[e] ? (await db.from("event_signups").delete().eq("user_id", state.user.id).eq("event_id", e), delete state.inscripciones[e]) : (await db.from("event_signups").insert({
+        user_id: state.user.id,
+        event_id: e
+    }), state.inscripciones[e] = !0), renderEventos()
+}
+let pendingEventId = null,
+    pendingEventName = null;
+
+function openEventFotoSheet(e, t) {
+    pendingEventId = e, pendingEventName = t, state.selectedMuni = null, document.getElementById("sht-title").textContent = t, document.getElementById("sht-sub").textContent = "Sube una foto de la fiesta 📸", document.getElementById("btn-desmarcar").style.display = "none", document.getElementById("btn-conf").textContent = "Publicar foto", clearPhoto(), document.getElementById("evidencia-desc").value = "", document.getElementById("upload-sheet").classList.add("open")
+}
+async function confirmEventPhoto() {
+    if (!pendingEventId || !state.user) return;
+    const e = document.getElementById("btn-conf");
+    e.textContent = "Subiendo...", e.disabled = !0;
+    try {
+        let t = null;
+        if (state.pendingBase64 && state.pendingMime) {
+            const e = await fetch("data:" + state.pendingMime + ";base64," + state.pendingBase64).then(e => e.blob()),
+                i = state.user.id + "/eventos/" + pendingEventId + "_" + Date.now() + ".jpg",
+                {
+                    error: n
+                } = await db.storage.from("evidencias").upload(i, e, {
+                    contentType: state.pendingMime
+                });
+            n || (t = i)
+        }
+        if (!t) return alert("Añade una foto antes de publicar"), e.textContent = "Publicar foto", void(e.disabled = !1);
+        await db.from("event_photos").insert({
+            user_id: state.user.id,
+            event_id: pendingEventId,
+            storage_path: t,
+            descripcion: document.getElementById("evidencia-desc").value.trim() || null
+        }), await db.from("photos").insert({
+            user_id: state.user.id,
+            municipio: "🎉 " + pendingEventName,
+            storage_path: t,
+            descripcion: document.getElementById("evidencia-desc").value.trim() || null,
+            visibilidad: "amigos",
+            fecha: (new Date).toISOString().split("T")[0],
+            hora: (new Date).toLocaleTimeString("es-ES", {
+                hour: "2-digit",
+                minute: "2-digit"
+            })
+        }), state.feedCache = null, document.getElementById("upload-sheet").classList.remove("open"), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos()
+    } catch (e) {
+        alert("Error: " + e.message)
+    } finally {
+        e.textContent = "Publicar foto", e.disabled = !1
+    }
+}
+const COMARCAS = ["Costa Occidental", "Saja-Nansa", "Liébana", "Besaya", "Campoo", "Valles Pasiegos", "Trasmiera", "Bahía de Santander", "Asón-Agüera", "Costa Oriental"],
+    COAST_MUNIS = ["Santander", "Castro-Urdiales", "Santoña", "Laredo", "Comillas", "San Vicente de la Barquera", "Suances", "Miengo", "Piélagos", "Camargo", "El Astillero", "Noja", "Bareyo", "Arnuero", "Colindres", "Limpias", "Marina de Cudeyo", "Ribamontán al Mar", "Escalante", "Argoños", "Meruelo", "Voto"],
+    LOREM = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.",
+    DOT_POS = {
+        1: [
+            [60, 60]
+        ],
+        2: [
+            [35, 35],
+            [85, 85]
+        ],
+        3: [
+            [35, 35],
+            [60, 60],
+            [85, 85]
+        ],
+        4: [
+            [35, 35],
+            [85, 35],
+            [35, 85],
+            [85, 85]
+        ],
+        5: [
+            [35, 35],
+            [85, 35],
+            [60, 60],
+            [35, 85],
+            [85, 85]
+        ],
+        6: [
+            [35, 32],
+            [85, 32],
+            [35, 60],
+            [85, 60],
+            [35, 88],
+            [85, 88]
+        ]
     };
-    state.totalMuni = cant.features.length;
 
-    const cont = document.getElementById('map-cont');
-    const W    = cont.clientWidth || 410;
-    const H    = Math.round(W * .52);
-    state.mapDims = { W, H };
-    const svgEl = document.getElementById('map-svg');
-    svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
-
-    const proj = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], cant);
-    const path = d3.geoPath(proj);
-    const svg  = d3.select('#map-svg');
-    svg.selectAll('*').remove();
-
-    // ── Degradados y filtros del mapa ──
-    const defs = svg.append('defs');
-    const gradV = defs.append('linearGradient')
-      .attr('id', 'grad-visited').attr('x1', '0').attr('y1', '0').attr('x2', '0').attr('y2', '1');
-    gradV.append('stop').attr('offset', '0%').attr('stop-color', '#34d06b');
-    gradV.append('stop').attr('offset', '100%').attr('stop-color', '#1a9a48');
-
-    const gradSea = defs.append('linearGradient')
-      .attr('id', 'grad-sea').attr('x1', '0').attr('y1', '0').attr('x2', '0').attr('y2', '1');
-    gradSea.append('stop').attr('offset', '0%').attr('stop-color', '#16283d');
-    gradSea.append('stop').attr('offset', '100%').attr('stop-color', '#101d2e');
-
-    const glow = defs.append('filter').attr('id', 'glow-visited')
-      .attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
-    glow.append('feGaussianBlur').attr('stdDeviation', '1.6').attr('result', 'blur');
-    const merge = glow.append('feMerge');
-    merge.append('feMergeNode').attr('in', 'blur');
-    merge.append('feMergeNode').attr('in', 'SourceGraphic');
-
-    // Fondo "mar" con degradado
-    svg.append('rect')
-      .attr('x', 0).attr('y', 0).attr('width', W).attr('height', H)
-      .attr('fill', 'url(#grad-sea)')
-      .on('click', () => { /* tocar el mar deselecciona nada */ });
-
-    // Grupo zoomable
-    const g = svg.append('g').attr('id', 'map-zoom-group');
-
-    g.selectAll('path.muni-path')
-      .data(cant.features).join('path')
-      .attr('class', d => {
-        const name = d.properties.name || d.properties.NAME || d.properties.NAMEUNIT || ('Mun-'+d.id);
-        let cls = 'muni-path';
-        if (state.visited[name]) cls += ' visited';
-        else if (isCoast(name) || state.coast.includes(name)) cls += ' is-coast';
-        return cls;
-      })
-      .attr('d', path)
-      .attr('data-name', d => d.properties.name || d.properties.NAME || d.properties.NAMEUNIT || ('Mun-'+d.id))
-      .on('click', function(ev, d) {
-        const name = d3.select(this).attr('data-name');
-        g.selectAll('.muni-path').classed('selected', false);
-        d3.select(this).classed('selected', true);
-        d3.select(this).raise(); // que el borde resaltado no quede tapado por vecinos
-        state.selectedMuni = name;
-        showMuniBar(name);
-      });
-
-    // ── Zoom y paneo (pellizcar / arrastrar) ──
-    state.mapZoom = d3.zoom()
-      .scaleExtent([1, 8])
-      .translateExtent([[0, 0], [W, H]])
-      .on('zoom', ev => {
-        g.attr('transform', ev.transform);
-        // Compensar grosor de bordes al hacer zoom
-        g.attr('stroke-width-scale', ev.transform.k);
-        g.selectAll('.muni-path:not(.selected)').style('stroke-width', (0.35 / ev.transform.k) + 'px');
-        // Mostrar botón de reset solo si hay zoom
-        const rb = document.getElementById('map-reset-zoom');
-        if (rb) rb.style.display = ev.transform.k > 1.05 ? 'flex' : 'none';
-      });
-    svg.call(state.mapZoom).on('dblclick.zoom', null); // doble tap no hace zoom brusco
-
-    // Botón flotante para volver a ver toda Cantabria
-    if (!document.getElementById('map-reset-zoom')) {
-      const rb = document.createElement('button');
-      rb.id = 'map-reset-zoom';
-      rb.innerHTML = '<i class="ti ti-zoom-out-area" aria-hidden="true"></i>';
-      rb.title = 'Ver toda Cantabria';
-      rb.setAttribute('aria-label', 'Ver toda Cantabria');
-      rb.onclick = resetMapZoom;
-      cont.appendChild(rb);
-    }
-
-    document.getElementById('map-load').style.display = 'none';
-    updateProgress();
-  } catch(err) {
-    console.error('loadMap error:', err);
-    document.getElementById('map-load').innerHTML =
-      '<p style="color:rgba(255,255,255,0.4);font-size:12px;padding:20px;text-align:center">Error al cargar el mapa.</p>';
-  }
+function renderDice(e, t) {
+    const i = document.getElementById("dice-dots");
+    i.innerHTML = "", document.getElementById("dice-body").setAttribute("fill", t || "#f5f0e8"), (DOT_POS[e] || []).forEach(([e, t]) => {
+        const n = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        n.setAttribute("cx", e), n.setAttribute("cy", t), n.setAttribute("r", "7"), n.setAttribute("fill", "#1a1a2e"), i.appendChild(n)
+    })
 }
 
-// ── RELOJ ─────────────────────────────────────────────────────
-function updateClock() {
-  const t = new Date().toLocaleTimeString('es-ES', {hour:'2-digit', minute:'2-digit'});
-  document.querySelectorAll('.clock').forEach(el => { el.textContent = t; });
+function isCoast(e) {
+    if (!e) return false;
+    const nl = e.toLowerCase();
+    if (nl.includes('corrales de buelna') || nl.includes('los corrales')) return false;
+    return COAST_MUNIS.some(t => nl.includes(t.toLowerCase()));
 }
 
-// ── SERVICE WORKER — DESACTIVADO ─────────────────────────────
-// El cache se gestiona con el script nuclear en el HTML
-// No registramos ningún SW para evitar problemas de cache en iOS
-
-// ── INIT ──────────────────────────────────────────────────────
-// ── ANTI-CACHE: detectar nueva versión y limpiar ─────────────────────────
-async function checkForUpdates() {
-  try {
-    // Leer la versión actual del HTML
-    const currentVersion = document.querySelector('meta[name="app-version"]')?.content;
-    if (!currentVersion) return;
-
-    // Comparar con la última versión guardada
-    const savedVersion = localStorage.getItem('ce_version');
-
-    if (savedVersion && savedVersion !== currentVersion) {
-      console.log('Nueva versión detectada, limpiando cache...');
-      // Borrar todos los caches del SW
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
-      }
-      // Actualizar versión guardada
-      localStorage.setItem('ce_version', currentVersion);
-      // No recargar — el cache ya está limpio para la próxima vez
-    } else {
-      localStorage.setItem('ce_version', currentVersion);
-    }
-  } catch(e) {
-    console.log('checkForUpdates error:', e);
-  }
+function rollDice() {
+    if (state.rolling) return;
+    state.rolling = !0, document.getElementById("dice-hint").textContent = "Lanzando...", document.getElementById("result-wrap").classList.remove("show"), document.getElementById("no-more").style.display = "none";
+    const e = document.getElementById("dice-svg");
+    e.classList.remove("rolling"), e.offsetWidth, e.classList.add("rolling");
+    let t = 0;
+    const i = setInterval(() => {
+        if (renderDice(Math.floor(6 * Math.random()) + 1), t++, t >= 12) {
+            clearInterval(i), e.classList.remove("rolling");
+            const t = Math.floor(6 * Math.random()) + 1;
+            renderDice(t), state.rolling = !1, showDiceResult(t)
+        }
+    }, 55)
 }
 
-// SW desactivado — cache limpiado por el script nuclear en el HTML
-function registerSW() {}
+function showDiceResult(e) {
+    const t = e % 2 == 0;
+    document.getElementById("badge-coast").classList.toggle("inactive-badge", !t), document.getElementById("badge-mount").classList.toggle("inactive-badge", t);
+    const i = (t ? state.coast : state.mountain).filter(e => !state.visited[e]),
+        n = t ? state.coast : state.mountain;
+    if (!n.length) return void(document.getElementById("no-more").style.display = "block");
+    const o = (i.length ? i : n)[Math.floor(Math.random() * (i.length || n.length))],
+        a = state.municipiosData?.[o] || {};
+    renderDice(e, t ? "#dce8f5" : "#d5ede3"), document.getElementById("rtop").className = "rcard-top " + (t ? "coast" : "mount");
+    const s = document.getElementById("rtag");
+    s.className = "r-type-tag " + (t ? "tag-coast" : "tag-mount"), s.querySelector("i").className = "ti " + (t ? "ti-waves" : "ti-mountain"), document.getElementById("rtag-txt").textContent = t ? "Costa" : "Montaña", document.getElementById("r-num").textContent = e, document.getElementById("r-muni").textContent = o, document.getElementById("r-comarca").textContent = "Comarca de " + (a.comarca || COMARCAS[Math.floor(Math.random() * COMARCAS.length)]), document.getElementById("r-area").textContent = a.area_km2 ? a.area_km2 + " km²" : Math.round(200 * Math.random() + 5) + " km²", document.getElementById("r-pop").textContent = a.poblacion ? a.poblacion.toLocaleString("es-ES") + " hab." : Math.round(3e4 * Math.random() + 100).toLocaleString("es-ES") + " hab.", document.getElementById("r-desc").textContent = a.descripcion || LOREM, document.getElementById("dice-hint").textContent = i.length ? "¡Tu próxima aventura te espera!" : "Ya lo visitaste — aquí de nuevo", setTimeout(() => document.getElementById("result-wrap").classList.add("show"), 60), document.getElementById("btn-go").onclick = () => {
+        state.selectedMuni = o, switchScreen("map"), setTimeout(() => {
+            document.querySelectorAll(".muni-path").forEach(e => e.classList.remove("selected")), document.querySelectorAll(".muni-path").forEach(e => {
+                e.getAttribute("data-name") === o && (e.classList.add("selected"), showMuniBar(o))
+            })
+        }, 250)
+    };
+    const r = document.getElementById("btn-saber-mas");
+    r && (r.onclick = () => openMuniModal(o))
+}
+let muniListFilter = "todos";
 
-async function init() {
-  buildNavs();
-  renderDice(6);
-  updateClock();
-  setInterval(updateClock, 30000);
-
-  // Timeout de seguridad — si Supabase no responde en 6s, mostrar login
-  const splashTimeout = setTimeout(() => {
-    const splash = document.getElementById('splash');
-    if (splash) {
-      splash.remove();
-      showAuth();
-    }
-  }, 6000);
-
-  // Escuchar cambios de sesión
-  db.auth.onAuthStateChange(async (event, session) => {
-    clearTimeout(splashTimeout);
-    if (session?.user) {
-      await loadUserData(session.user);
-      showApp();
-      loadMap();
-      loadEventos();
-    } else {
-      showAuth();
-    }
-  });
-
-  // Sesión activa
-  const { data: { session } } = await db.auth.getSession();
-  clearTimeout(splashTimeout);
-  if (session?.user) {
-    await loadUserData(session.user);
-    showApp();
-    loadMap();
-    loadEventos();
-  } else {
-    showAuth();
-  }
+function filterMuniList(e) {
+    e && (muniListFilter = e, document.querySelectorAll('[id^="mf-"]').forEach(t => {
+        const i = t.id === "mf-" + e.replace("/", "_");
+        t.style.backgroundColor = i ? "#e8b820" : "rgba(255,255,255,0.08)", t.style.color = i ? "#fff" : "rgba(255,255,255,0.5)"
+    }), "todos" === e && (document.getElementById("mf-todos").style.backgroundColor = "#e8b820", document.getElementById("mf-todos").style.color = "#fff")), renderMuniList()
 }
 
-init();
+function renderMuniList() {
+    const e = document.getElementById("muni-list");
+    if (!e) return;
+    const t = (document.getElementById("muni-search")?.value || "").toLowerCase().trim(),
+        i = Object.values(state.municipiosData || {}).filter(e => !(t && !e.nombre.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(t.normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) && ("todos" === muniListFilter || ("costa" === muniListFilter ? "costa" === e.tipo : "montaña" === muniListFilter ? "montaña" === e.tipo : "populares" === muniListFilter ? (state.popularidad?.[e.nombre] || 0) > 0 : (e.sellos || []).includes(muniListFilter)))).sort((e, t) => "populares" === muniListFilter ? (state.popularidad?.[t.nombre] || 0) - (state.popularidad?.[e.nombre] || 0) : e.nombre.localeCompare(t.nombre));
+    i.length ? e.innerHTML = i.map(e => {
+        const t = state.visited[e.nombre],
+            i = "costa" === e.tipo,
+            n = state.popularidad?.[e.nombre] || 0,
+            o = (e.sellos || []).slice(0, 3).map(e => SELLOS[e]?.emoji || "").join(" "),
+            a = n > 0 ? '<span style="font-size:10px;color:#e8b820;background:rgba(232,184,32,0.12);padding:2px 7px;border-radius:999px">🔥 ' + n + "</span>" : "";
+        return `\n    <div onclick="openMuniModal('${e.nombre.replace(/'/g,"'")}')"\n      style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:#141e2c;border-radius:14px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);">\n      <div style="width:38px;height:38px;border-radius:10px;background:${i?"#0d2a4a":"#0d2a1e"};display:flex;align-items:center;justify-content:center;flex-shrink:0">\n        <i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:18px;color:${i?"#85B7EB":"#5DCAA5"}"></i>\n      </div>\n      <div style="flex:1;min-width:0">\n        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.nombre} ${o}</div>\n        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${e.comarca||""}</div>\n      </div>\n      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">\n        ${a}\n        ${t?'<span style="width:8px;height:8px;border-radius:50%;background:#22b050;display:block"></span>':""}\n        <i class="ti ti-chevron-right" aria-hidden="true" style="font-size:16px;color:rgba(255,255,255,0.2)"></i>\n      </div>\n    </div>`
+    }).join("") : e.innerHTML = '<p style="color:rgba(255,255,255,0.3);font-size:13px;text-align:center;padding:20px 0">No se encontraron municipios</p>'
+}
 
+function openMuniModal(e) {
+    if (!e) return;
+    if (!state.municipiosData) return void db.from("municipios").select("*").then(({
+        data: t
+    }) => {
+        t && (state.municipiosData = {}, t.forEach(e => {
+            state.municipiosData[e.nombre] = e
+        }), state.coast = t.filter(e => "costa" === e.tipo).map(e => e.nombre), state.mountain = t.filter(e => "montaña" === e.tipo).map(e => e.nombre)), openMuniModal(e)
+    });
+    const t = state.municipiosData[e] || {
+            nombre: e,
+            tipo: isCoast(e) ? "costa" : "montaña"
+        },
+        i = "costa" === t.tipo,
+        n = state.visited[e],
+        o = document.getElementById("mm-img-wrap"),
+        a = document.getElementById("mm-img");
+    t.imagen_url && o && a ? (a.src = t.imagen_url, o.style.display = "block") : o && (o.style.display = "none"), document.getElementById("mm-header").style.background = i ? "linear-gradient(135deg,#0d2a4a,#153a60)" : "linear-gradient(135deg,#0d2a1e,#153020)";
+    const s = document.getElementById("mm-badge");
+    s.innerHTML = `<i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:10px"></i> ${i?"Costa":"Montaña"}`, s.style.background = i ? "rgba(56,138,221,0.25)" : "rgba(29,158,117,0.25)", s.style.color = i ? "#85B7EB" : "#5DCAA5", document.getElementById("mm-name").textContent = e, document.getElementById("mm-comarca").textContent = t.comarca ? "Comarca de " + t.comarca : "";
+    const r = [];
+    t.poblacion && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.1);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.7)"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i>' + t.poblacion.toLocaleString("es-ES") + " hab.</div>"), t.area_km2 && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,0.1);border-radius:999px;padding:4px 10px;font-size:11px;color:rgba(255,255,255,0.7)"><i class="ti ti-ruler-2" aria-hidden="true" style="font-size:11px"></i>' + t.area_km2 + " km²</div>"), n && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(34,176,80,0.2);border-radius:999px;padding:4px 10px;font-size:11px;color:#22b050"><i class="ti ti-check" aria-hidden="true" style="font-size:11px"></i>Conquistado</div>');
+    (t.sellos || []).forEach(e => {
+        const t = SELLOS[e];
+        t && r.push('<div style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 10px;font-size:11px;color:#fff;background:' + t.color + "22;border:1px solid " + t.color + '44">' + t.emoji + " " + t.label + "</div>")
+    });
+    const d = state.popularidad?.[e] || 0;
+    d > 0 && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(232,184,32,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#e8b820">🔥 ' + d + " visitas</div>"), document.getElementById("mm-pills").innerHTML = r.join(" "), document.getElementById("mm-desc").textContent = t.descripcion || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.", document.getElementById("mm-curiosidad").textContent = t.curiosidad || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.";
+    const l = t.visitas || ["Lugar de interés 1 — Lorem ipsum dolor sit amet.", "Lugar de interés 2 — Ut enim ad minim veniam quis.", "Lugar de interés 3 — Duis aute irure dolor reprehenderit."];
+    document.getElementById("mm-visitas").innerHTML = l.map((e, t) => `\n    <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">\n      <div style="width:24px;height:24px;border-radius:50%;background:rgba(34,176,80,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#22b050;flex-shrink:0">${t+1}</div>\n      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${e}</p>\n    </div>`).join("");
+    const c = t.comer || ["Restaurante 1 — Lorem ipsum especialidad local.", "Restaurante 2 — Ut enim ad minim cocina tradicional.", "Bar / Sidrería 3 — Gastronomía local y productos de temporada."];
+    document.getElementById("mm-comer").innerHTML = c.map((e, t) => '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="width:24px;height:24px;border-radius:50%;background:rgba(232,40,138,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#e8288a;flex-shrink:0">' + (t + 1) + '</div><p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">' + e + "</p></div>").join("");
+    const u = document.getElementById("mm-sg-wrap"),
+        p = document.getElementById("mm-comer-sg"),
+        m = t.comer_sg || [];
+    u && p && (m.length ? (u.style.display = "block", p.innerHTML = m.map((e, t) => '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="width:24px;height:24px;border-radius:50%;background:rgba(232,184,32,0.15);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0">🌾</div><p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">' + e + "</p></div>").join("")) : u.style.display = "none"), document.getElementById("mm-btn-mapa").onclick = () => {
+        closeMuniModal(), state.selectedMuni = e, switchScreen("map"), setTimeout(() => {
+            document.querySelectorAll(".muni-path").forEach(e => e.classList.remove("selected")), document.querySelectorAll(".muni-path").forEach(t => {
+                t.getAttribute("data-name") === e && (t.classList.add("selected"), showMuniBar(e))
+            })
+        }, 250)
+    }, loadMuniFriendEvidence(e), loadRecomendaciones(e);
+    document.getElementById("muni-modal").style.display = "flex"
+}
+async function loadMuniFriendEvidence(e) {
+    const t = document.getElementById("mm-friend-evidence");
+    if (!t) return;
+    if (t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Buscando evidencias de amigos...</div>', !state.user) return;
+    const {
+        data: i
+    } = await db.from("friendships").select("follower_id, following_id").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), n = (i || []).map(e => e.follower_id === state.user.id ? e.following_id : e.follower_id);
+    if (!n.length) return void(t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>');
+    const {
+        data: o
+    } = await db.from("visits").select("*, profiles(id, username, avatar_url)").in("user_id", n).eq("municipio", e).order("created_at", {
+        ascending: !1
+    }), {
+        data: a
+    } = await db.from("photos").select("*").in("user_id", n).eq("municipio", e).neq("storage_path", "text_only").order("created_at", {
+        ascending: !1
+    });
+    if (!o || !o.length) return void(t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>');
+    const s = {};
+    (a || []).forEach(e => { s[e.user_id] = e });
 
-// ══════════════════════════════════════════════════════════════
-//  NOTIFICACIONES PUSH
-// ══════════════════════════════════════════════════════════════
-
-const VAPID_PUBLIC_KEY = ''; // Rellenar después de generar las claves VAPID
-
-async function registerPushNotifications() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    console.log('Push no soportado en este dispositivo');
-    return;
-  }
-  if (!state.user) return;
-
-  try {
-    // Pedir permiso
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      console.log('Permiso de notificaciones denegado');
-      return;
+    // URLs firmadas en lote
+    const evPaths = [...new Set((a || []).filter(f => f.storage_path && "text_only" !== f.storage_path).map(f => f.storage_path))];
+    const evUrls = {};
+    if (evPaths.length) {
+        const { data: signed } = await db.storage.from("evidencias").createSignedUrls(evPaths, 3600);
+        (signed || []).forEach(x => { if (x.signedUrl) evUrls[x.path] = x.signedUrl; });
     }
 
-    if (!VAPID_PUBLIC_KEY) {
-      console.log('VAPID key no configurada todavía');
-      return;
+    const r = '<div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">' + o.length + " amigo" + (1 !== o.length ? "s" : "") + " han visitado este municipio</div>",
+        d = o.map(e => {
+            const u    = e.profiles?.username || "Usuario";
+            const av   = e.profiles?.avatar_url;
+            const foto = s[e.user_id];
+            const img  = foto && "text_only" !== foto.storage_path ? evUrls[foto.storage_path] : null;
+            const fecha = new Date(e.created_at).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+            return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;overflow:hidden;margin-bottom:10px;border:1px solid rgba(255,255,255,0.07)">'
+                + (img ? '<img src="' + esc(img) + '" style="width:100%;height:140px;object-fit:cover;display:block" alt="' + esc(u) + '"/>' : "")
+                + '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px"><div style="width:32px;height:32px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">'
+                + (av ? '<img src="' + esc(av) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>' : getInitials(u))
+                + '</div><div style="flex:1"><div style="font-size:13px;font-weight:500;color:#fff">' + esc(u) + '</div><div style="font-size:11px;color:rgba(255,255,255,0.35)">Visitó el ' + fecha + "</div></div></div>"
+                + (foto && foto.descripcion ? '<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">' + renderMentions(esc(foto.descripcion)) + "</div>" : "")
+                + "</div>";
+        }).join("");
+    t.innerHTML = r + d
+}
+
+function closeMuniModal() {
+    document.getElementById("muni-modal").style.display = "none"
+}
+async function loadFeed(e = !1) {
+    if (!state.user) return;
+    if (!e && state.feedCache && Date.now() - state.feedCacheTime < 18e4) return void renderFeedFromCache();
+    document.getElementById("stories-row").innerHTML = [1, 2, 3].map(() => '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div><div style="width:36px;height:8px;border-radius:4px;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div></div>').join(""), document.getElementById("feed-posts").innerHTML = '<div style="padding:12px">' + [1, 2].map(() => '<div style="background:rgba(255,255,255,0.04);border-radius:18px;height:320px;margin-bottom:14px;animation:pulse 1.5s ease infinite"></div>').join("") + "</div>";
+    const {
+        data: t
+    } = await db.from("friendships").select("follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), i = new Set, n = (t || []).map(e => e.follower_id === state.user.id ? e.following : e.follower).filter(e => !(!e || i.has(e.id)) && (i.add(e.id), !0)), o = n.map(e => e.id);
+    if (document.getElementById("stories-row").innerHTML = "", !o.length) return void(document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7"><i class="ti ti-users" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>Aún no tienes amigos añadidos.<br>¡Busca a alguien por su nombre de usuario!</div>');
+    const a = [...new Set([...o, state.user.id])],
+        [{
+            data: s
+        }, {
+            data: r
+        }, {
+            data: d
+        }] = await Promise.all([db.from("photos").select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at").in("user_id", o).in("visibilidad", ["amigos", "publico"]).order("created_at", {
+            ascending: !1
+        }).limit(30), db.from("photos").select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at").eq("user_id", state.user.id).order("created_at", {
+            ascending: !1
+        }).limit(30), db.from("visits").select("id,user_id,municipio,visibilidad,created_at,profiles(id,username,avatar_url)").in("user_id", a).order("created_at", {
+            ascending: !1
+        }).limit(25)]),
+        l = [...s || [], ...r || []],
+        c = {},
+        u = {};
+    l.forEach(e => {
+        c[e.user_id] || (c[e.user_id] = []), c[e.user_id].push(e);
+        const t = e.user_id + "|" + normalizeMuni(e.municipio);
+        u[t] || (u[t] = []), u[t].push(e)
+    });
+    const p = (d || []).filter(e => e.user_id === state.user.id || ["amigos", "publico"].includes(e.visibilidad));
+    state.feedCache = {
+        visibleVisits: p,
+        fotasByMuniUser: u,
+        fotasByUser: c,
+        friendProfiles: n
+    }, state.feedCacheTime = Date.now(), renderFeedPosts(p, u, c, n)
+}
+
+function renderFeedFromCache() {
+    const {
+        visibleVisits: e,
+        fotasByMuniUser: t,
+        fotasByUser: i,
+        friendProfiles: n
+    } = state.feedCache;
+    document.getElementById("stories-row").innerHTML = "", renderFeedPosts(e, t, i, n)
+}
+
+function normalizeMuni(e) {
+    return (e || "").trim().toLowerCase()
+}
+const STORY_COLORS = ["#c97ae8", "#7ae8c9", "#e87a9a", "#e8b97a", "#7ab3e8", "#a8e87a"],
+    SELLOS = {
+        playa_azul: {
+            emoji: "🏖️",
+            label: "Playa Azul",
+            color: "#2272e8"
+        },
+        picos: {
+            emoji: "🏔️",
+            label: "Picos",
+            color: "#5DCAA5"
+        },
+        patrimonio: {
+            emoji: "🏛️",
+            label: "Patrimonio",
+            color: "#e8b820"
+        },
+        cuevas: {
+            emoji: "🎨",
+            label: "Arte rupestre",
+            color: "#c97ae8"
+        },
+        gastronomico: {
+            emoji: "🍽️",
+            label: "Gastronómico",
+            color: "#e86820"
+        },
+        festivo: {
+            emoji: "🎭",
+            label: "Festivo",
+            color: "#e8288a"
+        }
+    };
+
+function renderStories(e) {
+    document.getElementById("stories-row").innerHTML = ""
+}
+async function getPhotoUrl(e) {
+    if (!e || "text_only" === e) return null;
+    const {
+        data: t
+    } = await db.storage.from("evidencias").createSignedUrl(e, 3600);
+    return t?.signedUrl || db.storage.from("evidencias").getPublicUrl(e).data?.publicUrl || null
+}
+async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles) {
+    if (!visits.length) {
+        document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7"><i class="ti ti-map-2" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>Tus amigos aún no han conquistado municipios.</div>';
+        return;
     }
 
-    // Obtener registro del SW
-    const reg = await navigator.serviceWorker.ready;
+    const pickFoto = v => {
+        const fotos = fotasByMuniUser[v.user_id + "|" + normalizeMuni(v.municipio)]
+                   || fotasByMuniUser[v.user_id + "_" + normalizeMuni(v.municipio)] || [];
+        return fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio)) || fotos[0] || null;
+    };
 
-    // Suscribirse al push
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    document.getElementById("feed-posts").innerHTML = visits.map((v, i) => {
+        const coast    = isCoast(v.municipio);
+        const muniSafe = esc(v.municipio);
+        const username = v.profiles?.username || "Usuario";
+        const userSafe = esc(username);
+        const userId   = v.profiles?.id || v.user_id;
+        const color    = STORY_COLORS[i % STORY_COLORS.length];
+        const fp       = userId === state.user?.id ? state.profile : (friendProfiles || []).find(f => f.id === userId);
+        const avatarUrl  = fp?.avatar_url || v.profiles?.avatar_url;
+        const avatarHtml = avatarUrl
+            ? `<img src="${esc(avatarUrl)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
+            : getInitials(username);
+        const foto  = pickFoto(v);
+        const hasImg = foto && foto.storage_path && foto.storage_path !== "text_only";
+        const cid   = esc(foto ? foto.id : v.id);
+        const fecha = new Date(v.created_at).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
+
+        return `
+    <div class="feed-post">
+      <div class="post-header" data-uid="${esc(userId)}" data-uname="${userSafe}" onclick="openFriendProfile(this.dataset.uid, this.dataset.uname)" style="cursor:pointer">
+        <div class="post-av" style="color:${color};overflow:hidden">${avatarHtml}</div>
+        <div>
+          <div class="post-user">${userSafe}</div>
+          <div class="post-time">${fecha}</div>
+        </div>
+        <div class="post-badge ${coast ? "pb-coast" : "pb-mount"}">
+          <i class="ti ${coast ? "ti-waves" : "ti-mountain"}" aria-hidden="true" style="font-size:10px"></i>
+          ${coast ? "Costa" : "Montaña"}
+        </div>
+      </div>
+      <div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
+        ${hasImg
+          ? `<img src="" data-foto-id="${esc(foto.id)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
+             <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
+               <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
+             </div>`
+          : `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
+               <i class="ti ${coast ? "ti-waves" : "ti-mountain"}" aria-hidden="true" style="font-size:38px"></i>
+               <span style="font-size:11px">Sin foto de evidencia</span>
+             </div>`}
+        <div class="post-location"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
+      </div>
+      <div class="post-body">
+        <div class="post-muni">${muniSafe}</div>
+        ${foto?.descripcion ? `<div class="post-desc">${renderMentions(esc(foto.descripcion))}</div>` : ""}
+        <div class="post-actions">
+          ${foto ? `
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleLike(this, this.dataset.fid)" data-liked="false">
+              <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${esc(foto.id)}">0</span>
+            </button>
+            <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleReaction(this, this.dataset.fid, '🔥')" data-reacted="false" id="react-fire-${esc(foto.id)}" style="font-size:14px">🔥<span id="react-fire-count-${esc(foto.id)}" style="font-size:11px;margin-left:2px">0</span></button>
+            <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleReaction(this, this.dataset.fid, '😍')" data-reacted="false" id="react-love-${esc(foto.id)}" style="font-size:14px">😍<span id="react-love-count-${esc(foto.id)}" style="font-size:11px;margin-left:2px">0</span></button>
+          </div>` : "<div></div>"}
+          <button class="post-action" style="margin-left:auto" onclick="openMuniModal(this.dataset.muni)" data-muni="${muniSafe}">
+            <i class="ti ti-info-circle" aria-hidden="true"></i><span style="font-size:11px">Ver ficha</span>
+          </button>
+          <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${muniSafe}">
+            <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
+          </button>
+          ${v.user_id === state.user?.id ? `
+          <button class="post-action" data-vid="${esc(v.id)}" data-fid="${esc(foto ? foto.id : "")}" data-path="${esc(foto && (foto.path || foto.storage_path) || "")}" onclick="deleteFeedPost(this.dataset.vid, this.dataset.fid, this.dataset.path)" style="color:rgba(232,40,40,0.5)">
+            <i class="ti ti-trash" aria-hidden="true"></i>
+          </button>` : ""}
+        </div>
+        <div id="comments-${cid}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+          <div style="color:rgba(255,255,255,0.25);font-size:11px">Cargando comentarios...</div>
+        </div>
+        <div class="comment-input-row">
+          <input class="comment-input" id="comment-input-${cid}" type="text" placeholder="Añade un comentario..." maxlength="200"
+            data-cid="${cid}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
+            onkeydown="if(event.key==='Enter')postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)"/>
+          <button class="comment-send" data-cid="${cid}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
+            onclick="postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)">
+            <i class="ti ti-send" aria-hidden="true"></i>
+          </button>
+        </div>
+      </div>
+    </div>`;
+    }).join("");
+
+    applyFeedFilter();
+
+    // ── Carga EN LOTE: 3 llamadas totales (antes 3 por post) ──
+    const fotosConStorage = [];
+    const commentIds = [];
+    visits.forEach(v => {
+        const foto = pickFoto(v);
+        if (foto && foto.storage_path && foto.storage_path !== "text_only") fotosConStorage.push(foto);
+        commentIds.push(foto?.id || v.id);
+    });
+    const fotoIds = [...new Set(fotosConStorage.map(f => f.id))];
+    const paths   = [...new Set(fotosConStorage.map(f => f.storage_path))];
+    const likeIds = fotoIds.flatMap(id => [id, id + "_fire", id + "_love"]);
+
+    const [signedRes, likesRes, commentsRes] = await Promise.all([
+        paths.length ? db.storage.from("evidencias").createSignedUrls(paths, 3600) : Promise.resolve({ data: [] }),
+        likeIds.length ? db.from("photo_likes").select("photo_id,user_id").in("photo_id", likeIds) : Promise.resolve({ data: [] }),
+        commentIds.length ? db.from("photo_comments")
+            .select("id,photo_id,user_id,texto,created_at, profiles(username,avatar_url)")
+            .in("photo_id", commentIds).order("created_at", { ascending: true }) : Promise.resolve({ data: [] }),
+    ]);
+
+    // 1) Imágenes
+    const urlByPath = {};
+    (signedRes.data || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
+    fotosConStorage.forEach(f => {
+        const url = urlByPath[f.storage_path];
+        if (!url) return;
+        const img = document.querySelector('img[data-foto-id="' + f.id + '"]');
+        if (img) {
+            img.src = url;
+            img.style.display = "block";
+            img.closest(".post-img")?.querySelector(".post-img-placeholder")?.remove();
+        }
     });
 
-    // Guardar suscripción en Supabase
-    const subJson = sub.toJSON();
-    await db.from('push_subscriptions').upsert({
-      user_id:   state.user.id,
-      endpoint:  subJson.endpoint,
-      p256dh:    subJson.keys.p256dh,
-      auth:      subJson.keys.auth,
-      device:    navigator.userAgent.includes('iPhone') ? 'ios' : 'android',
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,endpoint' });
+    // 2) Likes y reacciones (contador real + estado propio)
+    const counts = {}; const mine = {};
+    (likesRes.data || []).forEach(l => {
+        counts[l.photo_id] = (counts[l.photo_id] || 0) + 1;
+        if (l.user_id === state.user?.id) mine[l.photo_id] = true;
+    });
+    fotoIds.forEach(fid => {
+        const likeSpan = document.getElementById("likes-" + fid);
+        if (likeSpan) likeSpan.textContent = counts[fid] || 0;
+        const likeBtn = likeSpan?.closest(".post-action");
+        if (likeBtn && mine[fid]) { likeBtn.setAttribute("data-liked", "true"); likeBtn.classList.add("liked"); }
+        [["fire"], ["love"]].forEach(([r]) => {
+            const span = document.getElementById("react-" + r + "-count-" + fid);
+            if (span) span.textContent = counts[fid + "_" + r] || 0;
+            const btn = document.getElementById("react-" + r + "-" + fid);
+            if (btn && mine[fid + "_" + r]) { btn.setAttribute("data-reacted", "true"); btn.style.opacity = "1"; }
+            else if (btn) btn.style.opacity = "0.55";
+        });
+    });
 
-    console.log('✅ Push registrado');
-    state.pushRegistered = true;
-  } catch(err) {
-    console.error('Error registrando push:', err);
-  }
+    // 3) Comentarios
+    const byPhoto = {};
+    (commentsRes.data || []).forEach(c => { (byPhoto[c.photo_id] = byPhoto[c.photo_id] || []).push(c); });
+    commentIds.forEach(cid => {
+        const cont = document.getElementById("comments-" + cid);
+        if (cont) renderComments(cont, byPhoto[cid] || [], cid);
+    });
 }
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64  = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw     = window.atob(base64);
-  const output  = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
-  return output;
+async function loadVisitComments(e, t) {
+    const id = e || t;
+    const cont = document.getElementById("comments-" + id);
+    if (!cont) return;
+    const { data } = await db.from("photo_comments")
+        .select("id,photo_id,user_id,texto,created_at, profiles(username, avatar_url)")
+        .eq("photo_id", id).order("created_at", { ascending: true });
+    renderComments(cont, data || [], id);
 }
 
-// Botón para activar notificaciones — llamado desde perfil
+function renderComments(container, comments, id) {
+    const last3 = comments.slice(-3); // mismas 3 últimas que antes
+    if (!last3.length) {
+        container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;padding:4px 0">Sin comentarios aún</div>';
+        return;
+    }
+    container.innerHTML = last3.map(c => {
+        const u  = c.profiles?.username || "Usuario";
+        const av = c.profiles?.avatar_url
+            ? '<img src="' + esc(c.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
+            : getInitials(u);
+        const del = c.user_id === state.user?.id
+            ? '<button class="c-del" data-cid="' + esc(c.id) + '" data-pid="' + esc(id) + '" onclick="deleteComment(this.dataset.cid, this.dataset.pid)" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+            : "";
+        return '<div class="comment"><div class="c-av">' + av + '</div><div class="c-text"><strong>' + esc(u) + '</strong> ' + renderMentions(esc(c.texto)) + '</div>' + del + '</div>';
+    }).join("");
+}
+
+function renderMentions(textoEscapado) {
+    // OJO: aplicar siempre sobre texto YA escapado con esc()
+    return String(textoEscapado).replace(/@(\w+)/g, (m, user) =>
+        '<span class="mention" data-user="' + esc(user) + '" onclick="openMentionProfile(this.dataset.user)" style="cursor:pointer;color:#2272e8;font-weight:600">@' + esc(user) + '</span>');
+}
+async function searchAndOpenProfile(e) {
+    const {
+        data: t
+    } = await db.from("profiles").select("id, username, avatar_url").ilike("username", e).single();
+    t ? openFriendProfile(t.id, t.username) : alert("Usuario @" + e + " no encontrado")
+}
+async function deleteComment(e, t) {
+    state.user && confirm("¿Borrar este comentario?") && (await db.from("photo_comments").delete().eq("id", e).eq("user_id", state.user.id), await loadVisitComments(t, null))
+}
+async function postComment(e, t, i) {
+    const n = document.getElementById("comment-input-" + e);
+    if (!n || !state.user) return;
+    const o = n.value.trim();
+    if (o) {
+        n.value = "", n.disabled = !0;
+        try {
+            await db.from("photo_comments").insert({
+                user_id: state.user.id,
+                photo_id: e,
+                texto: o
+            }), await loadVisitComments(e);
+            const t = o.match(/@(\w+)/g);
+            if (t)
+                for (const e of t) {
+                    const t = e.slice(1),
+                        {
+                            data: i
+                        } = await db.from("profiles").select("id").ilike("username", t).single();
+                    i && i.id !== state.user.id && await db.from("push_subscriptions").select("user_id").eq("user_id", i.id).limit(1).then(async ({
+                        data: e
+                    }) => {
+                        e?.length && console.log("Notificación pendiente para:", t)
+                    })
+                }
+        } catch (e) {
+            alert("Error al comentar: " + e.message)
+        } finally {
+            n.disabled = !1
+        }
+    }
+}
+async function deleteFeedPost(e, t, i) {
+    if (state.user && confirm("¿Borrar esta publicación?")) try {
+        i && "text_only" !== i && "" !== i && await db.storage.from("evidencias").remove([i]), t && await db.from("photos").delete().eq("id", t).eq("user_id", state.user.id), await db.from("visits").delete().eq("id", e).eq("user_id", state.user.id), delete state.visited[state.feedCache?.visibleVisits?.find(t => t.id === e)?.municipio], state.feedCache = null, state.photos = state.photos.filter(e => e.id !== t), updateProgress(), loadFeed(!0)
+    } catch (e) {
+        alert("Error al borrar: " + e.message)
+    }
+}
+
+function goToMuniOnMap(e) {
+    state.selectedMuni = e, switchScreen("map"), setTimeout(() => highlightMuniOnMap(e), 300)
+}
+async function openFriendProfile(e, t) {
+    const i = document.getElementById("friend-profile-modal");
+    if (!i) return;
+    document.getElementById("fp-username").textContent = t, document.getElementById("fp-avatar").textContent = t.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2), document.getElementById("fp-visits-count").textContent = "...", document.getElementById("fp-photos-count").textContent = "...", document.getElementById("fp-gallery").innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Cargando...</div>', document.getElementById("fp-map").innerHTML = "", document.getElementById("fp-minimap").innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:11px;text-align:center;padding:20px 0">Cargando mapa...</div>', i.style.display = "flex";
+    const [n, o, a] = await Promise.all([db.from("profiles").select("username, avatar_url").eq("id", e).single(), db.from("visits").select("municipio, fecha, created_at").eq("user_id", e).in("visibilidad", ["amigos", "publico"]).order("created_at", {
+        ascending: !1
+    }), db.from("photos").select("*").eq("user_id", e).in("visibilidad", ["amigos", "publico"]).order("created_at", {
+        ascending: !1
+    }).limit(9)]), s = n.data, r = o.data || [], d = a.data || [], l = new Set(r.map(e => e.municipio));
+    s?.avatar_url && (document.getElementById("fp-avatar").innerHTML = '<img src="' + esc(s.avatar_url) + "?t=" + Date.now() + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(t) + '"/>'), document.getElementById("fp-visits-count").textContent = r.length, document.getElementById("fp-photos-count").textContent = d.length, renderFriendMiniMap(l);
+    document.getElementById("fp-map").innerHTML = r.length ? r.slice(0, 8).map(e => {
+        const t = isCoast(e.municipio),
+            i = new Date(e.created_at).toLocaleDateString("es-ES", {
+                day: "numeric",
+                month: "short"
+            });
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="width:28px;height:28px;border-radius:7px;background:' + (t ? "#0d2a4a" : "#0d2a1e") + ';display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ' + (t ? "ti-waves" : "ti-mountain") + '" style="font-size:13px;color:' + (t ? "#85B7EB" : "#5DCAA5") + '" aria-hidden="true"></i></div><div style="flex:1;font-size:13px;font-weight:500;color:#fff">' + esc(e.municipio) + '</div><div style="font-size:11px;color:rgba(255,255,255,0.35)">' + i + "</div></div>"
+    }).join("") : '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin visitas públicas</div>';
+    if (d.length) {
+        const fpPaths = [...new Set(d.filter(e => e.storage_path && "text_only" !== e.storage_path).map(e => e.storage_path))];
+        const fpUrls = {};
+        if (fpPaths.length) {
+            const { data: signed } = await db.storage.from("evidencias").createSignedUrls(fpPaths, 3600);
+            (signed || []).forEach(s => { if (s.signedUrl) fpUrls[s.path] = s.signedUrl; });
+        }
+        document.getElementById("fp-gallery").innerHTML = d.map(e => {
+            const url = fpUrls[e.storage_path] || "";
+            return '<div style="aspect-ratio:1;border-radius:8px;overflow:hidden;background:#1a2535">'
+                + (url ? '<img src="' + esc(url) + '" style="width:100%;height:100%;object-fit:cover" alt="' + esc(e.municipio) + '"/>' : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.15);font-size:20px"><i class="ti ti-camera" aria-hidden="true"></i></div>')
+                + '</div>';
+        }).join("");
+    } else {
+        document.getElementById("fp-gallery").innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:10px 0">Sin fotos públicas</div>';
+    }
+}
+async function renderFriendMiniMap(e) {
+    const t = document.getElementById("fp-minimap");
+    if (t) try {
+        const i = await d3.json("https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json"),
+            n = {
+                type: "FeatureCollection",
+                features: topojson.feature(i, i.objects.municipalities).features.filter(e => String(e.id || "").startsWith("39") || 53072 === e.id || "53072" === e.id)
+            },
+            o = t.clientWidth || 300,
+            a = Math.round(.49 * o);
+        t.innerHTML = "";
+        const s = d3.select(t).append("svg").attr("viewBox", "0 0 " + o + " " + a).style("width", "100%"),
+            r = d3.geoMercator().fitSize([o, a], n),
+            d = d3.geoPath(r);
+        s.selectAll("path").data(n.features).join("path").attr("d", d).attr("fill", t => {
+            const i = t.properties.name || t.properties.NAME || t.properties.NAMEUNIT || "";
+            return e.has(i) ? "#22b050" : "#2a3a4a"
+        }).attr("stroke", "#0f1923").attr("stroke-width", .5);
+        const l = Math.round(e.size / 102 * 100);
+        t.insertAdjacentHTML("afterbegin", '<div style="text-align:center;font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px">' + e.size + " / 102 municipios · " + l + "%</div>")
+    } catch (e) {
+        t.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;text-align:center;padding:10px">No se pudo cargar el mapa</div>'
+    }
+}
+
+function closeFriendProfile() {
+    document.getElementById("friend-profile-modal").style.display = "none"
+}
+async function loadPhotoLikes(e) {
+    const {
+        count: t
+    } = await db.from("photo_likes").select("*", {
+        count: "exact",
+        head: !0
+    }).eq("photo_id", e), i = document.getElementById("likes-" + e);
+    i && (i.textContent = t || 0)
+}
+async function toggleReaction(e, t, i) {
+    if (!state.user) return;
+    const n = "true" === e.getAttribute("data-reacted"),
+        o = "🔥" === i ? "fire" : "love",
+        a = document.getElementById("react-" + o + "-count-" + t);
+    e.setAttribute("data-reacted", String(!n)), e.style.opacity = n ? "0.4" : "1", n ? (await db.from("photo_likes").delete().eq("user_id", state.user.id).eq("photo_id", t + "_" + o), a && (a.textContent = Math.max(0, parseInt(a.textContent || 0) - 1))) : (await db.from("photo_likes").insert({
+        user_id: state.user.id,
+        photo_id: t + "_" + o
+    }), a && (a.textContent = parseInt(a.textContent || 0) + 1))
+}
+async function toggleLike(e, t) {
+    if (!state.user) return;
+    const i = "true" === e.getAttribute("data-liked");
+    e.setAttribute("data-liked", String(!i)), e.classList.toggle("liked", !i);
+    const n = e.querySelector("span");
+    i ? (await db.from("photo_likes").delete().eq("user_id", state.user.id).eq("photo_id", t), n.textContent = parseInt(n.textContent) - 1) : (await db.from("photo_likes").insert({
+        user_id: state.user.id,
+        photo_id: t
+    }), n.textContent = parseInt(n.textContent) + 1)
+}
+async function searchUser() {
+    const e = document.getElementById("search-input").value.trim();
+    if (!e) return;
+    const t = document.getElementById("search-results");
+    t.innerHTML = '<div style="color:rgba(255,255,255,0.35);font-size:12px;padding:8px 0">Buscando...</div>';
+    const {
+        data: i
+    } = await db.from("profiles").select("id, username").ilike("username", `%${e}%`).neq("id", state.user.id).limit(10);
+    if (!i || !i.length) return void(t.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:8px 0">No se encontró ningún usuario</div>');
+    const {
+        data: n
+    } = await db.from("friendships").select("follower_id, following_id, estado").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`);
+    t.innerHTML = i.map(e => {
+        const t = (n || []).find(t => t.follower_id === state.user.id && t.following_id === e.id || t.following_id === state.user.id && t.follower_id === e.id),
+            i = e.username.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2);
+        let o = "";
+        return t ? "pendiente" === t.estado ? o = '<span style="font-size:11px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">\n        <i class="ti ti-clock" aria-hidden="true" style="font-size:10px"></i> Pendiente\n      </span>' : "aceptado" === t.estado && (o = '<span style="font-size:11px;color:#22b050;background:rgba(34,176,80,0.12);padding:5px 10px;border-radius:999px">\n        <i class="ti ti-check" aria-hidden="true" style="font-size:10px"></i> Amigos\n      </span>') : o = `<button data-uid="${esc(e.id)}" data-uname="${esc(e.username)}" onclick="sendFriendRequest(this.dataset.uid, this.dataset.uname, this)"\n        style="padding:6px 13px;background-color:#2272e8;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">\n        + Añadir\n      </button>`, `\n    <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">\n      <div style="width:34px;height:34px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:#7ab3e8;flex-shrink:0;font-family:Playfair Display,serif">${getInitials(e.username)}</div>\n      <span style="color:#fff;font-size:13px;flex:1">${esc(e.username)}</span>\n      ${o}\n    </div>`
+    }).join("")
+}
+async function sendFriendRequest(e, t, i) {
+    if (!state.user) return;
+    i && (i.outerHTML = '<span style="font-size:11px;color:rgba(255,255,255,0.35);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">\n      <i class="ti ti-clock" aria-hidden="true" style="font-size:10px"></i> Pendiente\n    </span>');
+    const {
+        error: n
+    } = await db.from("friendships").insert({
+        follower_id: state.user.id,
+        following_id: e,
+        estado: "pendiente"
+    });
+    n && "23505" !== n.code && (alert("Error al enviar solicitud. Inténtalo de nuevo."), searchUser())
+}
+async function renderProfile() {
+    const e = Object.keys(state.visited).length;
+    document.getElementById("sv").textContent = e, document.getElementById("sp").textContent = Math.round(e / state.totalMuni * 100) + "%", document.getElementById("sph").textContent = state.photos.length, renderGallery(), await Promise.all([loadSolicitudes(), loadFriendCount()])
+}
+async function loadFriendCount() {
+    if (!state.user) return;
+    const {
+        data: e
+    } = await db.from("friendships").select("follower_id, following_id").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), t = new Set;
+    (e || []).forEach(e => {
+        const i = e.follower_id === state.user.id ? e.following_id : e.follower_id;
+        t.add(i)
+    });
+    const i = document.getElementById("sf");
+    i && (i.textContent = t.size)
+}
+async function openFriendsModal() {
+    const e = document.getElementById("friends-list-modal"),
+        t = document.getElementById("friends-list-content");
+    if (!e || !t) return;
+    t.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:10px 0">Cargando...</div>', e.style.display = "flex";
+    const {
+        data: i
+    } = await db.from("friendships").select("follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), n = new Set, o = (i || []).map(e => e.follower_id === state.user.id ? e.following : e.follower).filter(e => !(!e || n.has(e.id)) && (n.add(e.id), !0));
+    o.length ? t.innerHTML = o.map(e => {
+        const t = (e.username || "?").split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2),
+            i = e.avatar_url ? '<img src="' + esc(e.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(e.username) + '"/>' : t;
+        return '<div data-uid="' + esc(e.id) + '" data-uname="' + esc(e.username) + '" onclick="closeFriendsModal();openFriendProfile(this.dataset.uid, this.dataset.uname)" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer"><div style="width:42px;height:42px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + i + '</div><div style="flex:1"><div style="font-size:14px;font-weight:500;color:#fff">' + esc(e.username) + '</div></div><i class="ti ti-chevron-right" style="color:rgba(255,255,255,0.2);font-size:16px" aria-hidden="true"></i></div>'
+    }).join("") : t.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:20px 0;text-align:center">Aún no tienes amigos añadidos</div>'
+}
+
+function closeFriendsModal() {
+    document.getElementById("friends-list-modal").style.display = "none"
+}
+async function loadSolicitudes() {
+    if (!state.user) return;
+    const {
+        data: e
+    } = await db.from("friendships").select("follower_id, created_at, profiles!friendships_follower_id_fkey(username)").eq("following_id", state.user.id).eq("estado", "pendiente"), {
+        data: t
+    } = await db.from("friendships").select("following_id, created_at, profiles!friendships_following_id_fkey(username)").eq("follower_id", state.user.id).eq("estado", "pendiente"), i = document.getElementById("solicitudes-section");
+    if (!i) return;
+    const n = (e?.length || 0) + (t?.length || 0);
+    if (0 === n) return void(i.innerHTML = "");
+    let o = `\n    <div style="padding:14px 14px 0">\n      <h2 style="font-size:11px;font-weight:500;color:rgba(255,255,255,0.4);margin-bottom:10px;letter-spacing:.06em;text-transform:uppercase">\n        Solicitudes de amistad\n        <span style="background:#e8288a;color:#fff;border-radius:999px;padding:1px 7px;font-size:10px;margin-left:6px">${n}</span>\n      </h2>`;
+    e?.length > 0 && (o += '<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:8px">Recibidas</div>', o += e.map(e => {
+        const t = e.profiles?.username || "Usuario";
+        return `\n      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">\n        <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid #e8288a;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:#e8288a;flex-shrink:0;font-family:Playfair Display,serif">${getInitials(t)}</div>\n        <div style="flex:1">\n          <div style="font-size:13px;font-weight:500;color:#fff">${esc(t)}</div>\n          <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${new Date(e.created_at).toLocaleDateString("es-ES")}</div>\n        </div>\n        <div style="display:flex;gap:6px">\n          <button data-uid="${esc(e.follower_id)}" data-uname="${esc(t)}" onclick="aceptarSolicitud(this.dataset.uid, this.dataset.uname)"\n            style="padding:7px 12px;background-color:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">\n            <i class="ti ti-check" aria-hidden="true"></i> Aceptar\n          </button>\n          <button data-uid="${esc(e.follower_id)}" data-uname="${esc(t)}" onclick="rechazarSolicitud(this.dataset.uid, this.dataset.uname)"\n            style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">\n            <i class="ti ti-x" aria-hidden="true"></i>\n          </button>\n        </div>\n      </div>`
+    }).join("")), t?.length > 0 && (o += '<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:12px;margin-bottom:8px">Enviadas</div>', o += t.map(e => {
+        const t = e.profiles?.username || "Usuario";
+        return `\n      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">\n        <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:rgba(255,255,255,0.5);flex-shrink:0;font-family:Playfair Display,serif">${getInitials(t)}</div>\n        <div style="flex:1">\n          <div style="font-size:13px;font-weight:500;color:#fff">${esc(t)}</div>\n          <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${new Date(e.created_at).toLocaleDateString("es-ES")}</div>\n        </div>\n        <div style="display:flex;align-items:center;gap:6px">\n          <span style="font-size:11px;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">\n            <i class="ti ti-clock" aria-hidden="true" style="font-size:11px"></i> Pendiente\n          </span>\n          <button data-uid="${esc(e.following_id)}" data-uname="${esc(t)}" onclick="cancelarSolicitud(this.dataset.uid, this.dataset.uname)"\n            style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">\n            <i class="ti ti-x" aria-hidden="true"></i>\n          </button>\n        </div>\n      </div>`
+    }).join("")), o += "</div>", i.innerHTML = o
+}
+async function aceptarSolicitud(e, t) {
+    await db.from("friendships").update({
+        estado: "aceptado"
+    }).eq("follower_id", e).eq("following_id", state.user.id), await db.from("friendships").upsert({
+        follower_id: state.user.id,
+        following_id: e,
+        estado: "aceptado"
+    }), await loadSolicitudes()
+}
+async function rechazarSolicitud(e, t) {
+    confirm("Rechazar la solicitud de " + t + "?") && (await db.from("friendships").delete().eq("follower_id", e).eq("following_id", state.user.id), await loadSolicitudes())
+}
+async function cancelarSolicitud(e, t) {
+    confirm("Cancelar la solicitud enviada a " + t + "?") && (await db.from("friendships").delete().eq("follower_id", state.user.id).eq("following_id", e), await loadSolicitudes())
+}
+
+function renderGallery() {
+    const e = document.getElementById("gallery"),
+        t = document.getElementById("g-empty");
+    if (!state.photos.length) return e.innerHTML = "", void(t.style.display = "block");
+    t.style.display = "none";
+    const i = state.photos.filter(e => e.src && "" !== e.src);
+    if (document.getElementById("sph").textContent = i.length, !i.length) return e.innerHTML = "", void(document.getElementById("g-empty").style.display = "block");
+    document.getElementById("g-empty").style.display = "none", e.innerHTML = i.map((e, t) => `\n    <div class="gi" onclick="openPMbyId('${e.id||t}')">\n      <img src="${e.src}" alt="${esc(e.muni)}" loading="lazy"\n        onerror="this.parentElement.style.display='none'"/>\n      <div class="gi-hov">\n        <div class="gm">\n          <div style="font-weight:500">${esc(e.muni.length>14?e.muni.substring(0,12)+"…":e.muni)}</div>\n          <div>${e.date}</div>\n        </div>\n      </div>\n    </div>`).join("")
+}
+
+function openPMbyId(e) {
+    const t = state.photos.filter(e => e.src && "" !== e.src),
+        i = t.find(t => t.id === e) || t[parseInt(e)];
+    i && openPMobj(i)
+}
+
+function openPM(e) {
+    openPMobj(state.photos[e])
+}
+
+function openPMobj(e) {
+    if (!e) return;
+    const t = document.getElementById("pm-img");
+    e.src ? (t.src = e.src + "?nocache=" + Date.now(), t.style.display = "block") : (t.src = "", t.style.display = "none"), document.getElementById("pm-meta").innerHTML = `\n    <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${e.muni}</strong></div>\n    <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${e.date}</strong></div>\n    <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${e.time||"—"}</strong></div>\n    <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${e.coords||"—"}</strong></div>\n    ${e.desc?`<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${e.desc}</strong></div>`:""}\n    <div class="mrow" style="padding-bottom:4px;display:flex;gap:8px">\n      <button onclick="editPhoto('${e.id}')" style="flex:1;padding:10px;background:rgba(34,114,232,0.15);color:#85B7EB;border:1px solid rgba(34,114,232,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">\n        <i class="ti ti-pencil" aria-hidden="true"></i> Editar\n      </button>\n      <button onclick="deletePhoto(${i})" style="flex:1;padding:10px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">\n        <i class="ti ti-trash" aria-hidden="true"></i> Borrar\n      </button>\n    </div>\n    <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>\n      <strong style="display:flex;gap:6px;margin-top:4px">\n        ${["privado","amigos","publico"].map(t=>`\n          <button onclick="changePhotoVis('${e.id}','${t}',this)"\n            style="padding:4px 10px;border:none;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;\n              background-color:${e.vis===t?"#2272e8":"rgba(255,255,255,0.1)"};\n              color:${e.vis===t?"#fff":"rgba(255,255,255,0.6)"};">\n            ${t}\n          </button>`).join("")}\n      </strong>\n    </div>`
+}
+async function changePhotoVis(e, t, i) {
+    if (!e) return;
+    await db.from("photos").update({
+        visibilidad: t
+    }).eq("id", e);
+    const n = state.photos.find(t => t.id === e);
+    n && (n.vis = t), i.closest("strong").querySelectorAll("button").forEach(e => {
+        e.style.backgroundColor = e.textContent.trim() === t ? "#2272e8" : "rgba(255,255,255,0.1)", e.style.color = e.textContent.trim() === t ? "#fff" : "rgba(255,255,255,0.6)"
+    })
+}
+
+function closePM() {
+    document.getElementById("photo-modal").classList.remove("open")
+}
+async function editPhoto(e) {
+    const t = state.photos.find(t => t.id === e);
+    if (!t) return;
+    const i = prompt("Editar descripción:", t.desc || "");
+    if (null === i) return;
+    const {
+        error: n
+    } = await db.from("photos").update({
+        descripcion: i
+    }).eq("id", e).eq("user_id", state.user.id);
+    n ? alert("Error: " + n.message) : (t.desc = i, state.feedCache = null)
+}
+async function deletePhoto(e) {
+    const t = state.photos[e];
+    if (t && state.user && confirm("¿Borrar esta foto de " + t.muni + "? Esta acción no se puede deshacer.")) try {
+        t.path && "text_only" !== t.path && await db.storage.from("evidencias").remove([t.path]), t.id && await db.from("photos").delete().eq("id", t.id).eq("user_id", state.user.id), state.photos.splice(e, 1), state.feedCache = null, closePM(), renderGallery();
+        Object.keys(state.visited).length;
+        document.getElementById("sph").textContent = state.photos.length
+    } catch (e) {
+        alert("Error al borrar: " + e.message)
+    }
+}
+
+function toggleEdit() {
+    const e = document.getElementById("u-edit-row");
+    "1" === e.getAttribute("data-open") ? (e.style.display = "none", e.setAttribute("data-open", "0")) : (e.style.display = "flex", e.setAttribute("data-open", "1"), document.getElementById("u-inp").value = state.profile?.username || "", document.getElementById("u-inp").focus())
+}
+async function saveUser() {
+    const e = document.getElementById("u-inp").value.trim();
+    if (!e || !state.user) return;
+    await db.from("profiles").update({
+        username: e
+    }).eq("id", state.user.id), state.profile && (state.profile.username = e), document.getElementById("u-name").textContent = e, document.getElementById("av-init").textContent = e.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2);
+    const t = document.getElementById("u-edit-row");
+    t.style.display = "none", t.setAttribute("data-open", "0")
+}
+async function loadMap() {
+    try {
+        const [{
+            data: e
+        }, {
+            data: t
+        }] = await Promise.all([db.from("municipios").select("*"), db.from("visits").select("municipio")]);
+        e && (state.municipiosData = {}, e.forEach(e => {
+            state.municipiosData[e.nombre] = e
+        }), state.coast = e.filter(e => "costa" === e.tipo).map(e => e.nombre), state.mountain = e.filter(e => "montaña" === e.tipo).map(e => e.nombre)), state.popularidad = {}, (t || []).forEach(e => {
+            state.popularidad[e.municipio] = (state.popularidad[e.municipio] || 0) + 1
+        }), document.getElementById("screen-dado").classList.contains("active") && renderMuniList();
+        const i = await d3.json("https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json"),
+            n = {
+                type: "FeatureCollection",
+                features: topojson.feature(i, i.objects.municipalities).features.filter(e => String(e.id || "").startsWith("39") || 53072 === e.id || "53072" === e.id)
+            };
+        state.totalMuni = n.features.length;
+        const o = document.getElementById("map-cont").clientWidth || 410,
+            a = Math.round(.58 * o);
+        state.mapDims = { W: o, H: a };
+        document.getElementById("map-svg").setAttribute("viewBox", `0 0 ${o} ${a}`);
+        const pad = 12,
+            d = d3.geoMercator().fitExtent([[pad, pad], [o - pad, a - pad]], n),
+            l = d3.geoPath(d),
+            c = d3.select("#map-svg");
+        c.selectAll("*").remove();
+
+        // Degradados y brillo
+        const defs = c.append("defs");
+        const gv = defs.append("linearGradient").attr("id", "grad-visited")
+            .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 1);
+        gv.append("stop").attr("offset", "0%").attr("stop-color", "#34d06b");
+        gv.append("stop").attr("offset", "100%").attr("stop-color", "#1a9a48");
+        const gs = defs.append("linearGradient").attr("id", "grad-sea")
+            .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 1);
+        gs.append("stop").attr("offset", "0%").attr("stop-color", "#16283d");
+        gs.append("stop").attr("offset", "100%").attr("stop-color", "#101d2e");
+        const glow = defs.append("filter").attr("id", "glow-visited")
+            .attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%");
+        glow.append("feGaussianBlur").attr("stdDeviation", "1.6").attr("result", "blur");
+        const mg = glow.append("feMerge");
+        mg.append("feMergeNode").attr("in", "blur");
+        mg.append("feMergeNode").attr("in", "SourceGraphic");
+
+        c.append("rect").attr("width", o).attr("height", a).attr("fill", "url(#grad-sea)");
+
+        // Grupo zoomable: municipios + bordes
+        const g = c.append("g").attr("id", "map-zoom-group");
+
+        g.selectAll("path.muni-path").data(n.features).join("path").attr("class", e => {
+            const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "Mun-" + e.id;
+            let cls = "muni-path";
+            if (state.visited[t]) cls += " visited";
+            else if (isCoast(t) || (state.municipiosData?.[t]?.tipo === "costa")) cls += " is-coast";
+            return cls;
+        }).attr("d", l).attr("data-name", e => {
+            const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "Mun-" + e.id;
+            return "Comunidad de Campoo y Cabuérniga" === t ? "Mancomunidad de Campoo-Cabuérniga" : t;
+        }).style("stroke", "none").on("click", function() {
+            const name = d3.select(this).attr("data-name");
+            d3.selectAll(".muni-path").classed("selected", !1);
+            d3.select(this).classed("selected", !0).raise();
+            state.selectedMuni = name;
+            showMuniBar(name);
+        });
+
+        const u = e => String(e).startsWith("39") || 53072 === e || "53072" === e;
+        g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e !== t && u(e.id) && u(t.id)))
+            .attr("d", l).attr("fill", "none").attr("stroke", "#0c1622")
+            .attr("stroke-width", "0.4px").attr("pointer-events", "none").attr("class", "map-mesh-inner");
+        g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e === t && u(e.id)))
+            .attr("d", l).attr("fill", "none").attr("stroke", "#0c1622")
+            .attr("stroke-width", "1px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
+
+        // Zoom y paneo (pellizcar / arrastrar)
+        state.mapZoom = d3.zoom()
+            .scaleExtent([1, 8])
+            .translateExtent([[0, 0], [o, a]])
+            .on("zoom", ev => {
+                g.attr("transform", ev.transform);
+                const k = ev.transform.k;
+                g.select(".map-mesh-inner").style("stroke-width", (0.4 / k) + "px");
+                g.select(".map-mesh-outer").style("stroke-width", (1 / k) + "px");
+                const rb = document.getElementById("map-reset-zoom");
+                if (rb) rb.style.display = k > 1.05 ? "flex" : "none";
+            });
+        c.call(state.mapZoom).on("dblclick.zoom", null);
+
+        // Botón flotante "ver toda Cantabria"
+        const mc = document.getElementById("map-cont");
+        if (!document.getElementById("map-reset-zoom")) {
+            const rb = document.createElement("button");
+            rb.id = "map-reset-zoom";
+            rb.innerHTML = '<i class="ti ti-zoom-out-area" aria-hidden="true"></i>';
+            rb.title = "Ver toda Cantabria";
+            rb.setAttribute("aria-label", "Ver toda Cantabria");
+            rb.onclick = resetMapZoom;
+            mc.appendChild(rb);
+        }
+
+        document.getElementById("map-load").style.display = "none", refreshMapVisited(), updateProgress()
+    } catch (e) {
+        document.getElementById("map-load").innerHTML = '<p style="color:rgba(255,255,255,0.4);font-size:12px;padding:20px;text-align:center">Error al cargar el mapa.</p>'
+    }
+}
+
+function refreshMapVisited() {
+    d3.selectAll(".muni-path").each(function() {
+        const e = d3.select(this).attr("data-name");
+        state.visited[e] && d3.select(this).classed("visited", !0).classed("is-coast", !1)
+    })
+}
+
+function updateClock() {
+    const e = (new Date).toLocaleTimeString("es-ES", {
+        hour: "2-digit",
+        minute: "2-digit"
+    });
+    document.querySelectorAll(".clock").forEach(t => {
+        t.textContent = e
+    })
+}
+async function checkForUpdates() {
+    try {
+        const e = document.querySelector('meta[name="app-version"]')?.content;
+        if (!e) return;
+        const t = localStorage.getItem("ce_version");
+        if (t && t !== e) {
+            if (console.log("Nueva versión detectada, limpiando cache..."), "caches" in window) {
+                const e = await caches.keys();
+                await Promise.all(e.map(e => caches.delete(e)))
+            }
+            localStorage.setItem("ce_version", e)
+        } else localStorage.setItem("ce_version", e)
+    } catch (e) {
+        console.log("checkForUpdates error:", e)
+    }
+}
+
+function registerSW() {}
+async function init() {
+    buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4);
+    const e = setTimeout(() => {
+            document.getElementById("splash")?.remove(), showAuth()
+        }, 5e3),
+        {
+            data: {
+                session: t
+            }
+        } = await db.auth.getSession();
+    clearTimeout(e), t?.user ? (await loadUserData(t.user), showApp(), loadMap(), loadEventos()) : showAuth(), db.auth.onAuthStateChange(async (e, t) => {
+        "SIGNED_OUT" === e ? showAuth() : "SIGNED_IN" === e && t?.user && !state.user && (await loadUserData(t.user), showApp(), loadMap(), loadEventos())
+    })
+}
+document.getElementById("av-in").addEventListener("change", async function(e) {
+    const t = e.target.files[0];
+    if (!t || !state.user) return;
+    const i = document.getElementById("av-ring"),
+        n = i.querySelector("#av-init")?.textContent || "EX";
+    i.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;justify-content:center;width:100%;height:100%">...</div>';
+    try {
+        const comp = await compressImage(t, 512, 0.85),
+            blob = await (await fetch(comp.base64)).blob(),
+            e = comp.mime.includes("png") ? "png" : "jpg",
+            n = `${state.user.id}.${e}`;
+        await db.storage.from("avatares").remove([n]);
+        const {
+            data: o,
+            error: a
+        } = await db.storage.from("avatares").upload(n, blob, {
+            contentType: comp.mime,
+            upsert: !0,
+            cacheControl: "3600"
+        });
+        if (a) throw console.error("Upload error:", a), new Error(a.message);
+        const {
+            data: s
+        } = db.storage.from("avatares").getPublicUrl(n), r = s?.publicUrl;
+        if (!r) throw new Error("No se pudo obtener la URL pública");
+        const d = r + "?t=" + Date.now(),
+            {
+                error: l
+            } = await db.from("profiles").update({
+                avatar_url: r
+            }).eq("id", state.user.id);
+        if (l) throw l;
+        state.profile && (state.profile.avatar_url = r), i.innerHTML = `<img src="${d}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`
+    } catch (e) {
+        console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, alert("No se pudo subir el avatar: " + e.message)
+    }
+}), init();
+const VAPID_PUBLIC_KEY = "";
+async function registerPushNotifications() {
+    if ("serviceWorker" in navigator && "PushManager" in window) {
+        if (state.user) try {
+            return "granted" !== await Notification.requestPermission() ? void console.log("Permiso de notificaciones denegado") : void console.log("VAPID key no configurada todavía")
+        } catch (e) {
+            console.error("Error registrando push:", e)
+        }
+    } else console.log("Push no soportado en este dispositivo")
+}
+
+function urlBase64ToUint8Array(e) {
+    const t = (e + "=".repeat((4 - e.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/"),
+        i = window.atob(t),
+        n = new Uint8Array(i.length);
+    for (let e = 0; e < i.length; e++) n[e] = i.charCodeAt(e);
+    return n
+}
 async function toggleNotifications() {
-  const btn = document.getElementById('btn-notif');
-  if (!btn) return;
-
-  if (state.pushRegistered) {
-    btn.textContent = '🔔 Notificaciones activas';
-    return;
-  }
-
-  btn.textContent = 'Activando...';
-  btn.disabled = true;
-  await registerPushNotifications();
-  btn.disabled = false;
-  btn.textContent = state.pushRegistered ? '🔔 Notificaciones activas' : '🔕 Activar notificaciones';
+    const e = document.getElementById("btn-notif");
+    if (e)
+        if (state.pushRegistered) e.innerHTML = "🔔 Notificaciones activas";
+        else {
+            e.textContent = "Activando...", e.disabled = !0;
+            try {
+                if ("granted" !== await Notification.requestPermission()) return alert("Necesitas dar permiso de notificaciones. Ve a Ajustes → Safari → Notificaciones y actívalas para esta web."), e.disabled = !1, void(e.innerHTML = "🔕 Activar notificaciones");
+                await registerPushNotifications(), e.innerHTML = state.pushRegistered ? "🔔 Notificaciones activas" : "🔕 Activar notificaciones"
+            } catch (t) {
+                alert("Error activando notificaciones: " + t.message), e.innerHTML = "🔕 Activar notificaciones"
+            }
+            e.disabled = !1
+        }
 }
 
-// Escuchar cambios en tiempo real (Supabase Realtime)
-// Esto actualiza el feed cuando un amigo sube algo nuevo
 function subscribeToFriendActivity() {
-  if (!state.user || state.realtimeSubscribed) return;
-  state.realtimeSubscribed = true;
-
-  // Escuchar nuevas visitas
-  db.channel('friend-visits')
-    .on('postgres_changes', {
-      event:  'INSERT',
-      schema: 'public',
-      table:  'visits',
-    }, payload => {
-      // Solo refrescar si es de un amigo
-      const isFriend = state.feedCache?.friendProfiles?.some(f => f.id === payload.new.user_id);
-      if (isFriend || payload.new.user_id === state.user.id) {
-        state.feedCache = null; // invalidar cache
-        showFeedBadge();
-      }
-    })
-    .on('postgres_changes', {
-      event:  'INSERT',
-      schema: 'public',
-      table:  'photo_comments',
-    }, payload => {
-      // Refrescar comentarios del post afectado
-      loadVisitComments(payload.new.photo_id, null);
-    })
-    .subscribe();
+    state.user && !state.realtimeSubscribed && (state.realtimeSubscribed = !0, db.channel("friend-visits").on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "visits"
+    }, e => {
+        const t = state.feedCache?.friendProfiles?.some(t => t.id === e.new.user_id);
+        (t || e.new.user_id === state.user.id) && (state.feedCache = null, showFeedBadge())
+    }).on("postgres_changes", {
+        event: "INSERT",
+        schema: "public",
+        table: "photo_comments"
+    }, e => {
+        loadVisitComments(e.new.photo_id, null)
+    }).subscribe())
 }
 
 function showFeedBadge() {
-  // Mostrar punto rojo en el botón de amigos para indicar actividad nueva
-  const btns = document.querySelectorAll('[id^="nb-"][id$="-feed"]');
-  btns.forEach(btn => {
-    if (!btn.querySelector('.feed-badge')) {
-      const dot = document.createElement('div');
-      dot.className = 'feed-badge';
-      dot.style.cssText = 'position:absolute;top:6px;right:10px;width:8px;height:8px;background:#e8288a;border-radius:50%;border:2px solid #0f1923';
-      btn.style.position = 'relative';
-      btn.appendChild(dot);
-    }
-  });
+    document.querySelectorAll('[id^="nb-"][id$="-feed"]').forEach(e => {
+        if (!e.querySelector(".feed-badge")) {
+            const t = document.createElement("div");
+            t.className = "feed-badge", t.style.cssText = "position:absolute;top:6px;right:10px;width:8px;height:8px;background:#e8288a;border-radius:50%;border:2px solid #0f1923", e.style.position = "relative", e.appendChild(t)
+        }
+    })
 }
 
 function clearFeedBadge() {
-  document.querySelectorAll('.feed-badge').forEach(el => el.remove());
+    document.querySelectorAll(".feed-badge").forEach(e => e.remove())
+}
+
+function checkInsignia(e, t) {
+    e === t && showInsignia()
+}
+
+function showInsignia() {
+    if (document.getElementById("insignia-modal")) return;
+    const e = document.createElement("div");
+    e.id = "insignia-modal", e.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px;text-align:center", e.innerHTML = '<div style="font-size:72px;margin-bottom:16px">🏔️</div><div style="font-family:Playfair Display,serif;font-size:28px;font-weight:700;color:#fff;margin-bottom:8px">¡El Cántabru!</div><div style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6;margin-bottom:24px">Has pisado los 102 municipios de Cantabria.<br>Eres oficialmente un Cántabru de pura cepa.</div><div style="background:linear-gradient(135deg,#e8b820,#e86820);border-radius:16px;padding:16px 24px;margin-bottom:24px"><div style="font-size:11px;color:rgba(255,255,255,0.7);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">Insignia desbloqueada</div><div style="font-size:18px;font-weight:700;color:#fff">🏆 El Cántabru</div></div><button onclick="document.getElementById(\'insignia-modal\').remove()" style="padding:12px 28px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">¡A por más aventuras!</button>', document.getElementById("app").appendChild(e), launchConfetti(), launchConfetti(), launchConfetti()
+}
+
+function launchConfetti() {
+    const e = ["#22b050", "#e8288a", "#e8b820", "#2272e8", "#e86820", "#ffffff"],
+        t = document.getElementById("app");
+    for (let i = 0; i < 60; i++) {
+        const i = document.createElement("div"),
+            n = e[Math.floor(Math.random() * e.length)],
+            o = 8 * Math.random() + 4,
+            a = 100 * Math.random(),
+            s = .6 * Math.random(),
+            r = 1.5 * Math.random() + 1;
+        Math.random();
+        i.style.cssText = "position:absolute;top:-20px;left:" + a + "%;width:" + o + "px;height:" + o + "px;background:" + n + ";border-radius:" + (Math.random() > .5 ? "50%" : "2px") + ";pointer-events:none;z-index:999;animation:confetti-fall " + r + "s ease-in " + s + "s forwards", t.appendChild(i), setTimeout(() => i.remove(), 1e3 * (s + r) + 100)
+    }
+}
+async function loadEventos() {
+    const [e, t] = await Promise.all([loadEventosSupabase(), loadEventosSantander()]), i = new Map;
+    [...e, ...t].forEach(e => {
+        const t = e.nombre + e.fecha;
+        i.has(t) || i.set(t, e)
+    }), state.eventos = [...i.values()].sort((e, t) => new Date(e.fecha) - new Date(t.fecha)), renderEventos()
+}
+async function loadEventosSupabase() {
+    const {
+        data: e
+    } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
+    return (e || []).map(e => ({
+        ...e,
+        source: "local"
+    }))
+}
+async function loadEventosSantander() {
+    try {
+        const e = "https://datos.santander.es/api/rest/datasets/agenda_cultural.json?items=20",
+            t = await fetch("https://api.allorigins.win/get?url=" + encodeURIComponent(e));
+        if (!t.ok) return [];
+        const i = await t.json(),
+            n = JSON.parse(i.contents);
+        return (n?.resources || n?.result?.resources || []).filter(e => {
+            const t = e["dc:date"] || e.fecha || "";
+            return t && new Date(t) >= new Date
+        }).slice(0, 10).map(e => ({
+            id: "stander-" + (e.uri || Math.random()),
+            nombre: e["dc:title"] || e.titulo || "Evento cultural",
+            lugar: e["vcard:locality"] || e.lugar || "Santander",
+            fecha: e["dc:date"] || e.fecha || (new Date).toISOString(),
+            dia_semana: new Date(e["dc:date"] || e.fecha).toLocaleDateString("es-ES", {
+                weekday: "short"
+            }),
+            tipo: "cultura",
+            descripcion: e["dc:description"] || e.descripcion || "",
+            tipo_badge: "Agenda Santander",
+            color_bg: "#1a0d2a",
+            icon: "ti-star",
+            activo: !0,
+            source: "api",
+            url: e["dc:identifier"] || ""
+        }))
+    } catch (e) {
+        return console.log("API Santander no disponible:", e.message), []
+    }
+}
+async function exportarMapa() {
+    const e = document.getElementById("btn-export-map");
+    e && (e.textContent = "Generando...", e.disabled = !0);
+    try {
+        const e = document.getElementById("map-svg").getAttribute("viewBox").split(" "),
+            t = parseInt(e[2]),
+            i = parseInt(e[3]),
+            n = 2,
+            o = 40,
+            a = 80,
+            s = 40,
+            r = document.createElement("canvas");
+        r.width = (t + 2 * o) * n, r.height = (i + a + s) * n;
+        const d = r.getContext("2d");
+        d.scale(n, n), d.fillStyle = "#0f1923", d.fillRect(0, 0, r.width, r.height);
+        const l = await d3.json("https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json"),
+            c = {
+                type: "FeatureCollection",
+                features: topojson.feature(l, l.objects.municipalities).features.filter(e => String(e.id || "").startsWith("39") || 53072 === e.id || "53072" === e.id)
+            },
+            u = d3.geoMercator().fitExtent([
+                [o + 12, a + 12],
+                [t + o - 12, i + a - 12]
+            ], c),
+            p = d3.geoPath(u, d);
+        c.features.forEach(e => {
+            const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "";
+            d.beginPath(), p(e), d.fillStyle = state.visited[t] ? "#22b050" : "#3d5268", d.fill()
+        }), d.beginPath(), p(topojson.mesh(l, l.objects.municipalities, (e, t) => e !== t && String(e.id).startsWith("39") && String(t.id).startsWith("39"))), d.strokeStyle = "#0f1923", d.lineWidth = .4, d.stroke(), d.fillStyle = "#ffffff", d.font = "bold 22px serif", d.textAlign = "center", d.fillText("Ya lo pisé", (t + 2 * o) / 2, 30);
+        const m = Object.keys(state.visited).length;
+        d.font = "13px sans-serif", d.fillStyle = "rgba(255,255,255,0.5)", d.fillText(m + " / 102 municipios conquistados · " + Math.round(m / 102 * 100) + "%", (t + 2 * o) / 2, 52), d.font = "11px sans-serif", d.fillStyle = "rgba(255,255,255,0.25)", d.fillText("Ya lo pisé · Cantabria", (t + 2 * o) / 2, i + a + s - 10), r.toBlob(async e => {
+            const t = new File([e], "yalopisé-" + (new Date).toISOString().slice(0, 10) + ".png", {
+                type: "image/png"
+            });
+            if (navigator.share && navigator.canShare({
+                    files: [t]
+                })) await navigator.share({
+                files: [t],
+                title: "Ya lo pisé"
+            });
+            else {
+                const i = URL.createObjectURL(e),
+                    n = document.createElement("a");
+                n.download = t.name, n.href = i, n.click(), URL.revokeObjectURL(i)
+            }
+        }, "image/png")
+    } catch (e) {
+        alert("Error: " + e.message)
+    } finally {
+        e && (e.textContent = "📸 Exportar mapa", e.disabled = !1)
+    }
+}
+let recTipo = "sitio",
+    recMuni = "";
+
+function openRecModal(e) {
+    recMuni = e, recTipo = "sitio", document.getElementById("rec-muni-title").textContent = e, document.getElementById("rec-nombre").value = "", document.getElementById("rec-comentario").value = "", setRecTipo("sitio"), document.getElementById("recomendacion-modal").style.display = "flex"
+}
+
+function closeRecModal() {
+    document.getElementById("recomendacion-modal").style.display = "none"
+}
+
+function setRecTipo(e) {
+    recTipo = e;
+    const t = document.getElementById("rec-tipo-sitio"),
+        i = document.getElementById("rec-tipo-comida");
+    "sitio" === e ? (t.style.borderColor = "#2272e8", t.style.background = "rgba(34,114,232,0.15)", t.style.color = "#fff", i.style.borderColor = "rgba(255,255,255,0.1)", i.style.background = "transparent", i.style.color = "rgba(255,255,255,0.5)") : (i.style.borderColor = "#e8288a", i.style.background = "rgba(232,40,138,0.15)", i.style.color = "#fff", t.style.borderColor = "rgba(255,255,255,0.1)", t.style.background = "transparent", t.style.color = "rgba(255,255,255,0.5)")
+}
+async function guardarRecomendacion() {
+    const e = document.getElementById("rec-nombre").value.trim(),
+        t = document.getElementById("rec-comentario").value.trim();
+    if (!e) return void alert("Ponle un nombre al sitio");
+    if (!state.user) return;
+    const i = document.querySelector("#recomendacion-modal button:last-child");
+    i.textContent = "Guardando...", i.disabled = !0;
+    const {
+        error: n
+    } = await db.from("recomendaciones").insert({
+        user_id: state.user.id,
+        municipio: recMuni,
+        nombre: e,
+        tipo: recTipo,
+        comentario: t || null
+    });
+    i.textContent = "Guardar recomendación", i.disabled = !1, n ? alert("Error: " + n.message) : (closeRecModal(), loadRecomendaciones(recMuni))
+}
+async function loadRecomendaciones(e) {
+    const t = document.getElementById("mm-recomendaciones");
+    if (!t) return;
+    if (!state.user) return;
+    const {
+        data: i
+    } = await db.from("friendships").select("follower_id, following_id").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), n = (i || []).map(e => e.follower_id === state.user.id ? e.following_id : e.follower_id), o = [...new Set([...n, state.user.id])], {
+        data: a
+    } = await db.from("recomendaciones").select("*, profiles(username, avatar_url)").eq("municipio", e).in("user_id", o).order("created_at", {
+        ascending: !1
+    });
+    a && a.length ? t.innerHTML = a.map(t => {
+        const i = t.profiles?.username || "Usuario",
+            n = t.user_id === state.user?.id,
+            o = "comida" === t.tipo ? "🍽️" : "📍",
+            a = t.profiles?.avatar_url ? '<img src="' + esc(t.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(i) + '"/>' : esc(i.substring(0, 2).toUpperCase()),
+            s = n ? '<button data-rid="' + esc(t.id) + '" data-muni="' + esc(e) + '" onclick="deleteRecomendacion(this.dataset.rid, this.dataset.muni)" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:11px;padding:0;flex-shrink:0"><i class="ti ti-trash" aria-hidden="true"></i></button>' : "";
+        return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.07)"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="width:22px;height:22px;border-radius:50%;background:#1a2535;border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.6);flex-shrink:0;overflow:hidden">' + a + '</div><span style="font-size:12px;color:rgba(255,255,255,0.5)">' + esc(i) + '</span><span style="font-size:10px;background:rgba(255,255,255,0.08);padding:2px 7px;border-radius:999px;color:rgba(255,255,255,0.4);margin-left:auto">' + o + " " + ("comida" === t.tipo ? "Comida" : "Sitio") + "</span>" + s + '</div><div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:' + (t.comentario ? "4px" : "0") + '">' + esc(t.nombre) + "</div>" + (t.comentario ? '<div style="font-size:12px;color:rgba(255,255,255,0.5);line-height:1.4">' + esc(t.comentario) + "</div>" : "") + "</div>"
+    }).join("") : t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px;padding:4px 0">Nadie ha recomendado nada aquí aún. ¡Sé el primero!</div>'
+}
+async function deleteRecomendacion(e, t) {
+    confirm("¿Borrar esta recomendación?") && (await db.from("recomendaciones").delete().eq("id", e).eq("user_id", state.user.id), loadRecomendaciones(t))
 }
