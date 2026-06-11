@@ -370,28 +370,70 @@ document.addEventListener("click", function(e) {
 let mapFilter = "todos";
 
 function setMapFilter(e) {
-    mapFilter = e, document.querySelectorAll(".map-filter-btn").forEach(t => {
-        const i = t.dataset.filter === e;
-        t.style.backgroundColor = i ? "#22b050" : "rgba(255,255,255,0.08)", t.style.color = i ? "#fff" : "rgba(255,255,255,0.5)"
-    }), applyMapFilter()
+    const dd = document.getElementById("map-areas-dd");
+    if (e === "areas") {
+        // Toggle del desplegable de comarcas
+        if (dd) {
+            if (dd.style.display === "none" || !dd.style.display) {
+                const comarcas = [...new Set(Object.values(state.municipiosData || {})
+                    .map(m => m.comarca).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+                dd.innerHTML = comarcas.length
+                    ? comarcas.map(co => '<button class="area-dd-btn" data-area="' + esc(co) + '" onclick="selectArea(this.dataset.area)" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">' + esc(co) + '</button>').join("")
+                    : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Sin comarcas en la BD todavía</span>';
+                dd.style.display = "flex";
+            } else {
+                dd.style.display = "none";
+            }
+        }
+        mapFilter = "areas";
+    } else {
+        if (dd) dd.style.display = "none";
+        mapFilter = e;
+    }
+    document.querySelectorAll(".map-filter-btn").forEach(t => {
+        const isActive = t.dataset.filter === (mapFilter.startsWith("area:") ? "areas" : mapFilter);
+        t.style.backgroundColor = isActive ? "#22b050" : "rgba(255,255,255,0.08)";
+        t.style.color = isActive ? "#fff" : "rgba(255,255,255,0.5)";
+    });
+    applyMapFilter();
+}
+
+function selectArea(comarca) {
+    mapFilter = "area:" + comarca;
+    document.querySelectorAll(".area-dd-btn").forEach(b => {
+        const act = b.dataset.area === comarca;
+        b.style.background = act ? "rgba(34,176,80,0.2)" : "rgba(255,255,255,0.05)";
+        b.style.borderColor = act ? "rgba(34,176,80,0.55)" : "rgba(255,255,255,0.12)";
+        b.style.color = act ? "#5DCAA5" : "rgba(255,255,255,0.6)";
+    });
+    applyMapFilter();
 }
 
 function applyMapFilter() {
     d3.selectAll(".muni-path").each(function() {
         const e = d3.select(this).attr("data-name"),
             t = state.municipiosData?.[e] || {},
-            i = "costa" === t.tipo,
+            i = "costa" === t.tipo || isCoast(e),
             n = !!state.visited[e],
             o = t.sellos || [];
         let a = !0;
-        "costa" === mapFilter && (a = i), "montaña" === mapFilter && (a = !i), "pendientes" === mapFilter && (a = !n), "populares" === mapFilter && (a = (state.popularidad?.[e] || 0) > 0), SELLOS[mapFilter] && (a = o.includes(mapFilter)), d3.select(this).style("opacity", a ? 1 : .15)
+        if ("costa" === mapFilter) a = i;
+        else if ("montaña" === mapFilter) a = !i;
+        else if ("pendientes" === mapFilter) a = !n;
+        else if ("populares" === mapFilter) a = (state.popularidad?.[e] || 0) > 0;
+        else if ("rutas" === mapFilter) a = !!(t.ruta && String(t.ruta).trim());
+        else if (mapFilter.startsWith("area:")) a = t.comarca === mapFilter.slice(5);
+        else if ("areas" === mapFilter) a = !0;
+        else if (SELLOS[mapFilter]) a = o.includes(mapFilter);
+        d3.select(this).style("opacity", a ? 1 : .15)
     })
 }
 
 function showMuniBar(e) {
     document.getElementById("muni-bar").style.display = "flex", document.getElementById("bar-name").textContent = e;
     const t = state.visited[e];
-    document.getElementById("bar-st").textContent = t ? "✓ Conquistado" : "Sin visitar";
+    const rt = state.municipiosData?.[e]?.ruta;
+    document.getElementById("bar-st").textContent = (t ? "✓ Conquistado" : "Sin visitar") + (rt ? " · 🥾 Tiene ruta" : "");
     const i = document.getElementById("btn-ev");
     i.style.backgroundColor = t ? "#1a7a3e" : "#22b050", i.style.color = "#ffffff", i.innerHTML = t ? '<i class="ti ti-camera" aria-hidden="true"></i> Añadir foto' : '<i class="ti ti-camera" aria-hidden="true"></i> Evidencia'
 }
@@ -656,8 +698,27 @@ function renderEventos() {
             s = new Date(e.fecha),
             r = (new Date - s) / 864e5,
             d = r >= 0 && r < 2 ? `<button onclick="openEventFotoSheet('${e.id}','${e.nombre.replace(/'/g,"\\'")}','${e.source||"local"}')"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
-        return `\n    <div class="ev-card">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${e.nombre}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${e.lugar}</div>\n        <div class="ev-desc">${e.descripcion||""}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
-    }).join(""), n.forEach(e => loadEventCount(e.id))
+        return `\n    <div class="ev-card">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${esc(e.nombre)}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>\n        <div class="ev-desc">${esc(e.descripcion||"")}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
+    }).join(""), n.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); })
+}
+async function loadEventPhotos(eventId) {
+    const cont = document.getElementById("ev-fotos-" + eventId);
+    if (!cont) return;
+    const { data: fotos } = await db.from("event_photos")
+        .select("id, user_id, storage_path, descripcion, profiles(username)")
+        .eq("event_id", eventId).order("created_at", { ascending: !1 }).limit(8);
+    if (!fotos || !fotos.length) { cont.innerHTML = ""; return; }
+    const paths = [...new Set(fotos.map(f => f.storage_path).filter(Boolean))];
+    const { data: signed } = await db.storage.from("evidencias").createSignedUrls(paths, 3600);
+    const urls = {};
+    (signed || []).forEach(s => { if (s.signedUrl) urls[s.path] = s.signedUrl; });
+    const thumbs = fotos.filter(f => urls[f.storage_path]).map(f =>
+        '<div style="flex-shrink:0;width:74px;height:74px;border-radius:10px;overflow:hidden;background:#1a2535">'
+        + '<img src="' + esc(urls[f.storage_path]) + '" style="width:100%;height:100%;object-fit:cover" alt="' + esc(f.profiles?.username || "foto") + '" title="' + esc(f.profiles?.username || "") + '"/>'
+        + '</div>').join("");
+    cont.innerHTML = thumbs
+        ? '<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">📸 Fotos del evento</div><div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">' + thumbs + '</div>'
+        : "";
 }
 async function loadEventCount(e) {
     const {
@@ -770,6 +831,9 @@ function renderDice(e, t) {
 
 function isCoast(e) {
     if (!e) return false;
+    // 1º la BD (editable en Supabase > municipios > tipo); 2º la lista
+    const md = state.municipiosData?.[e];
+    if (md?.tipo) return md.tipo === 'costa';
     const nl = e.toLowerCase();
     if (nl.includes('corrales de buelna') || nl.includes('los corrales')) return false;
     return COAST_MUNIS.some(t => nl.includes(t.toLowerCase()));
@@ -851,7 +915,26 @@ function openMuniModal(e) {
         n = state.visited[e],
         o = document.getElementById("mm-img-wrap"),
         a = document.getElementById("mm-img");
-    t.imagen_url && o && a ? (a.src = t.imagen_url, o.style.display = "block") : o && (o.style.display = "none"), document.getElementById("mm-header").style.background = i ? "linear-gradient(135deg,#0d2a4a,#153a60)" : "linear-gradient(135deg,#0d2a1e,#153020)";
+    const hdr = document.getElementById("mm-header"),
+        hdrContent = document.getElementById("mm-header-content");
+    if (t.imagen_url && o && a) {
+        // Con foto: el bloque de color se superpone translúcido y deja
+        // ver la imagen detrás (degradado de abajo hacia arriba)
+        a.src = t.imagen_url;
+        o.style.display = "block";
+        hdr.style.background = "transparent";
+        if (hdrContent) {
+            hdrContent.style.marginTop = "-85px";
+            hdrContent.style.position = "relative";
+            hdrContent.style.background = i
+                ? "linear-gradient(to top, rgba(13,30,50,0.96) 35%, rgba(13,30,50,0.55) 70%, rgba(13,30,50,0.05) 100%)"
+                : "linear-gradient(to top, rgba(13,32,22,0.96) 35%, rgba(13,32,22,0.55) 70%, rgba(13,32,22,0.05) 100%)";
+        }
+    } else {
+        if (o) o.style.display = "none";
+        hdr.style.background = i ? "linear-gradient(135deg,rgba(13,42,74,0.55),rgba(21,58,96,0.55))" : "linear-gradient(135deg,rgba(13,42,30,0.55),rgba(21,48,32,0.55))";
+        if (hdrContent) { hdrContent.style.marginTop = "0"; hdrContent.style.background = "none"; }
+    }
     const s = document.getElementById("mm-badge");
     s.innerHTML = `<i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:10px"></i> ${i?"Costa":"Montaña"}`, s.style.background = i ? "rgba(56,138,221,0.25)" : "rgba(29,158,117,0.25)", s.style.color = i ? "#85B7EB" : "#5DCAA5", document.getElementById("mm-name").textContent = e, document.getElementById("mm-comarca").textContent = t.comarca ? "Comarca de " + t.comarca : "";
     const r = [];
@@ -860,8 +943,24 @@ function openMuniModal(e) {
         const t = SELLOS[e];
         t && r.push('<div style="display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 10px;font-size:11px;color:#fff;background:' + t.color + "22;border:1px solid " + t.color + '44">' + t.emoji + " " + t.label + "</div>")
     });
+    t.ruta && String(t.ruta).trim() && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(93,202,165,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#5DCAA5">🥾 Con ruta</div>');
     const d = state.popularidad?.[e] || 0;
     d > 0 && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(232,184,32,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#e8b820">🔥 ' + d + " visitas</div>"), document.getElementById("mm-pills").innerHTML = r.join(" "), document.getElementById("mm-desc").textContent = t.descripcion || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.", document.getElementById("mm-curiosidad").textContent = t.curiosidad || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.";
+    // Bloque de ruta (columna "ruta" de municipios en Supabase)
+    let rutaEl = document.getElementById("mm-ruta");
+    if (!rutaEl) {
+        rutaEl = document.createElement("div");
+        rutaEl.id = "mm-ruta";
+        const curEl = document.getElementById("mm-curiosidad");
+        curEl?.parentNode?.insertBefore(rutaEl, curEl.nextSibling);
+    }
+    if (t.ruta && String(t.ruta).trim()) {
+        rutaEl.style.cssText = "margin:12px 0;padding:11px 13px;background:rgba(93,202,165,0.08);border:1px solid rgba(93,202,165,0.25);border-radius:12px";
+        rutaEl.innerHTML = '<div style="font-size:11px;font-weight:600;color:#5DCAA5;margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase">🥾 Ruta</div><div style="font-size:13px;color:rgba(255,255,255,0.7);line-height:1.5">' + esc(t.ruta) + '</div>';
+        rutaEl.style.display = "block";
+    } else {
+        rutaEl.style.display = "none";
+    }
     const l = t.visitas || ["Lugar de interés 1 — Lorem ipsum dolor sit amet.", "Lugar de interés 2 — Ut enim ad minim veniam quis.", "Lugar de interés 3 — Duis aute irure dolor reprehenderit."];
     document.getElementById("mm-visitas").innerHTML = l.map((e, t) => `\n    <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">\n      <div style="width:24px;height:24px;border-radius:50%;background:rgba(34,176,80,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#22b050;flex-shrink:0">${t+1}</div>\n      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${e}</p>\n    </div>`).join("");
     const c = t.comer || ["Restaurante 1 — Lorem ipsum especialidad local.", "Restaurante 2 — Ut enim ad minim cocina tradicional.", "Bar / Sidrería 3 — Gastronomía local y productos de temporada."];
@@ -958,7 +1057,22 @@ async function loadFeed(e = !1) {
         const t = e.user_id + "|" + normalizeMuni(e.municipio);
         u[t] || (u[t] = []), u[t].push(e)
     });
-    const p = (d || []).filter(e => e.user_id === state.user.id || ["amigos", "publico"].includes(e.visibilidad));
+    let p = (d || []).filter(e => e.user_id === state.user.id || ["amigos", "publico"].includes(e.visibilidad));
+
+    // Fotos de eventos (🎉) → posts sintéticos del feed
+    const profById = {};
+    n.forEach(pr => { profById[pr.id] = pr; });
+    if (state.profile) profById[state.user.id] = { id: state.user.id, username: state.profile.username, avatar_url: state.profile.avatar_url };
+    const eventPosts = l.filter(f => (f.municipio || "").startsWith("🎉")).map(f => ({
+        id: "ep_" + f.id,
+        user_id: f.user_id,
+        municipio: f.municipio,
+        visibilidad: f.visibilidad,
+        created_at: f.created_at,
+        profiles: profById[f.user_id] || null
+    }));
+    p = [...p, ...eventPosts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
     state.feedCache = {
         visibleVisits: p,
         fotasByMuniUser: u,
@@ -1257,7 +1371,21 @@ async function postComment(e, t, i) {
     }
 }
 async function deleteFeedPost(e, t, i) {
-    if (state.user && confirm("¿Borrar esta publicación?")) try {
+    if (!state.user || !confirm("¿Borrar esta publicación?")) return;
+    // Post de evento (sintético): borrar foto del feed + event_photos
+    if (String(e).startsWith("ep_")) {
+        try {
+            if (i && "text_only" !== i && "" !== i) {
+                await db.storage.from("evidencias").remove([i]);
+                await db.from("event_photos").delete().eq("storage_path", i).eq("user_id", state.user.id);
+            }
+            if (t) await db.from("photos").delete().eq("id", t).eq("user_id", state.user.id);
+            state.feedCache = null;
+            loadFeed(!0);
+        } catch (err) { alert("Error al borrar: " + err.message); }
+        return;
+    }
+    try {
         i && "text_only" !== i && "" !== i && await db.storage.from("evidencias").remove([i]), t && await db.from("photos").delete().eq("id", t).eq("user_id", state.user.id), await db.from("visits").delete().eq("id", e).eq("user_id", state.user.id), delete state.visited[state.feedCache?.visibleVisits?.find(t => t.id === e)?.municipio], state.feedCache = null, state.photos = state.photos.filter(e => e.id !== t), updateProgress(), loadFeed(!0)
     } catch (e) {
         alert("Error al borrar: " + e.message)
@@ -1570,8 +1698,9 @@ async function loadMap() {
         gv.append("stop").attr("offset", "100%").attr("stop-color", "#1a9a48");
         const gs = defs.append("linearGradient").attr("id", "grad-sea")
             .attr("x1", 0).attr("y1", 0).attr("x2", 0).attr("y2", 1);
-        gs.append("stop").attr("offset", "0%").attr("stop-color", "#16283d");
-        gs.append("stop").attr("offset", "100%").attr("stop-color", "#101d2e");
+        gs.append("stop").attr("offset", "0%").attr("stop-color", "#6aa3d8");
+        gs.append("stop").attr("offset", "55%").attr("stop-color", "#4d87bf");
+        gs.append("stop").attr("offset", "100%").attr("stop-color", "#3a6fa3");
         const glow = defs.append("filter").attr("id", "glow-visited")
             .attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%");
         glow.append("feGaussianBlur").attr("stdDeviation", "1.6").attr("result", "blur");
@@ -1583,6 +1712,31 @@ async function loadMap() {
 
         // Grupo zoomable: municipios + bordes
         const g = c.append("g").attr("id", "map-zoom-group");
+
+        // Comunidades vecinas como tierra (Asturias, León, Palencia,
+        // Burgos, Bizkaia), debajo de Cantabria y sin interacción
+        const provOf = id => String(id).padStart(5, "0").slice(0, 2);
+        const NEIGHBORS = ["33", "24", "34", "09", "48"];
+        const vecinos = i.objects.municipalities.geometries.filter(gm => NEIGHBORS.includes(provOf(gm.id)));
+        if (vecinos.length) {
+            // Tierra unificada
+            g.append("path")
+                .datum(topojson.merge(i, vecinos))
+                .attr("d", l).attr("fill", "#41504a")
+                .attr("stroke", "none").attr("pointer-events", "none");
+            // Límites entre provincias vecinas (sutil)
+            g.append("path")
+                .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a !== b && provOf(a.id) !== provOf(b.id)))
+                .attr("d", l).attr("fill", "none")
+                .attr("stroke", "rgba(15,25,35,0.55)").attr("stroke-width", "0.7px")
+                .attr("pointer-events", "none").attr("class", "map-mesh-prov");
+            // Costa/borde exterior de la tierra vecina
+            g.append("path")
+                .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a === b))
+                .attr("d", l).attr("fill", "none")
+                .attr("stroke", "rgba(15,25,35,0.4)").attr("stroke-width", "0.5px")
+                .attr("pointer-events", "none");
+        }
 
         g.selectAll("path.muni-path").data(n.features).join("path").attr("class", e => {
             const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "Mun-" + e.id;
@@ -1916,8 +2070,25 @@ async function exportarMapa() {
 let recTipo = "sitio",
     recMuni = "";
 
+let recFotoBase64 = null, recFotoMime = null;
+function clearRecFoto() {
+    recFotoBase64 = null; recFotoMime = null;
+    document.getElementById("rec-foto-prev").style.display = "none";
+    try { document.getElementById("rec-foto-in").value = ""; } catch (e) {}
+}
+document.getElementById("rec-foto-in")?.addEventListener("change", async function(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const { base64, mime } = await compressImage(f, 1280, 0.8);
+    recFotoBase64 = base64; recFotoMime = mime;
+    document.getElementById("rec-foto-img").src = base64;
+    document.getElementById("rec-foto-prev").style.display = "block";
+});
 function openRecModal(e) {
-    recMuni = e, recTipo = "sitio", document.getElementById("rec-muni-title").textContent = e, document.getElementById("rec-nombre").value = "", document.getElementById("rec-comentario").value = "", setRecTipo("sitio"), document.getElementById("recomendacion-modal").style.display = "flex"
+    recMuni = e, recTipo = "sitio", document.getElementById("rec-muni-title").textContent = e, document.getElementById("rec-nombre").value = "", document.getElementById("rec-comentario").value = "";
+    const lk = document.getElementById("rec-link"); if (lk) lk.value = "";
+    clearRecFoto();
+    setRecTipo("sitio"), document.getElementById("recomendacion-modal").style.display = "flex"
 }
 
 function closeRecModal() {
@@ -1931,43 +2102,268 @@ function setRecTipo(e) {
     "sitio" === e ? (t.style.borderColor = "#2272e8", t.style.background = "rgba(34,114,232,0.15)", t.style.color = "#fff", i.style.borderColor = "rgba(255,255,255,0.1)", i.style.background = "transparent", i.style.color = "rgba(255,255,255,0.5)") : (i.style.borderColor = "#e8288a", i.style.background = "rgba(232,40,138,0.15)", i.style.color = "#fff", t.style.borderColor = "rgba(255,255,255,0.1)", t.style.background = "transparent", t.style.color = "rgba(255,255,255,0.5)")
 }
 async function guardarRecomendacion() {
-    const e = document.getElementById("rec-nombre").value.trim(),
-        t = document.getElementById("rec-comentario").value.trim();
-    if (!e) return void alert("Ponle un nombre al sitio");
+    const nombre = document.getElementById("rec-nombre").value.trim();
+    const coment = document.getElementById("rec-comentario").value.trim();
+    let link = (document.getElementById("rec-link")?.value || "").trim();
+    if (!nombre) return void alert("Ponle un nombre al sitio");
     if (!state.user) return;
-    const i = document.querySelector("#recomendacion-modal button:last-child");
-    i.textContent = "Guardando...", i.disabled = !0;
-    const {
-        error: n
-    } = await db.from("recomendaciones").insert({
-        user_id: state.user.id,
-        municipio: recMuni,
-        nombre: e,
-        tipo: recTipo,
-        comentario: t || null
-    });
-    i.textContent = "Guardar recomendación", i.disabled = !1, n ? alert("Error: " + n.message) : (closeRecModal(), loadRecomendaciones(recMuni))
+    if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
+    if (link && link.length > 300) return void alert("El enlace es demasiado largo");
+    const btn = document.getElementById("rec-save-btn");
+    btn.textContent = "Guardando...", btn.disabled = !0;
+    try {
+        let fotoPath = null;
+        if (recFotoBase64 && recFotoMime) {
+            const blob = await (await fetch(recFotoBase64)).blob();
+            const path = state.user.id + "/rec_" + Date.now() + ".jpg";
+            const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: recFotoMime });
+            if (!upErr) fotoPath = path;
+        }
+        const { error } = await db.from("recomendaciones").insert({
+            user_id: state.user.id,
+            municipio: recMuni,
+            nombre: nombre,
+            tipo: recTipo,
+            comentario: coment || null,
+            link: link || null,
+            foto_path: fotoPath
+        });
+        if (error) throw error;
+        closeRecModal();
+        loadRecomendaciones(recMuni);
+    } catch (err) {
+        alert("Error: " + err.message);
+    } finally {
+        btn.textContent = "Guardar recomendación", btn.disabled = !1;
+    }
 }
-async function loadRecomendaciones(e) {
-    const t = document.getElementById("mm-recomendaciones");
-    if (!t) return;
+
+async function loadRecomendaciones(muni) {
+    const cont = document.getElementById("mm-recomendaciones");
+    if (!cont || !state.user) return;
+    const { data: fs } = await db.from("friendships").select("follower_id, following_id")
+        .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado");
+    const fids = (fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id);
+    const ids  = [...new Set([...fids, state.user.id])];
+
+    const { data: recs } = await db.from("recomendaciones")
+        .select("*, profiles(username, avatar_url)")
+        .eq("municipio", muni).in("user_id", ids)
+        .order("created_at", { ascending: !1 });
+
+    if (!recs || !recs.length) {
+        cont.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px;padding:4px 0">Nadie ha recomendado nada aquí aún. ¡Sé el primero!</div>';
+        return;
+    }
+
+    // Respuestas del hilo + URLs firmadas, todo en lote
+    const recIds = recs.map(r => r.id);
+    const { data: replies } = await db.from("recomendacion_replies")
+        .select("*, profiles(username, avatar_url)")
+        .in("recomendacion_id", recIds)
+        .order("created_at", { ascending: !0 });
+    const repliesByRec = {};
+    (replies || []).forEach(r => { (repliesByRec[r.recomendacion_id] = repliesByRec[r.recomendacion_id] || []).push(r); });
+
+    const allPaths = [...new Set([
+        ...recs.filter(r => r.foto_path).map(r => r.foto_path),
+        ...(replies || []).filter(r => r.foto_path).map(r => r.foto_path),
+    ])];
+    const urls = {};
+    if (allPaths.length) {
+        const { data: signed } = await db.storage.from("evidencias").createSignedUrls(allPaths, 3600);
+        (signed || []).forEach(s => { if (s.signedUrl) urls[s.path] = s.signedUrl; });
+    }
+
+    cont.innerHTML = recs.map(rec => {
+        const u    = rec.profiles?.username || "Usuario";
+        const mine = rec.user_id === state.user?.id;
+        const tipoIco = "comida" === rec.tipo ? "🍽️" : "📍";
+        const av = rec.profiles?.avatar_url
+            ? '<img src="' + esc(rec.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
+            : getInitials(u);
+        const del = mine
+            ? '<button data-rid="' + esc(rec.id) + '" data-muni="' + esc(muni) + '" onclick="deleteRecomendacion(this.dataset.rid, this.dataset.muni)" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:11px;padding:0;flex-shrink:0"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+            : "";
+        const foto = rec.foto_path && urls[rec.foto_path]
+            ? '<img src="' + esc(urls[rec.foto_path]) + '" style="width:100%;max-height:150px;object-fit:cover;border-radius:10px;margin:6px 0;display:block" alt="' + esc(rec.nombre) + '"/>'
+            : "";
+        const safeLink = rec.link && /^https?:\/\//i.test(rec.link) ? rec.link : null;
+        const linkHtml = safeLink
+            ? '<a href="' + esc(safeLink) + '" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#7ab3e8;text-decoration:none;margin-top:4px">🔗 Ver enlace</a>'
+            : "";
+
+        // Hilo de "yo también he estado"
+        const reps = repliesByRec[rec.id] || [];
+        const repsHtml = reps.map(rp => {
+            const ru = rp.profiles?.username || "Usuario";
+            const rav = rp.profiles?.avatar_url
+                ? '<img src="' + esc(rp.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(ru) + '"/>'
+                : getInitials(ru);
+            const rfoto = rp.foto_path && urls[rp.foto_path]
+                ? '<img src="' + esc(urls[rp.foto_path]) + '" style="width:100%;max-height:120px;object-fit:cover;border-radius:8px;margin-top:5px;display:block" alt="foto"/>'
+                : "";
+            const rdel = rp.user_id === state.user?.id
+                ? '<button data-rpid="' + esc(rp.id) + '" data-muni="' + esc(muni) + '" onclick="deleteRecReply(this.dataset.rpid, this.dataset.muni)" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:10px;padding:0;margin-left:auto"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+                : "";
+            return '<div style="margin-top:8px;padding:8px 10px;background:rgba(255,255,255,0.04);border-left:2px solid rgba(34,176,80,0.5);border-radius:0 10px 10px 0">'
+                + '<div style="display:flex;align-items:center;gap:7px"><div style="width:18px;height:18px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:7px;color:rgba(255,255,255,0.6);flex-shrink:0;overflow:hidden">' + rav + '</div>'
+                + '<span style="font-size:11px;color:#5DCAA5;font-weight:600">🙋 ' + esc(ru) + ' también ha estado</span>' + rdel + '</div>'
+                + (rp.comentario ? '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:4px;line-height:1.4">' + esc(rp.comentario) + '</div>' : "")
+                + rfoto + '</div>';
+        }).join("");
+
+        const yoTambien = !mine
+            ? '<button data-rid="' + esc(rec.id) + '" onclick="toggleRecReplyForm(this.dataset.rid)" style="margin-top:7px;padding:6px 12px;background:rgba(34,176,80,0.12);color:#5DCAA5;border:1px solid rgba(34,176,80,0.3);border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">🙋 Yo también he estado</button>'
+            : "";
+        const replyForm =
+            '<div id="rec-reply-form-' + esc(rec.id) + '" style="display:none;margin-top:8px">'
+            + '<textarea id="rec-reply-text-' + esc(rec.id) + '" class="rec-reply-input" placeholder="Cuenta tu experiencia... (opcional)" maxlength="140" rows="2" style="width:100%;padding:9px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;box-sizing:border-box"></textarea>'
+            + '<input id="rec-reply-foto-' + esc(rec.id) + '" type="file" accept="image/*" style="display:none" onchange="recReplyFotoSel(this)"/>'
+            + '<div style="display:flex;gap:6px;margin-top:6px;align-items:center">'
+            + '<button data-rid="' + esc(rec.id) + '" onclick="document.getElementById(\'rec-reply-foto-\' + this.dataset.rid).click()" style="padding:6px 11px;background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif">📷 Foto</button>'
+            + '<span id="rec-reply-fname-' + esc(rec.id) + '" style="font-size:10px;color:rgba(255,255,255,0.35);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>'
+            + '<button data-rid="' + esc(rec.id) + '" data-muni="' + esc(muni) + '" onclick="enviarRecReply(this.dataset.rid, this.dataset.muni, this)" style="padding:6px 14px;background:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Publicar</button>'
+            + '</div></div>';
+
+        return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.07)">'
+            + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="width:22px;height:22px;border-radius:50%;background:#1a2535;border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.6);flex-shrink:0;overflow:hidden">' + av + '</div>'
+            + '<span style="font-size:12px;color:rgba(255,255,255,0.5)">' + esc(u) + '</span>'
+            + '<span style="font-size:10px;background:rgba(255,255,255,0.08);padding:2px 7px;border-radius:999px;color:rgba(255,255,255,0.4);margin-left:auto">' + tipoIco + " " + ("comida" === rec.tipo ? "Comida" : "Sitio") + '</span>' + del + '</div>'
+            + '<div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:' + (rec.comentario ? "4px" : "0") + '">' + esc(rec.nombre) + '</div>'
+            + (rec.comentario ? '<div style="font-size:12px;color:rgba(255,255,255,0.5);line-height:1.4">' + esc(rec.comentario) + '</div>' : "")
+            + foto + linkHtml + repsHtml + yoTambien + replyForm
+            + '</div>';
+    }).join("");
+}
+
+let recReplyFotos = {}; // base64 por input
+function recReplyFotoSel(input) {
+    const f = input.files && input.files[0];
+    const rid = input.id.replace("rec-reply-foto-", "");
+    if (!f) return;
+    compressImage(f, 1280, 0.8).then(({ base64, mime }) => {
+        recReplyFotos[rid] = { base64, mime };
+        const fn = document.getElementById("rec-reply-fname-" + rid);
+        if (fn) fn.textContent = "📎 foto lista";
+    });
+}
+function toggleRecReplyForm(rid) {
+    const f = document.getElementById("rec-reply-form-" + rid);
+    if (f) f.style.display = f.style.display === "none" ? "block" : "none";
+}
+async function enviarRecReply(rid, muni, btn) {
     if (!state.user) return;
-    const {
-        data: i
-    } = await db.from("friendships").select("follower_id, following_id").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), n = (i || []).map(e => e.follower_id === state.user.id ? e.following_id : e.follower_id), o = [...new Set([...n, state.user.id])], {
-        data: a
-    } = await db.from("recomendaciones").select("*, profiles(username, avatar_url)").eq("municipio", e).in("user_id", o).order("created_at", {
-        ascending: !1
-    });
-    a && a.length ? t.innerHTML = a.map(t => {
-        const i = t.profiles?.username || "Usuario",
-            n = t.user_id === state.user?.id,
-            o = "comida" === t.tipo ? "🍽️" : "📍",
-            a = t.profiles?.avatar_url ? '<img src="' + esc(t.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(i) + '"/>' : esc(i.substring(0, 2).toUpperCase()),
-            s = n ? '<button data-rid="' + esc(t.id) + '" data-muni="' + esc(e) + '" onclick="deleteRecomendacion(this.dataset.rid, this.dataset.muni)" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:11px;padding:0;flex-shrink:0"><i class="ti ti-trash" aria-hidden="true"></i></button>' : "";
-        return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;padding:10px 12px;margin-bottom:8px;border:1px solid rgba(255,255,255,0.07)"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><div style="width:22px;height:22px;border-radius:50%;background:#1a2535;border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.6);flex-shrink:0;overflow:hidden">' + a + '</div><span style="font-size:12px;color:rgba(255,255,255,0.5)">' + esc(i) + '</span><span style="font-size:10px;background:rgba(255,255,255,0.08);padding:2px 7px;border-radius:999px;color:rgba(255,255,255,0.4);margin-left:auto">' + o + " " + ("comida" === t.tipo ? "Comida" : "Sitio") + "</span>" + s + '</div><div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:' + (t.comentario ? "4px" : "0") + '">' + esc(t.nombre) + "</div>" + (t.comentario ? '<div style="font-size:12px;color:rgba(255,255,255,0.5);line-height:1.4">' + esc(t.comentario) + "</div>" : "") + "</div>"
-    }).join("") : t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px;padding:4px 0">Nadie ha recomendado nada aquí aún. ¡Sé el primero!</div>'
+    const texto = (document.getElementById("rec-reply-text-" + rid)?.value || "").trim();
+    const foto  = recReplyFotos[rid];
+    if (!texto && !foto) return void alert("Añade un comentario o una foto");
+    btn.textContent = "..."; btn.disabled = !0;
+    try {
+        let fotoPath = null;
+        if (foto) {
+            const blob = await (await fetch(foto.base64)).blob();
+            const path = state.user.id + "/recreply_" + Date.now() + ".jpg";
+            const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: foto.mime });
+            if (!upErr) fotoPath = path;
+        }
+        const { error } = await db.from("recomendacion_replies").insert({
+            recomendacion_id: rid,
+            user_id: state.user.id,
+            comentario: texto || null,
+            foto_path: fotoPath
+        });
+        if (error) throw error;
+        delete recReplyFotos[rid];
+        loadRecomendaciones(muni);
+    } catch (err) {
+        alert("Error: " + err.message);
+        btn.textContent = "Publicar"; btn.disabled = !1;
+    }
 }
+async function deleteRecReply(rpid, muni) {
+    if (!confirm("¿Borrar tu respuesta?")) return;
+    await db.from("recomendacion_replies").delete().eq("id", rpid).eq("user_id", state.user.id);
+    loadRecomendaciones(muni);
+}
+
 async function deleteRecomendacion(e, t) {
     confirm("¿Borrar esta recomendación?") && (await db.from("recomendaciones").delete().eq("id", e).eq("user_id", state.user.id), loadRecomendaciones(t))
 }
+
+// ═══ AUTOCOMPLETADO DE @MENCIONES ═══════════════════════════
+// Al escribir @ en un campo de comentario, sugiere tus amigos.
+let _friendsCache = null;
+async function getFriendsCache() {
+    if (_friendsCache) return _friendsCache;
+    if (!state.user) return [];
+    const { data } = await db.from("friendships")
+        .select("follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)")
+        .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+        .eq("estado", "aceptado");
+    const seen = new Set();
+    _friendsCache = (data || [])
+        .map(f => f.follower_id === state.user.id ? f.following : f.follower)
+        .filter(p => p && !seen.has(p.id) && seen.add(p.id));
+    return _friendsCache;
+}
+
+function getMentionDD() {
+    let dd = document.getElementById("mention-dd");
+    if (!dd) {
+        dd = document.createElement("div");
+        dd.id = "mention-dd";
+        dd.style.cssText = "position:fixed;display:none;z-index:9999;background:#1a2535;border:1px solid rgba(255,255,255,0.15);border-radius:12px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.5);max-height:180px;overflow-y:auto;min-width:180px";
+        document.body.appendChild(dd);
+    }
+    return dd;
+}
+function hideMentionDD() { const dd = document.getElementById("mention-dd"); if (dd) dd.style.display = "none"; }
+
+let _mentionTarget = null;
+async function handleMentionInput(input) {
+    const pos  = input.selectionStart ?? input.value.length;
+    const text = input.value.slice(0, pos);
+    const m    = text.match(/@([\wáéíóúñÁÉÍÓÚÑ]*)$/);
+    if (!m) return hideMentionDD();
+    const query   = m[1].toLowerCase();
+    const friends = await getFriendsCache();
+    const matches = friends.filter(f => (f.username || "").toLowerCase().startsWith(query)).slice(0, 5);
+    if (!matches.length) return hideMentionDD();
+
+    _mentionTarget = { input, tokenStart: pos - m[0].length, pos };
+    const dd = getMentionDD();
+    dd.innerHTML = matches.map(f => {
+        const av = f.avatar_url
+            ? '<img src="' + esc(f.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt=""/>'
+            : getInitials(f.username);
+        return '<div class="mention-dd-item" data-uname="' + esc(f.username) + '" style="display:flex;align-items:center;gap:9px;padding:9px 13px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.05)">'
+            + '<div style="width:24px;height:24px;border-radius:50%;background:#0f1923;display:flex;align-items:center;justify-content:center;font-size:9px;color:#7ab3e8;flex-shrink:0;overflow:hidden">' + av + '</div>'
+            + '<span style="font-size:13px;color:#fff">@' + esc(f.username) + '</span></div>';
+    }).join("");
+    const r = input.getBoundingClientRect();
+    dd.style.left  = Math.max(8, Math.min(r.left, window.innerWidth - 200)) + "px";
+    dd.style.top   = (r.bottom + 4) + "px";
+    dd.style.display = "block";
+}
+function applyMention(uname) {
+    if (!_mentionTarget) return;
+    const { input, tokenStart, pos } = _mentionTarget;
+    input.value = input.value.slice(0, tokenStart) + "@" + uname + " " + input.value.slice(pos);
+    input.focus();
+    const np = tokenStart + uname.length + 2;
+    try { input.setSelectionRange(np, np); } catch (e) {}
+    hideMentionDD();
+}
+document.addEventListener("input", e => {
+    const t = e.target;
+    if (t && (t.classList?.contains("comment-input") || t.classList?.contains("rec-reply-input") || t.id === "evidencia-desc" || t.id === "rec-comentario")) {
+        handleMentionInput(t);
+    }
+});
+// mousedown (no click) para ganar al blur del input
+document.addEventListener("mousedown", e => {
+    const item = e.target.closest?.(".mention-dd-item");
+    if (item) { e.preventDefault(); applyMention(item.dataset.uname); }
+    else if (!e.target.closest?.("#mention-dd")) hideMentionDD();
+});
+window.addEventListener("scroll", hideMentionDD, true);
