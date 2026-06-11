@@ -26,6 +26,30 @@ const state = {
   feedPosts:     [],
 };
 
+// ── SEGURIDAD: escape de HTML ─────────────────────────────────
+// TODO dato que venga del usuario o de la BD pasa por aquí antes
+// de insertarse con innerHTML. Evita XSS (inyección de scripts).
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Iniciales seguras a partir de un nombre
+function getInitials(name) {
+  return esc((name || '?').split(' ').map(w => w[0] || '').join('').toUpperCase().substring(0, 2));
+}
+
+// @menciones en azul (aplicar SIEMPRE sobre texto ya escapado)
+function renderMentions(textoEscapado) {
+  return textoEscapado.replace(/@(\w+)/g, (match, user) =>
+    '<span class="mention" data-user="' + esc(user) + '" onclick="openMentionProfile(this.dataset.user)" ' +
+    'style="cursor:pointer;color:#2272e8;font-weight:600">@' + esc(user) + '</span>');
+}
+
 // ── COLORES NAV ───────────────────────────────────────────────
 const NAV_ITEMS = [
   { id:'map',     icon:'ti-map-2',       label:'Mapa',    bg:'#1a7a3e', fg:'#b8f5d0', abg:'#22b050', afg:'#ffffff' },
@@ -145,7 +169,9 @@ async function doRegister() {
   setAuthLoading(false);
 
   if (error) {
-    if (error.message.includes('already registered')) {
+    if (error.code === '23505' || error.message.includes('duplicate key')) {
+      msg.textContent = 'Ese nombre de usuario ya está en uso, elige otro';
+    } else if (error.message.includes('already registered')) {
       msg.textContent = 'Ese email ya tiene una cuenta. Inicia sesión.';
     } else {
       msg.textContent = error.message;
@@ -194,7 +220,7 @@ async function loadUserData(user) {
     document.getElementById('av-init').textContent = profile.username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
     if (profile.avatar_url) {
       const ring = document.getElementById('av-ring');
-      const urlFresh = profile.avatar_url + '?t=' + Date.now();
+      const urlFresh = esc(profile.avatar_url) + '?t=' + Date.now();
       ring.innerHTML = `<img src="${urlFresh}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`;
     }
   }
@@ -315,11 +341,6 @@ async function confirmVisit() {
   const btn  = document.getElementById('btn-conf');
   const desc = (document.getElementById('evidencia-desc')?.value || '').trim();
 
-  // Necesita al menos foto o descripción
-  if (!state.pendingBase64 && !desc) {
-    // Sin foto ni descripción — solo marcar visita
-  }
-
   btn.textContent = 'Guardando...';
   btn.disabled    = true;
 
@@ -427,7 +448,7 @@ async function confirmVisit() {
     // 4. Actualizar estado local
     state.visited[muni] = true;
     document.querySelectorAll('.muni-path').forEach(p => {
-      if (p.getAttribute('data-name') === muni) p.classList.add('visited');
+      if (p.getAttribute('data-name') === muni) { p.classList.remove('is-coast'); p.classList.add('visited'); }
     });
     showMuniBar(muni);
     document.getElementById('upload-sheet').classList.remove('open');
@@ -498,6 +519,7 @@ async function desmarcarVisit() {
       if (p.getAttribute('data-name') === muni) {
         p.classList.remove('visited');
         p.classList.remove('selected');
+        if (isCoast(muni) || state.coast.includes(muni)) p.classList.add('is-coast');
       }
     });
 
@@ -594,13 +616,13 @@ function renderEventos() {
     <div class="ev-card">
       <div class="ev-img" style="background-color:${ev.color_bg || '#1a3a5a'}">
         <i class="ti ${ev.icon || 'ti-confetti'}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>
-        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${ev.dia_semana || ''} ${fecha}</div>
-        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${ev.tipo_badge || ev.tipo}</div>
+        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${esc(ev.dia_semana || '')} ${fecha}</div>
+        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${esc(ev.tipo_badge || ev.tipo)}</div>
       </div>
       <div class="ev-body">
-        <div class="ev-name">${ev.nombre}</div>
-        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${ev.lugar}</div>
-        <div class="ev-desc">${ev.descripcion || ''}</div>
+        <div class="ev-name">${esc(ev.nombre)}</div>
+        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(ev.lugar)}</div>
+        <div class="ev-desc">${esc(ev.descripcion || '')}</div>
         <div class="ev-footer">
           <div class="ev-count" id="ev-count-${ev.id}"><strong>...</strong> van</div>
           <button onclick="toggleInscripcion(${ev.id})"
@@ -665,7 +687,13 @@ function renderDice(num, col) {
   });
 }
 
-function isCoast(n) { return COAST_MUNIS.some(c => n && n.toLowerCase().includes(c.toLowerCase())); }
+function isCoast(n) {
+  if (!n) return false;
+  const nl = n.toLowerCase();
+  // FIX: Los Corrales de Buelna NO es costa (falso positivo del matching por substring)
+  if (nl.includes('corrales de buelna') || nl.includes('los corrales')) return false;
+  return COAST_MUNIS.some(c => nl.includes(c.toLowerCase()));
+}
 
 function rollDice() {
   if (state.rolling) return;
@@ -713,16 +741,7 @@ function showDiceResult(num) {
   document.getElementById('dice-hint').textContent  = pool.length ? '¡Tu próxima aventura te espera!' : 'Ya lo visitaste — aquí de nuevo';
   setTimeout(() => document.getElementById('result-wrap').classList.add('show'), 60);
 
-  document.getElementById('btn-go').onclick = () => {
-    state.selectedMuni = muni;
-    switchScreen('map');
-    setTimeout(() => {
-      document.querySelectorAll('.muni-path').forEach(p => p.classList.remove('selected'));
-      document.querySelectorAll('.muni-path').forEach(p => {
-        if (p.getAttribute('data-name') === muni) { p.classList.add('selected'); showMuniBar(muni); }
-      });
-    }, 250);
-  };
+  document.getElementById('btn-go').onclick = () => selectMuniOnMap(muni, true);
 
   const btnSaber = document.getElementById('btn-saber-mas');
   if (btnSaber) btnSaber.onclick = () => openMuniModal(muni);
@@ -769,14 +788,14 @@ function renderMuniList() {
     const visitado = state.visited[m.nombre];
     const coast    = m.tipo === 'costa';
     return `
-    <div onclick="openMuniModal('${m.nombre.replace(/'/g, "\'")}')"
+    <div data-muni="${esc(m.nombre)}" onclick="openMuniModal(this.dataset.muni)"
       style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:#141e2c;border-radius:14px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);">
       <div style="width:38px;height:38px;border-radius:10px;background:${coast?'#0d2a4a':'#0d2a1e'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
         <i class="ti ${coast?'ti-waves':'ti-mountain'}" aria-hidden="true" style="font-size:18px;color:${coast?'#85B7EB':'#5DCAA5'}"></i>
       </div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.nombre}</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${m.comarca || ''}</div>
+        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.nombre)}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${esc(m.comarca || '')}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
         ${visitado ? '<span style="width:8px;height:8px;border-radius:50%;background:#22b050;display:block"></span>' : ''}
@@ -822,27 +841,20 @@ function openMuniModal(nombre) {
   document.getElementById('mm-visitas').innerHTML = visitasItems.map((v,i) => `
     <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
       <div style="width:24px;height:24px;border-radius:50%;background:rgba(34,176,80,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#22b050;flex-shrink:0">${i+1}</div>
-      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${v}</p>
+      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${esc(v)}</p>
     </div>`).join('');
 
   const comerItems = (m.comer || ['Restaurante 1 — Lorem ipsum especialidad local.','Restaurante 2 — Ut enim ad minim cocina tradicional.','Bar / Sidrería 3 — Gastronomía local y productos de temporada.']);
   document.getElementById('mm-comer').innerHTML = comerItems.map((c,i) => `
     <div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">
       <div style="width:24px;height:24px;border-radius:50%;background:rgba(232,40,138,0.2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#e8288a;flex-shrink:0">${i+1}</div>
-      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${c}</p>
+      <p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">${esc(c)}</p>
     </div>`).join('');
 
   // Botón ver en mapa
   document.getElementById('mm-btn-mapa').onclick = () => {
     closeMuniModal();
-    state.selectedMuni = nombre;
-    switchScreen('map');
-    setTimeout(() => {
-      document.querySelectorAll('.muni-path').forEach(p => p.classList.remove('selected'));
-      document.querySelectorAll('.muni-path').forEach(p => {
-        if (p.getAttribute('data-name') === nombre) { p.classList.add('selected'); showMuniBar(nombre); }
-      });
-    }, 250);
+    selectMuniOnMap(nombre, true);
   };
 
   // Cargar evidencias de amigos en esta ficha
@@ -905,7 +917,7 @@ async function loadMuniFriendEvidence(municipio) {
 
   const cards = visitas.map(v => {
     const u      = v.profiles?.username || 'Usuario';
-    const init   = u.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
+    const init   = getInitials(u);
     const av     = v.profiles?.avatar_url;
     const foto   = fotasByUser[v.user_id];
     const imgUrl = foto && foto.storage_path !== 'text_only'
@@ -914,13 +926,13 @@ async function loadMuniFriendEvidence(municipio) {
     const fecha  = new Date(v.created_at).toLocaleDateString('es-ES', {day:'numeric', month:'short', year:'numeric'});
 
     const imgHtml = imgUrl
-      ? '<img src="' + imgUrl + '?t=' + Date.now() + '" style="width:100%;height:140px;object-fit:cover;display:block" alt="' + u + '"/>'
+      ? '<img src="' + esc(imgUrl) + '?t=' + Date.now() + '" style="width:100%;height:140px;object-fit:cover;display:block" alt="' + esc(u) + '"/>'
       : '';
     const avHtml = av
-      ? '<img src="' + av + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + u + '"/>'
+      ? '<img src="' + esc(av) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
       : init;
     const descHtml = foto && foto.descripcion
-      ? '<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">' + foto.descripcion + '</div>'
+      ? '<div style="padding:0 12px 10px;font-size:13px;color:rgba(255,255,255,0.6)">' + renderMentions(esc(foto.descripcion)) + '</div>'
       : '';
 
     return '<div style="background:rgba(255,255,255,0.04);border-radius:12px;overflow:hidden;margin-bottom:10px;border:1px solid rgba(255,255,255,0.07)">' +
@@ -928,7 +940,7 @@ async function loadMuniFriendEvidence(municipio) {
       '<div style="padding:10px 12px;display:flex;align-items:center;gap:10px">' +
         '<div style="width:32px;height:32px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + avHtml + '</div>' +
         '<div style="flex:1">' +
-          '<div style="font-size:13px;font-weight:500;color:#fff">' + u + '</div>' +
+          '<div style="font-size:13px;font-weight:500;color:#fff">' + esc(u) + '</div>' +
           '<div style="font-size:11px;color:rgba(255,255,255,0.35)">Visitó el ' + fecha + '</div>' +
         '</div>' +
       '</div>' +
@@ -1049,17 +1061,17 @@ function renderStories(friendProfiles) {
     return;
   }
   document.getElementById('stories-row').innerHTML = friendProfiles.slice(0,8).map((p, i) => {
-    const initials = (p.username || '?').split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const initials = getInitials(p.username);
     const color    = STORY_COLORS[i % STORY_COLORS.length];
     const avatar   = p.avatar_url
-      ? `<img src="${p.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${p.username}"/>`
+      ? `<img src="${esc(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${esc(p.username)}"/>`
       : `<span style="color:${color};font-family:'Playfair Display',serif;font-size:14px;font-weight:500">${initials}</span>`;
     return `
       <div class="story-item">
         <div class="story-ring">
           <div class="story-av">${avatar}</div>
         </div>
-        <div class="story-name">${p.username || '?'}</div>
+        <div class="story-name">${esc(p.username || '?')}</div>
       </div>`;
   }).join('');
 }
@@ -1071,6 +1083,59 @@ async function getPhotoUrl(storagePath) {
     .from('evidencias')
     .createSignedUrl(storagePath, 3600);
   return data?.signedUrl || db.storage.from('evidencias').getPublicUrl(storagePath).data?.publicUrl || null;
+}
+
+// ── FILTROS DEL FEED (Descubriendo / Eventos / Rutas) ────────
+let feedFilter = 'descubriendo';
+
+function setFeedFilter(filter) {
+  feedFilter = filter;
+  document.querySelectorAll('.feed-filter-btn').forEach(b => {
+    const active = b.dataset.filter === filter;
+    b.style.backgroundColor = active ? '#2272e8' : 'rgba(255,255,255,0.08)';
+    b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
+  });
+  applyFeedFilter();
+}
+
+function applyFeedFilter() {
+  const posts = document.querySelectorAll('.feed-post');
+
+  let visibles = 0;
+  posts.forEach(post => {
+    const locEl  = post.querySelector('.post-location');
+    const muniEl = post.querySelector('.post-muni');
+    const muni   = (locEl?.textContent || muniEl?.textContent || '').trim();
+    const isEvento = muni.includes('🎉');
+
+    let show = true;
+    if (feedFilter === 'descubriendo') show = !isEvento;
+    else if (feedFilter === 'eventos')  show = isEvento;
+    else if (feedFilter === 'rutas')    show = false;
+
+    post.style.display = show ? '' : 'none';
+    if (show) visibles++;
+  });
+
+  // Mensaje cuando el filtro no muestra nada
+  const feedPosts = document.getElementById('feed-posts');
+  let emptyMsg = feedPosts?.querySelector('.feed-empty-msg');
+  if (!visibles && feedPosts && posts.length) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('div');
+      emptyMsg.className = 'feed-empty-msg';
+      emptyMsg.style.cssText = 'text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px';
+      feedPosts.appendChild(emptyMsg);
+    }
+    emptyMsg.textContent = feedFilter === 'rutas'
+      ? '🥾 Las rutas están en camino...'
+      : feedFilter === 'eventos'
+      ? '🎉 Aún no hay fotos de eventos'
+      : '';
+    emptyMsg.style.display = 'block';
+  } else if (emptyMsg) {
+    emptyMsg.style.display = 'none';
+  }
 }
 
 async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles) {
@@ -1085,15 +1150,17 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
 
   document.getElementById('feed-posts').innerHTML = visits.map((v, i) => {
     const coast      = isCoast(v.municipio);
+    const muniSafe   = esc(v.municipio);
     const username   = v.profiles?.username || 'Usuario';
+    const userSafe   = esc(username);
     const userId     = v.profiles?.id || v.user_id;
-    const initials   = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const initials   = getInitials(username);
     const color      = STORY_COLORS[i % STORY_COLORS.length];
     const isMe       = userId === state.user?.id;
     const fp         = isMe ? state.profile : (friendProfiles || []).find(f => f.id === userId);
     const avatarUrl  = fp?.avatar_url || v.profiles?.avatar_url;
     const avatarHtml = avatarUrl
-      ? `<img src="${avatarUrl}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`
+      ? `<img src="${esc(avatarUrl)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
       : initials;
 
     // Buscar foto: 1) por user+municipio exacto, 2) por user+municipio normalizado, 3) cualquier foto del usuario
@@ -1112,10 +1179,10 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
 
     return `
     <div class="feed-post">
-      <div class="post-header" onclick="openFriendProfile('${userId}','${username}')" style="cursor:pointer">
+      <div class="post-header" data-uid="${esc(userId)}" data-uname="${userSafe}" onclick="openFriendProfile(this.dataset.uid, this.dataset.uname)" style="cursor:pointer">
         <div class="post-av" style="color:${color};overflow:hidden">${avatarHtml}</div>
         <div>
-          <div class="post-user">${username}</div>
+          <div class="post-user">${userSafe}</div>
           <div class="post-time">${fecha}</div>
         </div>
         <div class="post-badge ${coast?'pb-coast':'pb-mount'}">
@@ -1125,7 +1192,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
       </div>
       <div class="post-img" style="background:${coast?'#0d2535':'#0d2a1e'}">
         ${imgUrl && imgUrl.startsWith('__FOTO__')
-          ? `<img src="" data-foto-id="${imgUrl.replace('__FOTO__','')}" style="width:100%;height:100%;object-fit:cover;display:none" alt="${v.municipio}" onerror="this.style.display='none'"/>
+          ? `<img src="" data-foto-id="${esc(imgUrl.replace('__FOTO__',''))}" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
              <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
                <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
              </div>`
@@ -1134,42 +1201,48 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
                <span style="font-size:11px">Sin foto de evidencia</span>
              </div>`}
         <div class="post-location">
-          <i class="ti ti-map-pin" aria-hidden="true"></i>${v.municipio}
+          <i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}
         </div>
       </div>
       <div class="post-body">
-        <div class="post-muni">${v.municipio}</div>
-        ${foto?.descripcion ? `<div class="post-desc">${foto.descripcion}</div>` : ''}
+        <div class="post-muni">${muniSafe}</div>
+        ${foto?.descripcion ? `<div class="post-desc">${renderMentions(esc(foto.descripcion))}</div>` : ''}
         <div class="post-actions">
           ${foto ? `
-          <button class="post-action" onclick="toggleLike(this,'${foto.id}')" data-liked="false">
-            <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${foto.id}">0</span>
+          <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleLike(this, this.dataset.fid)" data-liked="false">
+            <i class="ti ti-heart" aria-hidden="true"></i><span id="likes-${esc(foto.id)}">0</span>
           </button>` : `<div></div>`}
-          <button class="post-action" style="margin-left:auto" onclick="openMuniModal(this.dataset.muni)" data-muni="${v.municipio}">
+          <button class="post-action" style="margin-left:auto" onclick="openMuniModal(this.dataset.muni)" data-muni="${muniSafe}">
             <i class="ti ti-info-circle" aria-hidden="true"></i><span style="font-size:11px">Ver ficha</span>
           </button>
-          <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${v.municipio}">
+          <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${muniSafe}">
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
           ${v.user_id === state.user?.id ? `
-          <button class="post-action" onclick="deleteFeedPost('${v.id}','${foto ? foto.id : ''}','${foto ? (foto.path||foto.storage_path||'') : ''}')" style="color:rgba(232,40,40,0.5)">
+          <button class="post-action" data-vid="${esc(v.id)}" data-fid="${esc(foto ? foto.id : '')}" data-path="${esc(foto ? (foto.path||foto.storage_path||'') : '')}"
+            onclick="deleteFeedPost(this.dataset.vid, this.dataset.fid, this.dataset.path)" style="color:rgba(232,40,40,0.5)">
             <i class="ti ti-trash" aria-hidden="true"></i>
           </button>` : ''}
         </div>
         <!-- Comentarios: usar foto.id si hay foto, visit.id como fallback -->
-        <div id="comments-${foto ? foto.id : v.id}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
+        <div id="comments-${esc(foto ? foto.id : v.id)}" class="post-comments" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)">
           <div style="color:rgba(255,255,255,0.25);font-size:11px">Cargando comentarios...</div>
         </div>
         <div class="comment-input-row">
-          <input class="comment-input" id="comment-input-${foto ? foto.id : v.id}" type="text" placeholder="Añade un comentario..." maxlength="200"
-            onkeydown="if(event.key==='Enter')postComment('${foto ? foto.id : v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\\'")}')"/>
-          <button class="comment-send" onclick="postComment('${foto ? foto.id : v.id}','${v.user_id}','${v.municipio.replace(/'/g,"\\'")}')">
+          <input class="comment-input" id="comment-input-${esc(foto ? foto.id : v.id)}" type="text" placeholder="Añade un comentario..." maxlength="200"
+            data-cid="${esc(foto ? foto.id : v.id)}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
+            onkeydown="if(event.key==='Enter')postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)"/>
+          <button class="comment-send" data-cid="${esc(foto ? foto.id : v.id)}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
+            onclick="postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)">
             <i class="ti ti-send" aria-hidden="true"></i>
           </button>
         </div>
       </div>
     </div>`;
   }).join('');
+
+  // Aplicar el filtro activo (Descubriendo / Eventos / Rutas) tras renderizar
+  applyFeedFilter();
 
   // Cargar signed URLs, likes y comentarios
   visits.forEach(v => {
@@ -1229,16 +1302,61 @@ async function loadVisitComments(commentId, visitId) {
 
   container.innerHTML = comments.map(c => {
     const u        = c.profiles?.username || 'Usuario';
-    const initials = u.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const initials = getInitials(u);
     const avatar   = c.profiles?.avatar_url
-      ? '<img src="' + c.profiles.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + u + '"/>'
+      ? '<img src="' + esc(c.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
       : initials;
     const isMe  = c.user_id === state.user?.id;
     const delBtn = isMe
-      ? '<button class="c-del" onclick="deleteComment(\'' + c.id + '\',\'' + id + '\')" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+      ? '<button class="c-del" data-cid="' + esc(c.id) + '" data-pid="' + esc(id) + '" onclick="deleteComment(this.dataset.cid, this.dataset.pid)" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
       : '';
-    return '<div class="comment"><div class="c-av">' + avatar + '</div><div class="c-text"><strong>' + u + '</strong> ' + c.texto + '</div>' + delBtn + '</div>';
+    return '<div class="comment"><div class="c-av">' + avatar + '</div><div class="c-text"><strong>' + esc(u) + '</strong> ' + renderMentions(esc(c.texto)) + '</div>' + delBtn + '</div>';
   }).join('');
+}
+
+// FIX: esta función se llamaba desde el botón de borrar pero no existía
+async function deleteComment(commentId, photoId) {
+  if (!state.user || !commentId) return;
+  if (!confirm('¿Borrar este comentario?')) return;
+  try {
+    await db.from('photo_comments').delete()
+      .eq('id', commentId)
+      .eq('user_id', state.user.id); // solo puede borrar los suyos
+    await loadVisitComments(photoId);
+  } catch(err) {
+    alert('Error al borrar el comentario');
+  }
+}
+
+// Abrir perfil al tocar una @mención (y poder enviar solicitud)
+async function openMentionProfile(username) {
+  if (!state?.user || !username) return;
+  const { data: profile } = await db
+    .from('profiles').select('id, username, avatar_url')
+    .ilike('username', username).single();
+  if (!profile) { alert('@' + username + ' no encontrado'); return; }
+  if (profile.id === state.user.id) return;
+
+  // Comprobar amistad
+  const { data: fs } = await db.from('friendships')
+    .select('estado')
+    .or('and(follower_id.eq.' + state.user.id + ',following_id.eq.' + profile.id + '),' +
+        'and(follower_id.eq.' + profile.id + ',following_id.eq.' + state.user.id + ')')
+    .limit(1);
+
+  const rel = fs?.[0];
+  if (rel?.estado === 'aceptado') {
+    openFriendProfile(profile.id, profile.username);
+  } else if (rel?.estado === 'pendiente') {
+    alert('Ya tienes una solicitud pendiente con @' + profile.username);
+  } else {
+    if (confirm('¿Enviar solicitud de amistad a @' + profile.username + '?')) {
+      await db.from('friendships').insert({
+        follower_id: state.user.id, following_id: profile.id, estado: 'pendiente'
+      });
+      alert('Solicitud enviada a @' + profile.username);
+    }
+  }
 }
 
 async function postComment(visitId, targetUserId, municipio) {
@@ -1288,14 +1406,7 @@ async function deleteFeedPost(visitId, photoId, storagePath) {
 }
 
 function goToMuniOnMap(muni) {
-  state.selectedMuni = muni;
-  switchScreen('map');
-  setTimeout(() => {
-    document.querySelectorAll('.muni-path').forEach(p => p.classList.remove('selected'));
-    document.querySelectorAll('.muni-path').forEach(p => {
-      if (p.getAttribute('data-name') === muni) { p.classList.add('selected'); showMuniBar(muni); }
-    });
-  }, 250);
+  selectMuniOnMap(muni, true);
 }
 
 // ── PERFIL DE AMIGO ──────────────────────────────────────────
@@ -1325,7 +1436,7 @@ async function openFriendProfile(userId, username) {
 
   // Avatar
   if (profile?.avatar_url) {
-    document.getElementById('fp-avatar').innerHTML = `<img src="${profile.avatar_url}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${username}"/>`;
+    document.getElementById('fp-avatar').innerHTML = `<img src="${esc(profile.avatar_url)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${esc(username)}"/>`;
   }
 
   // Stats
@@ -1344,7 +1455,7 @@ async function openFriendProfile(userId, username) {
           <i class="ti ${coast?'ti-waves':'ti-mountain'}" style="font-size:15px;color:${coast?'#85B7EB':'#5DCAA5'}" aria-hidden="true"></i>
         </div>
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:500;color:#fff">${v.municipio}</div>
+          <div style="font-size:13px;font-weight:500;color:#fff">${esc(v.municipio)}</div>
         </div>
         <div style="font-size:11px;color:rgba(255,255,255,0.35)">${fecha}</div>
       </div>`;
@@ -1359,7 +1470,7 @@ async function openFriendProfile(userId, username) {
     gallery.innerHTML = photos.map(p => {
       const url = db.storage.from('evidencias').getPublicUrl(p.storage_path).data?.publicUrl || '';
       return `<div style="aspect-ratio:1;border-radius:8px;overflow:hidden;background:#1a2535">
-        ${url ? `<img src="${url}" style="width:100%;height:100%;object-fit:cover" alt="${p.municipio}"/>` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.15);font-size:20px"><i class="ti ti-camera" aria-hidden="true"></i></div>`}
+        ${url ? `<img src="${esc(url)}" style="width:100%;height:100%;object-fit:cover" alt="${esc(p.municipio)}"/>` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.15);font-size:20px"><i class="ti ti-camera" aria-hidden="true"></i></div>`}
       </div>`;
     }).join('');
   } else {
@@ -1425,10 +1536,10 @@ async function searchUser() {
       (f.follower_id === state.user.id && f.following_id === u.id) ||
       (f.following_id === state.user.id && f.follower_id === u.id)
     );
-    const initials = u.username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const initials = getInitials(u.username);
     let btnHtml = '';
     if (!rel) {
-      btnHtml = `<button onclick="sendFriendRequest('${u.id}','${u.username}',this)"
+      btnHtml = `<button data-uid="${esc(u.id)}" data-uname="${esc(u.username)}" onclick="sendFriendRequest(this.dataset.uid, this.dataset.uname, this)"
         style="padding:6px 13px;background-color:#2272e8;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
         + Añadir
       </button>`;
@@ -1444,7 +1555,7 @@ async function searchUser() {
     return `
     <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
       <div style="width:34px;height:34px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:#7ab3e8;flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
-      <span style="color:#fff;font-size:13px;flex:1">${u.username}</span>
+      <span style="color:#fff;font-size:13px;flex:1">${esc(u.username)}</span>
       ${btnHtml}
     </div>`;
   }).join('');
@@ -1514,13 +1625,13 @@ async function openFriendsModal() {
   }
 
   content.innerHTML = list.map(p => {
-    const init = (p.username||'?').split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+    const init = getInitials(p.username);
     const av   = p.avatar_url
-      ? '<img src="' + p.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + p.username + '"/>'
+      ? '<img src="' + esc(p.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(p.username) + '"/>'
       : init;
-    return '<div onclick="closeFriendsModal();openFriendProfile(\'' + p.id + '\',\'' + p.username.replace(/'/g,"\\'") + '\')" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer">' +
+    return '<div data-uid="' + esc(p.id) + '" data-uname="' + esc(p.username) + '" onclick="closeFriendsModal();openFriendProfile(this.dataset.uid, this.dataset.uname)" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer">' +
       '<div style="width:42px;height:42px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + av + '</div>' +
-      '<div style="flex:1"><div style="font-size:14px;font-weight:500;color:#fff">' + p.username + '</div></div>' +
+      '<div style="flex:1"><div style="font-size:14px;font-weight:500;color:#fff">' + esc(p.username) + '</div></div>' +
       '<i class="ti ti-chevron-right" style="color:rgba(255,255,255,0.2);font-size:16px" aria-hidden="true"></i>' +
     '</div>';
   }).join('');
@@ -1566,21 +1677,21 @@ async function loadSolicitudes() {
     html += `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:8px">Recibidas</div>`;
     html += recibidas.map(s => {
       const username = s.profiles?.username || 'Usuario';
-      const initials = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+      const initials = getInitials(username);
       const fecha    = new Date(s.created_at).toLocaleDateString('es-ES');
       return `
       <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
         <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid #e8288a;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:#e8288a;flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:500;color:#fff">${username}</div>
+          <div style="font-size:13px;font-weight:500;color:#fff">${esc(username)}</div>
           <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${fecha}</div>
         </div>
         <div style="display:flex;gap:6px">
-          <button onclick="aceptarSolicitud('${s.follower_id}','${username}')"
+          <button data-uid="${esc(s.follower_id)}" data-uname="${esc(username)}" onclick="aceptarSolicitud(this.dataset.uid, this.dataset.uname)"
             style="padding:7px 12px;background-color:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;">
             <i class="ti ti-check" aria-hidden="true"></i> Aceptar
           </button>
-          <button onclick="rechazarSolicitud('${s.follower_id}','${username}')"
+          <button data-uid="${esc(s.follower_id)}" data-uname="${esc(username)}" onclick="rechazarSolicitud(this.dataset.uid, this.dataset.uname)"
             style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">
             <i class="ti ti-x" aria-hidden="true"></i>
           </button>
@@ -1593,20 +1704,20 @@ async function loadSolicitudes() {
     html += `<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:12px;margin-bottom:8px">Enviadas</div>`;
     html += enviadas.map(s => {
       const username = s.profiles?.username || 'Usuario';
-      const initials = username.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
+      const initials = getInitials(username);
       const fecha    = new Date(s.created_at).toLocaleDateString('es-ES');
       return `
       <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.07)">
         <div style="width:38px;height:38px;border-radius:50%;background:#1a2535;border:1.5px solid rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:rgba(255,255,255,0.5);flex-shrink:0;font-family:Playfair Display,serif">${initials}</div>
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:500;color:#fff">${username}</div>
+          <div style="font-size:13px;font-weight:500;color:#fff">${esc(username)}</div>
           <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:1px">${fecha}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="font-size:11px;color:rgba(255,255,255,0.3);background:rgba(255,255,255,0.07);padding:5px 10px;border-radius:999px">
             <i class="ti ti-clock" aria-hidden="true" style="font-size:11px"></i> Pendiente
           </span>
-          <button onclick="cancelarSolicitud('${s.following_id}','${username}')"
+          <button data-uid="${esc(s.following_id)}" data-uname="${esc(username)}" onclick="cancelarSolicitud(this.dataset.uid, this.dataset.uname)"
             style="padding:7px 10px;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);border:none;border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">
             <i class="ti ti-x" aria-hidden="true"></i>
           </button>
@@ -1658,14 +1769,14 @@ function renderGallery() {
   g.innerHTML = state.photos.map((p,i) => `
     <div class="gi" onclick="openPM(${i})">
       ${p.src
-        ? `<img src="${p.src}?nocache=${Date.now()}" alt="${p.muni}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
+        ? `<img src="${esc(p.src)}?nocache=${Date.now()}" alt="${esc(p.muni)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="gi-ph" style="display:none"><i class="ti ti-camera" aria-hidden="true"></i></div>`
         : `<div class="gi-ph" style="background:rgba(34,176,80,0.08);flex-direction:column;gap:4px">
              <i class="ti ti-message-circle" aria-hidden="true" style="font-size:18px;color:rgba(255,255,255,0.2)"></i>
-             <span style="font-size:9px;color:rgba(255,255,255,0.2);text-align:center;padding:0 4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${p.desc||''}</span>
+             <span style="font-size:9px;color:rgba(255,255,255,0.2);text-align:center;padding:0 4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(p.desc||'')}</span>
            </div>`}
       <div class="gi-hov">
         <div class="gm">
-          <div style="font-weight:500">${p.muni.length>14?p.muni.substring(0,12)+'…':p.muni}</div>
+          <div style="font-weight:500">${esc(p.muni.length>14?p.muni.substring(0,12)+'…':p.muni)}</div>
           <div>${p.date}</div>
         </div>
       </div>
@@ -1684,11 +1795,11 @@ function openPM(i) {
     imgEl.style.display = 'none';
   }
   document.getElementById('pm-meta').innerHTML = `
-    <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${p.muni}</strong></div>
-    <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${p.date}</strong></div>
-    <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${p.time || '—'}</strong></div>
-    <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${p.coords || '—'}</strong></div>
-    ${p.desc ? `<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${p.desc}</strong></div>` : ''}
+    <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${esc(p.muni)}</strong></div>
+    <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${esc(p.date)}</strong></div>
+    <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${esc(p.time || '—')}</strong></div>
+    <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${esc(p.coords || '—')}</strong></div>
+    ${p.desc ? `<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${esc(p.desc)}</strong></div>` : ''}
     <div class="mrow" style="padding-bottom:4px">
       <button onclick="deletePhoto(${i})" style="width:100%;padding:10px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">
         <i class="ti ti-trash" aria-hidden="true"></i> Borrar foto
@@ -1756,15 +1867,34 @@ function toggleEdit() {
   }
 }
 
-async function saveUser() {
-  const v = document.getElementById('u-inp').value.trim();
-  if (!v || !state.user) return;
-  await db.from('profiles').update({ username: v }).eq('id', state.user.id);
-  state.profile.username = v;
+// El HTML llama a guardarNombre() al pulsar Guardar.
+// Cierra el editor SIEMPRE y guarda en BD si hay valor válido.
+async function guardarNombre() {
+  const row = document.getElementById('u-edit-row');
+  const v   = document.getElementById('u-inp').value.trim();
+
+  // Cerrar siempre, aunque esté vacío
+  row.style.display = 'none';
+  row.setAttribute('data-open', '0');
+
+  if (!v || !state?.user) return;
+  if (v.length < 3 || !/^[a-zA-Z0-9_. -]+$/.test(v)) {
+    alert('El nombre debe tener al menos 3 caracteres y solo letras, números, espacios, guiones y puntos');
+    return;
+  }
+
+  const { error } = await db.from('profiles').update({ username: v }).eq('id', state.user.id);
+  if (error) {
+    alert(error.code === '23505' ? 'Ese nombre ya está en uso' : 'No se pudo guardar el nombre');
+    return;
+  }
+  if (state.profile) state.profile.username = v;
   document.getElementById('u-name').textContent  = v;
-  document.getElementById('av-init').textContent = v.split(' ').map(w=>w[0]).join('').toUpperCase().substring(0,2);
-  document.getElementById('u-edit-row').style.display = 'none';
+  document.getElementById('av-init').textContent = v.split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
 }
+
+// Alias por compatibilidad (por si alguna parte llama todavía a saveUser)
+const saveUser = guardarNombre;
 
 document.getElementById('av-in').addEventListener('change', async function(e) {
   const file = e.target.files[0];
@@ -1824,6 +1954,41 @@ document.getElementById('av-in').addEventListener('change', async function(e) {
 });
 
 // ── MAPA GEOGRÁFICO REAL ──────────────────────────────────────
+// Helper único para "llévame a este municipio en el mapa"
+// (antes había 3 copias de este bloque con setTimeout)
+function selectMuniOnMap(muni, withZoom = true) {
+  state.selectedMuni = muni;
+  switchScreen('map');
+  // Pequeña espera a que la pantalla esté visible
+  setTimeout(() => {
+    document.querySelectorAll('.muni-path').forEach(p => {
+      p.classList.toggle('selected', p.getAttribute('data-name') === muni);
+    });
+    showMuniBar(muni);
+    if (withZoom) zoomToMuni(muni);
+  }, 250);
+}
+
+// Vuelo animado hasta un municipio (zoom x4 centrado en él)
+function zoomToMuni(muni) {
+  if (!state.mapZoom || !state.mapDims) return;
+  const node = document.querySelector(`.muni-path[data-name="${(window.CSS && CSS.escape) ? CSS.escape(muni) : muni}"]`);
+  if (!node) return;
+  const b = node.getBBox();
+  const { W, H } = state.mapDims;
+  const scale = Math.min(8, Math.max(2, 0.5 / Math.max(b.width / W, b.height / H)));
+  const tx = W / 2 - scale * (b.x + b.width  / 2);
+  const ty = H / 2 - scale * (b.y + b.height / 2);
+  d3.select('#map-svg').transition().duration(750)
+    .call(state.mapZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+}
+
+function resetMapZoom() {
+  if (!state.mapZoom) return;
+  d3.select('#map-svg').transition().duration(500)
+    .call(state.mapZoom.transform, d3.zoomIdentity);
+}
+
 async function loadMap() {
   try {
     // Cargar datos de municipios desde Supabase
@@ -1845,34 +2010,94 @@ async function loadMap() {
 
     const cont = document.getElementById('map-cont');
     const W    = cont.clientWidth || 410;
-    const H    = Math.round(W * .49);
+    const H    = Math.round(W * .52);
+    state.mapDims = { W, H };
     const svgEl = document.getElementById('map-svg');
     svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
-    const proj = d3.geoMercator().fitSize([W, H], cant);
+    const proj = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], cant);
     const path = d3.geoPath(proj);
     const svg  = d3.select('#map-svg');
     svg.selectAll('*').remove();
 
-    svg.selectAll('path.muni-path')
+    // ── Degradados y filtros del mapa ──
+    const defs = svg.append('defs');
+    const gradV = defs.append('linearGradient')
+      .attr('id', 'grad-visited').attr('x1', '0').attr('y1', '0').attr('x2', '0').attr('y2', '1');
+    gradV.append('stop').attr('offset', '0%').attr('stop-color', '#34d06b');
+    gradV.append('stop').attr('offset', '100%').attr('stop-color', '#1a9a48');
+
+    const gradSea = defs.append('linearGradient')
+      .attr('id', 'grad-sea').attr('x1', '0').attr('y1', '0').attr('x2', '0').attr('y2', '1');
+    gradSea.append('stop').attr('offset', '0%').attr('stop-color', '#16283d');
+    gradSea.append('stop').attr('offset', '100%').attr('stop-color', '#101d2e');
+
+    const glow = defs.append('filter').attr('id', 'glow-visited')
+      .attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+    glow.append('feGaussianBlur').attr('stdDeviation', '1.6').attr('result', 'blur');
+    const merge = glow.append('feMerge');
+    merge.append('feMergeNode').attr('in', 'blur');
+    merge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    // Fondo "mar" con degradado
+    svg.append('rect')
+      .attr('x', 0).attr('y', 0).attr('width', W).attr('height', H)
+      .attr('fill', 'url(#grad-sea)')
+      .on('click', () => { /* tocar el mar deselecciona nada */ });
+
+    // Grupo zoomable
+    const g = svg.append('g').attr('id', 'map-zoom-group');
+
+    g.selectAll('path.muni-path')
       .data(cant.features).join('path')
       .attr('class', d => {
         const name = d.properties.name || d.properties.NAME || d.properties.NAMEUNIT || ('Mun-'+d.id);
-        return 'muni-path' + (state.visited[name] ? ' visited' : '');
+        let cls = 'muni-path';
+        if (state.visited[name]) cls += ' visited';
+        else if (isCoast(name) || state.coast.includes(name)) cls += ' is-coast';
+        return cls;
       })
       .attr('d', path)
       .attr('data-name', d => d.properties.name || d.properties.NAME || d.properties.NAMEUNIT || ('Mun-'+d.id))
       .on('click', function(ev, d) {
         const name = d3.select(this).attr('data-name');
-        svg.selectAll('.muni-path').classed('selected', false);
+        g.selectAll('.muni-path').classed('selected', false);
         d3.select(this).classed('selected', true);
+        d3.select(this).raise(); // que el borde resaltado no quede tapado por vecinos
         state.selectedMuni = name;
         showMuniBar(name);
       });
 
+    // ── Zoom y paneo (pellizcar / arrastrar) ──
+    state.mapZoom = d3.zoom()
+      .scaleExtent([1, 8])
+      .translateExtent([[0, 0], [W, H]])
+      .on('zoom', ev => {
+        g.attr('transform', ev.transform);
+        // Compensar grosor de bordes al hacer zoom
+        g.attr('stroke-width-scale', ev.transform.k);
+        g.selectAll('.muni-path:not(.selected)').style('stroke-width', (0.35 / ev.transform.k) + 'px');
+        // Mostrar botón de reset solo si hay zoom
+        const rb = document.getElementById('map-reset-zoom');
+        if (rb) rb.style.display = ev.transform.k > 1.05 ? 'flex' : 'none';
+      });
+    svg.call(state.mapZoom).on('dblclick.zoom', null); // doble tap no hace zoom brusco
+
+    // Botón flotante para volver a ver toda Cantabria
+    if (!document.getElementById('map-reset-zoom')) {
+      const rb = document.createElement('button');
+      rb.id = 'map-reset-zoom';
+      rb.innerHTML = '<i class="ti ti-zoom-out-area" aria-hidden="true"></i>';
+      rb.title = 'Ver toda Cantabria';
+      rb.setAttribute('aria-label', 'Ver toda Cantabria');
+      rb.onclick = resetMapZoom;
+      cont.appendChild(rb);
+    }
+
     document.getElementById('map-load').style.display = 'none';
     updateProgress();
   } catch(err) {
+    console.error('loadMap error:', err);
     document.getElementById('map-load').innerHTML =
       '<p style="color:rgba(255,255,255,0.4);font-size:12px;padding:20px;text-align:center">Error al cargar el mapa.</p>';
   }
