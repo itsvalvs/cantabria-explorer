@@ -111,7 +111,7 @@
     .prog-wrap{margin:10px 18px 4px;background:rgba(255,255,255,0.08);border-radius:999px;height:4px;overflow:hidden;}
     .prog-fill{height:100%;background:var(--green);border-radius:999px;width:0%;transition:width .5s;}
     .prog-lbl{display:flex;justify-content:space-between;padding:4px 18px 10px;font-size:10px;color:var(--hint);}
-    .map-cont{margin:0 12px 8px;background:#101d2e;border-radius:16px;overflow:hidden;border:1px solid var(--border);position:relative;box-shadow:0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);}
+    .map-cont{margin:0 12px 8px;background:linear-gradient(180deg,#6aa3d8 0%,#4d87bf 55%,#3a6fa3 100%);border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);position:relative;box-shadow:0 8px 24px rgba(0,0,0,0.35);}
     #map-svg{width:100%;height:auto;display:block;touch-action:none;}
     .muni-path{fill:#3d5268;stroke:#0c1622;stroke-width:.35px;paint-order:stroke fill;cursor:pointer;transition:fill .2s ease, filter .2s ease;}
     .muni-path:hover{fill:#4a6280;}
@@ -346,7 +346,7 @@
         <svg id="map-svg" viewBox="0 0 410 200"></svg>
       </div>
       <div class="map-legend"><span><span class="ldot" style="background:#2a3a4a"></span>Sin visitar</span><span><span class="ldot" style="background:#22b050"></span>Conquistado</span></div>
-      <div style="display:flex;gap:6px;padding:0 12px 10px;overflow-x:auto">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 10px">
         <button class="map-filter-btn" data-filter="todos" onclick="setMapFilter('todos')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:#22b050;color:#fff">Todos</button>
         <button class="map-filter-btn" data-filter="costa" onclick="setMapFilter('costa')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🌊 Costa</button>
         <button class="map-filter-btn" data-filter="montaña" onclick="setMapFilter('montaña')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">⛰️ Montaña</button>
