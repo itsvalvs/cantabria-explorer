@@ -351,7 +351,11 @@
         <button class="map-filter-btn" data-filter="costa" onclick="setMapFilter('costa')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🌊 Costa</button>
         <button class="map-filter-btn" data-filter="montaña" onclick="setMapFilter('montaña')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">⛰️ Montaña</button>
         <button class="map-filter-btn" data-filter="pendientes" onclick="setMapFilter('pendientes')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">⬜ Pendientes</button>
+        <button class="map-filter-btn" data-filter="areas" onclick="setMapFilter('areas')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🗺️ Áreas</button>
+        <button class="map-filter-btn" data-filter="rutas" onclick="setMapFilter('rutas')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🥾 Rutas</button>
       </div>
+      <!-- Desplegable de áreas/comarcas -->
+      <div id="map-areas-dd" style="display:none;margin:0 12px 10px;background:#141e2c;border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:8px;flex-wrap:wrap;gap:6px"></div>
       <div style="padding:0 12px 10px;text-align:right">
         <button id="btn-export-map" onclick="exportarMapa()"
           style="padding:6px 14px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:inline-flex;align-items:center;gap:5px">
@@ -651,9 +655,9 @@
     <div id="muni-modal" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.82);z-index:30;flex-direction:column;justify-content:flex-end;">
       <div style="background:#141e2c;border-radius:22px 22px 0 0;overflow-y:auto;max-height:88vh;animation:su .22s ease">
         <div style="position:relative">
-          <div id="mm-header" style="padding:0;background:linear-gradient(135deg,rgba(13,42,74,0.7),rgba(13,42,30,0.7));position:relative">
-            <div id="mm-img-wrap" style="width:100%;height:160px;overflow:hidden;display:none"><img id="mm-img" style="width:100%;height:100%;object-fit:cover;display:block" alt=""/></div>
-            <div style="padding:16px 18px 16px">
+          <div id="mm-header" style="padding:0;background:linear-gradient(135deg,rgba(13,42,74,0.45),rgba(13,42,30,0.45));position:relative">
+            <div id="mm-img-wrap" style="width:100%;height:200px;overflow:hidden;display:none"><img id="mm-img" style="width:100%;height:100%;object-fit:cover;display:block" alt=""/></div>
+            <div id="mm-header-content" style="padding:16px 18px 16px">
             <button onclick="closeMuniModal()" style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.12);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;">
               <i class="ti ti-x" aria-hidden="true"></i>
             </button>
@@ -751,9 +755,22 @@
         style="width:100%;padding:11px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:14px;color:#fff;font-family:Inter,sans-serif;outline:none;margin-bottom:10px;box-sizing:border-box"/>
       <!-- Comentario -->
       <textarea id="rec-comentario" placeholder="Cuéntanos algo... (opcional)" maxlength="140" rows="2"
-        style="width:100%;padding:11px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:14px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;margin-bottom:14px;box-sizing:border-box"></textarea>
+        style="width:100%;padding:11px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:14px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;margin-bottom:10px;box-sizing:border-box"></textarea>
+      <!-- Link (opcional) -->
+      <input id="rec-link" type="url" placeholder="🔗 Enlace (opcional): web, Instagram, Maps..." maxlength="300"
+        style="width:100%;padding:11px 12px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;margin-bottom:10px;box-sizing:border-box"/>
+      <!-- Foto (opcional) -->
+      <input id="rec-foto-in" type="file" accept="image/*" style="display:none"/>
+      <button onclick="document.getElementById('rec-foto-in').click()"
+        style="width:100%;padding:11px;background:rgba(255,255,255,0.06);border:1px dashed rgba(255,255,255,0.2);border-radius:12px;font-size:13px;color:rgba(255,255,255,0.6);cursor:pointer;font-family:Inter,sans-serif;margin-bottom:10px">
+        📷 Añadir foto (opcional)
+      </button>
+      <div id="rec-foto-prev" style="display:none;margin-bottom:10px;position:relative">
+        <img id="rec-foto-img" style="width:100%;max-height:140px;object-fit:cover;border-radius:12px" alt="Foto recomendación"/>
+        <button onclick="clearRecFoto()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;font-size:12px">✕</button>
+      </div>
       <!-- Botón -->
-      <button onclick="guardarRecomendacion()"
+      <button id="rec-save-btn" onclick="guardarRecomendacion()"
         style="width:100%;padding:14px;background:#22b050;color:#fff;border:none;border-radius:14px;font-size:15px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">
         Guardar recomendación
       </button>
