@@ -471,7 +471,19 @@ async function confirmVisit() {
     if (!e || !state.user) return;
     const t = document.getElementById("btn-conf"),
         i = (document.getElementById("evidencia-desc")?.value || "").trim();
-    state.pendingBase64, t.textContent = "Guardando...", t.disabled = !0;
+    // Verificación GPS solo al conquistar por primera vez
+    let gpsVerificada = !1;
+    if (!state.visited[e]) {
+        t.textContent = "📍 Comprobando ubicación...", t.disabled = !0;
+        const gps = await verifyGPSInMuni(e);
+        if (gps === "ok") gpsVerificada = !0;
+        else if (gps === "fuera" && !confirm("📍 No parece que estés en " + e + " ahora mismo.\n\n¿Marcar igualmente como conquistado? (quedará sin verificar)")) {
+            t.textContent = "Marcar como conquistado";
+            t.disabled = !1;
+            return;
+        }
+    }
+    t.textContent = "Guardando...", t.disabled = !0;
     try {
         let n = null;
         if (state.pendingBase64) {
@@ -515,6 +527,7 @@ async function confirmVisit() {
             municipio: e,
             visibilidad: selectedVisibilidad,
             coords: state.lastCoords || null,
+            gps_verificada: gpsVerificada,
             fecha: (new Date).toISOString().split("T")[0]
         }).select();
         if (a) return console.error("Error guardando visita:", JSON.stringify(a)), alert("Error al guardar la visita: " + a.message), t.textContent = "Marcar como conquistado", void(t.disabled = !1);
@@ -624,8 +637,32 @@ async function desmarcarVisit() {
 
 function getCoords() {
     navigator.geolocation && navigator.geolocation.getCurrentPosition(e => {
-        state.lastCoords = e.coords.latitude.toFixed(4) + "°N, " + Math.abs(e.coords.longitude).toFixed(4) + "°W"
+        state.lastCoords = e.coords.latitude.toFixed(4) + "°N, " + Math.abs(e.coords.longitude).toFixed(4) + "°W";
+        state.lastLngLat = [e.coords.longitude, e.coords.latitude];
     })
+}
+
+// ── VERIFICACIÓN GPS ────────────────────────────────────────
+// Comprueba si la posición actual cae dentro del polígono real
+// del municipio (usa la geometría del mapa + d3.geoContains).
+// Devuelve: 'ok' | 'fuera' | 'sin_gps'
+function verifyGPSInMuni(muni) {
+    return new Promise(resolve => {
+        const feat = state.muniFeatures?.[muni];
+        if (!feat || !navigator.geolocation) return resolve("sin_gps");
+        navigator.geolocation.getCurrentPosition(
+            pos => {
+                const pt = [pos.coords.longitude, pos.coords.latitude];
+                state.lastCoords = pos.coords.latitude.toFixed(4) + "°N, " + Math.abs(pos.coords.longitude).toFixed(4) + "°W";
+                state.lastLngLat = pt;
+                try {
+                    resolve(d3.geoContains(feat, pt) ? "ok" : "fuera");
+                } catch (e) { resolve("sin_gps"); }
+            },
+            () => resolve("sin_gps"),
+            { enableHighAccuracy: !0, timeout: 8e3, maximumAge: 6e4 }
+        );
+    });
 }
 
 async function handleFileSelected(file) {
@@ -1027,68 +1064,149 @@ async function loadMuniFriendEvidence(e) {
 function closeMuniModal() {
     document.getElementById("muni-modal").style.display = "none"
 }
-async function loadFeed(e = !1) {
+async function loadFeed(reset = !1) {
     if (!state.user) return;
-    if (!e && state.feedCache && Date.now() - state.feedCacheTime < 18e4) return void renderFeedFromCache();
-    document.getElementById("stories-row").innerHTML = [1, 2, 3].map(() => '<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:5px"><div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div><div style="width:36px;height:8px;border-radius:4px;background:rgba(255,255,255,0.06);animation:pulse 1.5s ease infinite"></div></div>').join(""), document.getElementById("feed-posts").innerHTML = '<div style="padding:12px">' + [1, 2].map(() => '<div style="background:rgba(255,255,255,0.04);border-radius:18px;height:320px;margin-bottom:14px;animation:pulse 1.5s ease infinite"></div>').join("") + "</div>";
-    const {
-        data: t
-    } = await db.from("friendships").select("follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), i = new Set, n = (t || []).map(e => e.follower_id === state.user.id ? e.following : e.follower).filter(e => !(!e || i.has(e.id)) && (i.add(e.id), !0)), o = n.map(e => e.id);
-    if (document.getElementById("stories-row").innerHTML = "", !o.length) return void(document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7"><i class="ti ti-users" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>Aún no tienes amigos añadidos.<br>¡Busca a alguien por su nombre de usuario!</div>');
-    const a = [...new Set([...o, state.user.id])],
-        [{
-            data: s
-        }, {
-            data: r
-        }, {
-            data: d
-        }] = await Promise.all([db.from("photos").select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at").in("user_id", o).in("visibilidad", ["amigos", "publico"]).order("created_at", {
-            ascending: !1
-        }).limit(30), db.from("photos").select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at").eq("user_id", state.user.id).order("created_at", {
-            ascending: !1
-        }).limit(30), db.from("visits").select("id,user_id,municipio,visibilidad,created_at,profiles(id,username,avatar_url)").in("user_id", a).order("created_at", {
-            ascending: !1
-        }).limit(25)]),
-        l = [...s || [], ...r || []],
-        c = {},
-        u = {};
-    l.forEach(e => {
-        c[e.user_id] || (c[e.user_id] = []), c[e.user_id].push(e);
-        const t = e.user_id + "|" + normalizeMuni(e.municipio);
-        u[t] || (u[t] = []), u[t].push(e)
-    });
-    let p = (d || []).filter(e => e.user_id === state.user.id || ["amigos", "publico"].includes(e.visibilidad));
+    if (!reset && state.feedCache && Date.now() - state.feedCacheTime < 18e4) return void renderFeedFromCache();
 
-    // Fotos de eventos (🎉) → posts sintéticos del feed
-    const profById = {};
-    n.forEach(pr => { profById[pr.id] = pr; });
-    if (state.profile) profById[state.user.id] = { id: state.user.id, username: state.profile.username, avatar_url: state.profile.avatar_url };
-    const eventPosts = l.filter(f => (f.municipio || "").startsWith("🎉")).map(f => ({
-        id: "ep_" + f.id,
-        user_id: f.user_id,
-        municipio: f.municipio,
-        visibilidad: f.visibilidad,
-        created_at: f.created_at,
-        profiles: profById[f.user_id] || null
-    }));
-    p = [...p, ...eventPosts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const fp = document.getElementById("feed-posts");
+    fp.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 10px"></div>Cargando feed...</div>';
+
+    // Amigos aceptados → autores del feed
+    const { data: fs } = await db.from("friendships")
+        .select("follower_id,following_id")
+        .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+        .eq("estado", "aceptado");
+    const fids = [...new Set((fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id))];
+    let perfiles = [];
+    if (fids.length) {
+        const { data: pr } = await db.from("profiles").select("id,username,avatar_url").in("id", fids);
+        perfiles = pr || [];
+    }
+    renderStories(perfiles);
 
     state.feedCache = {
-        visibleVisits: p,
-        fotasByMuniUser: u,
-        fotasByUser: c,
-        friendProfiles: n
-    }, state.feedCacheTime = Date.now(), renderFeedPosts(p, u, c, n)
+        visibleVisits: [],
+        fotasByMuniUser: {},
+        fotasByUser: {},
+        friendProfiles: perfiles,
+        authors: [...new Set([...fids, state.user.id])],
+        cursor: null,
+        done: !1,
+        loading: !1,
+        _fotoSeen: new Set()
+    };
+    state.feedCacheTime = Date.now();
+    fp.innerHTML = "";
+    ensureFeedSentinel();
+    await fetchFeedPage();
+}
+
+const FEED_PAGE_SIZE = 10;
+
+// Centinela al final del feed: cuando entra en pantalla, carga más
+function ensureFeedSentinel() {
+    let s = document.getElementById("feed-sentinel");
+    if (!s) {
+        s = document.createElement("div");
+        s.id = "feed-sentinel";
+        s.style.cssText = "padding:18px 12px 26px;text-align:center;color:rgba(255,255,255,0.3);font-size:12px";
+        document.getElementById("feed-posts").insertAdjacentElement("afterend", s);
+        new IntersectionObserver(entries => {
+            entries.forEach(x => { if (x.isIntersecting) fetchFeedPage(); });
+        }, { rootMargin: "500px" }).observe(s);
+    }
+    s.textContent = "";
+    return s;
+}
+
+async function fetchFeedPage() {
+    const fc = state.feedCache;
+    if (!fc || fc.loading || fc.done || !state.user) return;
+    fc.loading = !0;
+    const sent = document.getElementById("feed-sentinel");
+    if (sent) sent.innerHTML = '<div class="spin" style="width:18px;height:18px;border-width:2px;margin:0 auto"></div>';
+    try {
+        // Página: visitas + fotos de evento (🎉), por cursor de fecha
+        let qv = db.from("visits")
+            .select("id,user_id,municipio,visibilidad,created_at,gps_verificada,profiles(id,username,avatar_url)")
+            .in("user_id", fc.authors)
+            .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+        let qe = db.from("photos")
+            .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+            .in("user_id", fc.authors).like("municipio", "🎉%")
+            .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+        if (fc.cursor) { qv = qv.lt("created_at", fc.cursor); qe = qe.lt("created_at", fc.cursor); }
+        const [{ data: vs }, { data: eps }] = await Promise.all([qv, qe]);
+
+        const allRaw = [...(vs || []), ...(eps || [])];
+        if (!allRaw.length) {
+            fc.done = !0;
+            if (sent) sent.textContent = fc.visibleVisits.length ? "🏔️ Has llegado al final" : "";
+            if (!fc.visibleVisits.length) await renderFeedPosts([], fc.fotasByMuniUser, fc.fotasByUser, fc.friendProfiles, !1);
+            return;
+        }
+
+        const visible = e => e.user_id === state.user.id || ["amigos", "publico"].includes(e.visibilidad);
+        const profById = {};
+        fc.friendProfiles.forEach(p => { profById[p.id] = p; });
+        if (state.profile) profById[state.user.id] = { id: state.user.id, username: state.profile.username, avatar_url: state.profile.avatar_url };
+
+        const evPosts = (eps || []).filter(visible).map(f => ({
+            id: "ep_" + f.id, user_id: f.user_id, municipio: f.municipio,
+            visibilidad: f.visibilidad, created_at: f.created_at,
+            profiles: profById[f.user_id] || null, _foto: f
+        }));
+        let page = [...(vs || []).filter(visible), ...evPosts]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, FEED_PAGE_SIZE);
+
+        // Cursor: si la página va llena, el más antiguo renderizado;
+        // si no, el más antiguo de lo traído (para no saltar posts)
+        fc.cursor = page.length === FEED_PAGE_SIZE
+            ? page[page.length - 1].created_at
+            : allRaw.reduce((m, x) => x.created_at < m ? x.created_at : m, allRaw[0].created_at);
+        if ((vs || []).length < FEED_PAGE_SIZE && (eps || []).length < FEED_PAGE_SIZE) fc.done = !0;
+
+        // Fotos-miniatura para las visitas de esta página
+        const pageVisits = page.filter(p => !String(p.id).startsWith("ep_"));
+        const users = [...new Set(pageVisits.map(p => p.user_id))];
+        const munis = [...new Set(pageVisits.map(p => p.municipio))];
+        let lookup = [];
+        if (users.length && munis.length) {
+            const { data: fl } = await db.from("photos")
+                .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+                .in("user_id", users).in("municipio", munis);
+            lookup = fl || [];
+        }
+        evPosts.forEach(p => lookup.push(p._foto));
+        lookup.forEach(f => {
+            if (fc._fotoSeen.has(f.id)) return;
+            fc._fotoSeen.add(f.id);
+            const k = f.user_id + "|" + normalizeMuni(f.municipio);
+            (fc.fotasByMuniUser[k] = fc.fotasByMuniUser[k] || []).push(f);
+            (fc.fotasByUser[f.user_id] = fc.fotasByUser[f.user_id] || []).push(f);
+        });
+
+        fc.visibleVisits = [...fc.visibleVisits, ...page];
+        await renderFeedPosts(page, fc.fotasByMuniUser, fc.fotasByUser, fc.friendProfiles, !0);
+        if (sent) sent.textContent = fc.done ? (fc.visibleVisits.length ? "🏔️ Has llegado al final" : "") : "";
+    } catch (err) {
+        console.error("fetchFeedPage:", err);
+        if (sent) sent.textContent = "Error al cargar más";
+    } finally {
+        fc.loading = !1;
+    }
 }
 
 function renderFeedFromCache() {
-    const {
-        visibleVisits: e,
-        fotasByMuniUser: t,
-        fotasByUser: i,
-        friendProfiles: n
-    } = state.feedCache;
-    document.getElementById("stories-row").innerHTML = "", renderFeedPosts(e, t, i, n)
+    const fc = state.feedCache;
+    if (!fc) return;
+    renderStories(fc.friendProfiles);
+    document.getElementById("feed-posts").innerHTML = "";
+    ensureFeedSentinel();
+    renderFeedPosts(fc.visibleVisits, fc.fotasByMuniUser, fc.fotasByUser, fc.friendProfiles, !1);
+    const sent = document.getElementById("feed-sentinel");
+    if (sent) sent.textContent = fc.done && fc.visibleVisits.length ? "🏔️ Has llegado al final" : "";
 }
 
 function normalizeMuni(e) {
@@ -1138,9 +1256,9 @@ async function getPhotoUrl(e) {
     } = await db.storage.from("evidencias").createSignedUrl(e, 3600);
     return t?.signedUrl || db.storage.from("evidencias").getPublicUrl(e).data?.publicUrl || null
 }
-async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles) {
+async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles, append = !1) {
     if (!visits.length) {
-        document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7"><i class="ti ti-map-2" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>Tus amigos aún no han conquistado municipios.</div>';
+        if (!append) document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7"><i class="ti ti-map-2" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>Tus amigos aún no han conquistado municipios.</div>';
         return;
     }
 
@@ -1150,7 +1268,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         return fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio)) || fotos[0] || null;
     };
 
-    document.getElementById("feed-posts").innerHTML = visits.map((v, i) => {
+    const __html = visits.map((v, i) => {
         const coast    = isCoast(v.municipio);
         const muniSafe = esc(v.municipio);
         const username = v.profiles?.username || "Usuario";
@@ -1175,6 +1293,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           <div class="post-user">${userSafe}</div>
           <div class="post-time">${fecha}</div>
         </div>
+        ${v.gps_verificada ? '<span title="Visita verificada por GPS" style="font-size:9px;background:rgba(34,176,80,0.15);color:#22b050;border:1px solid rgba(34,176,80,0.35);border-radius:999px;padding:2px 7px;font-weight:600;white-space:nowrap">📍 Verificada</span>' : ""}
         <div class="post-badge ${coast ? "pb-coast" : "pb-mount"}">
           <i class="ti ${coast ? "ti-waves" : "ti-mountain"}" aria-hidden="true" style="font-size:10px"></i>
           ${coast ? "Costa" : "Montaña"}
@@ -1230,6 +1349,9 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
       </div>
     </div>`;
     }).join("");
+    const fpEl = document.getElementById("feed-posts");
+    if (append) fpEl.insertAdjacentHTML("beforeend", __html);
+    else fpEl.innerHTML = __html;
 
     applyFeedFilter();
 
@@ -1680,6 +1802,13 @@ async function loadMap() {
                 features: topojson.feature(i, i.objects.municipalities).features.filter(e => String(e.id || "").startsWith("39") || 53072 === e.id || "53072" === e.id)
             };
         state.totalMuni = n.features.length;
+        state.topoData = i; // reutilizado por exportarMapa
+        state.muniFeatures = {};
+        n.features.forEach(f => {
+            let nm = f.properties.name || f.properties.NAME || f.properties.NAMEUNIT || "Mun-" + f.id;
+            if (nm === "Comunidad de Campoo y Cabuérniga") nm = "Mancomunidad de Campoo-Cabuérniga";
+            state.muniFeatures[nm] = f;
+        });
         const o = document.getElementById("map-cont").clientWidth || 410,
             a = Math.round(.58 * o);
         state.mapDims = { W: o, H: a };
@@ -1833,7 +1962,8 @@ async function checkForUpdates() {
         if (t && t !== e) {
             if (console.log("Nueva versión detectada, limpiando cache..."), "caches" in window) {
                 const e = await caches.keys();
-                await Promise.all(e.map(e => caches.delete(e)))
+                // Las cachés ylp-* las gestiona el service worker (offline)
+                await Promise.all(e.filter(k => !k.startsWith("ylp-")).map(k => caches.delete(k)))
             }
             localStorage.setItem("ce_version", e)
         } else localStorage.setItem("ce_version", e)
@@ -1842,7 +1972,11 @@ async function checkForUpdates() {
     }
 }
 
-function registerSW() {}
+function registerSW() {
+    if (!("serviceWorker" in navigator)) return;
+    const v = document.querySelector('meta[name="app-version"]')?.content || "1";
+    navigator.serviceWorker.register("sw.js?v=" + v).catch(e => console.warn("SW:", e));
+}
 async function init() {
     buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4);
     const e = setTimeout(() => {
@@ -2030,61 +2164,126 @@ async function loadEventosSantander() {
     }
 }
 async function exportarMapa() {
-    const e = document.getElementById("btn-export-map");
-    e && (e.textContent = "Generando...", e.disabled = !0);
+    const btn = document.getElementById("btn-export-map");
+    btn && (btn.textContent = "Generando...", btn.disabled = !0);
     try {
-        const e = document.getElementById("map-svg").getAttribute("viewBox").split(" "),
-            t = parseInt(e[2]),
-            i = parseInt(e[3]),
-            n = 2,
-            o = 40,
-            a = 80,
-            s = 40,
-            r = document.createElement("canvas");
-        r.width = (t + 2 * o) * n, r.height = (i + a + s) * n;
-        const d = r.getContext("2d");
-        d.scale(n, n), d.fillStyle = "#0f1923", d.fillRect(0, 0, r.width, r.height);
-        const l = await d3.json("https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json"),
-            c = {
-                type: "FeatureCollection",
-                features: topojson.feature(l, l.objects.municipalities).features.filter(e => String(e.id || "").startsWith("39") || 53072 === e.id || "53072" === e.id)
-            },
-            u = d3.geoMercator().fitExtent([
-                [o + 12, a + 12],
-                [t + o - 12, i + a - 12]
-            ], c),
-            p = d3.geoPath(u, d);
-        c.features.forEach(e => {
-            const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "";
-            d.beginPath(), p(e), d.fillStyle = state.visited[t] ? "#22b050" : "#3d5268", d.fill()
-        }), d.beginPath(), p(topojson.mesh(l, l.objects.municipalities, (e, t) => e !== t && String(e.id).startsWith("39") && String(t.id).startsWith("39"))), d.strokeStyle = "#0f1923", d.lineWidth = .4, d.stroke(), d.fillStyle = "#ffffff", d.font = "bold 22px serif", d.textAlign = "center", d.fillText("Ya lo pisé", (t + 2 * o) / 2, 30);
-        const m = Object.keys(state.visited).length;
-        d.font = "13px sans-serif", d.fillStyle = "rgba(255,255,255,0.5)", d.fillText(m + " / 102 municipios conquistados · " + Math.round(m / 102 * 100) + "%", (t + 2 * o) / 2, 52), d.font = "11px sans-serif", d.fillStyle = "rgba(255,255,255,0.25)", d.fillText("Ya lo pisé · Cantabria", (t + 2 * o) / 2, i + a + s - 10), r.toBlob(async e => {
-            const t = new File([e], "yalopisé-" + (new Date).toISOString().slice(0, 10) + ".png", {
-                type: "image/png"
-            });
-            if (navigator.share && navigator.canShare({
-                    files: [t]
-                })) await navigator.share({
-                files: [t],
-                title: "Ya lo pisé"
-            });
-            else {
-                const i = URL.createObjectURL(e),
-                    n = document.createElement("a");
-                n.download = t.name, n.href = i, n.click(), URL.revokeObjectURL(i)
-            }
-        }, "image/png")
-    } catch (e) {
-        alert("Error: " + e.message)
+        let topo = state.topoData;
+        if (!topo) topo = await d3.json("https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json");
+        const feats = topojson.feature(topo, topo.objects.municipalities).features
+            .filter(f => String(f.id || "").startsWith("39") || 53072 === f.id || "53072" === f.id);
+        const coll = { type: "FeatureCollection", features: feats };
+
+        const W = 1080, H = 1920;
+        const cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext("2d");
+        const rr = (x, y, w, h, r) => {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+            ctx.closePath();
+        };
+
+        // Fondo
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, "#0f1923"); bg.addColorStop(.45, "#152b42"); bg.addColorStop(1, "#0f1923");
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+        const g1 = ctx.createRadialGradient(W * .85, H * .16, 0, W * .85, H * .16, 430);
+        g1.addColorStop(0, "rgba(34,176,80,0.20)"); g1.addColorStop(1, "rgba(34,176,80,0)");
+        ctx.fillStyle = g1; ctx.fillRect(0, 0, W, H);
+        const g2 = ctx.createRadialGradient(W * .12, H * .8, 0, W * .12, H * .8, 470);
+        g2.addColorStop(0, "rgba(232,104,32,0.15)"); g2.addColorStop(1, "rgba(232,104,32,0)");
+        ctx.fillStyle = g2; ctx.fillRect(0, 0, W, H);
+
+        // Título + usuario
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#fff";
+        ctx.font = "italic bold 104px Georgia, 'Times New Roman', serif";
+        ctx.fillText("Ya lo pisé", W / 2, 220);
+        ctx.font = "40px -apple-system, Helvetica, Arial, sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.fillText("@" + (state.profile?.username || "explorer"), W / 2, 292);
+
+        // Mapa
+        const proj = d3.geoMercator().fitExtent([[80, 400], [W - 80, 1150]], coll);
+        const path = d3.geoPath(proj, ctx);
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 46; ctx.shadowOffsetY = 16;
+        ctx.beginPath(); path(coll);
+        ctx.fillStyle = "#2c3f54"; ctx.fill();
+        ctx.restore();
+        const nameOf = f => {
+            let nm = f.properties.name || f.properties.NAME || f.properties.NAMEUNIT || "";
+            return nm === "Comunidad de Campoo y Cabuérniga" ? "Mancomunidad de Campoo-Cabuérniga" : nm;
+        };
+        feats.forEach(f => {
+            ctx.beginPath(); path(f);
+            ctx.fillStyle = state.visited[nameOf(f)] ? "#24c25c" : "#2c3f54";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(9,16,26,0.95)"; ctx.lineWidth = 1.6; ctx.stroke();
+        });
+        feats.filter(f => state.visited[nameOf(f)]).forEach(f => {
+            ctx.beginPath(); path(f);
+            ctx.fillStyle = "rgba(150,255,190,0.16)"; ctx.fill();
+        });
+
+        // Stats
+        const total = state.totalMuni || 103,
+            nv = Object.keys(state.visited).length,
+            pct = Math.round(nv / total * 100);
+        ctx.font = "bold 168px -apple-system, Helvetica, Arial, sans-serif";
+        const t1 = String(nv), t2 = " / " + total;
+        const w1 = ctx.measureText(t1).width, w2 = ctx.measureText(t2).width;
+        ctx.textAlign = "left";
+        let x0 = (W - w1 - w2) / 2;
+        ctx.fillStyle = "#2fdc6f"; ctx.fillText(t1, x0, 1395);
+        ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.fillText(t2, x0 + w1, 1395);
+        ctx.textAlign = "center";
+        ctx.font = "42px -apple-system, Helvetica, Arial, sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.6)";
+        ctx.fillText("municipios conquistados", W / 2, 1465);
+
+        // Barra de progreso
+        const bw = 720, bx = (W - bw) / 2, by = 1525, bh = 26;
+        rr(bx, by, bw, bh, 13); ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fill();
+        if (pct > 0) {
+            rr(bx, by, Math.max(26, bw * pct / 100), bh, 13);
+            const pg = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+            pg.addColorStop(0, "#2fdc6f"); pg.addColorStop(1, "#1a9a48");
+            ctx.fillStyle = pg; ctx.fill();
+        }
+        ctx.font = "bold 58px -apple-system, Helvetica, Arial, sans-serif";
+        ctx.fillStyle = "#fff";
+        ctx.fillText(pct + "% de Cantabria", W / 2, 1665);
+
+        // Pie
+        ctx.font = "34px -apple-system, Helvetica, Arial, sans-serif";
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        ctx.fillText(new Date().toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" }) + "  ·  " + location.host, W / 2, 1800);
+
+        // Compartir (Instagram Stories sale en el menú) o descargar
+        const blob = await new Promise(r => cv.toBlob(r, "image/png"));
+        const file = new File([blob], "ya-lo-pise.png", { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: "Ya lo pisé" }).catch(() => {});
+        } else {
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "ya-lo-pise.png";
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
+        }
+    } catch (err) {
+        console.error("exportarMapa:", err);
+        alert("No se pudo generar la imagen");
     } finally {
-        e && (e.textContent = "📸 Exportar mapa", e.disabled = !1)
+        btn && (btn.textContent = "📸 Exportar mapa", btn.disabled = !1);
     }
 }
-let recTipo = "sitio",
-    recMuni = "";
 
-let recFotoBase64 = null, recFotoMime = null;
 function clearRecFoto() {
     recFotoBase64 = null; recFotoMime = null;
     document.getElementById("rec-foto-prev").style.display = "none";
@@ -2381,3 +2580,7 @@ document.addEventListener("mousedown", e => {
     else if (!e.target.closest?.("#mention-dd")) hideMentionDD();
 });
 window.addEventListener("scroll", hideMentionDD, true);
+
+
+// Activar modo offline
+registerSW();
