@@ -299,7 +299,7 @@ async function doLogout() {
 }
 async function loadUserData(e) {
     state.user = e;
-    const [t, i, n, o] = await Promise.all([db.from("profiles").select("*").eq("id", e.id).single(), db.from("visits").select("municipio").eq("user_id", e.id), db.from("photos").select("*").eq("user_id", e.id).order("created_at", {
+    const [t, i, n, o] = await Promise.all([db.from("profiles").select("*").eq("id", e.id).single(), db.from("visits").select("municipio,localidades").eq("user_id", e.id), db.from("photos").select("*").eq("user_id", e.id).order("created_at", {
         ascending: !1
     }), db.from("event_signups").select("event_id").eq("user_id", e.id)]), a = t.data;
     if (state.profile = a, a && (document.getElementById("u-name").textContent = a.username, document.getElementById("av-init").textContent = a.username.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2), a.avatar_url)) {
@@ -307,8 +307,10 @@ async function loadUserData(e) {
             t = a.avatar_url + "?t=" + Date.now();
         e.innerHTML = '<img src="' + t + '" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>'
     }
+    state.visitedLocs = state.visitedLocs || {};
     i.data && (i.data.forEach(e => {
-        state.visited[e.municipio] = !0
+        state.visited[e.municipio] = !0;
+        if (e.localidades) state.visitedLocs[e.municipio] = e.localidades;
     }), refreshMapVisited());
     if (n.data) {
         state.photos = n.data.map(e => ({
@@ -427,7 +429,7 @@ function applyMapFilter() {
     const COLORES = {
         costa:      "#1f4e79",  // azul oscuro
         "montaña":  "#6b4a2e",  // marrón intermedio oscuro
-        pendientes: "#e85aa0",  // rosa
+        pendientes: "#f2e08c",  // amarillo claro
         populares:  "#e8762e",  // naranja
         area:       "#e8c93a"   // amarillo
     };
@@ -473,7 +475,49 @@ function openSheet() {
     const n = document.getElementById("btn-conf");
     n && (n.textContent = t ? "Guardar" : "Marcar como conquistado"), document.querySelectorAll(".vis-btn").forEach(e => e.classList.remove("vis-active")), document.getElementById("vis-amigos").classList.add("vis-active"), clearPhoto();
     const o = document.getElementById("evidencia-desc");
-    o && (o.value = ""), document.getElementById("upload-sheet").classList.add("open")
+    o && (o.value = "");
+    renderSheetLocalidades(e);
+    document.getElementById("upload-sheet").classList.add("open")
+}
+
+// Checklist de localidades del municipio (si están en la BD)
+function renderSheetLocalidades(muni) {
+    const desc = document.getElementById("evidencia-desc");
+    let box = document.getElementById("sheet-locs");
+    if (!box && desc) {
+        box = document.createElement("div");
+        box.id = "sheet-locs";
+        desc.parentNode.insertBefore(box, desc);
+    }
+    if (!box) return;
+    const locs = state.municipiosData?.[muni]?.localidades || [];
+    if (!locs.length) { box.style.display = "none"; box.innerHTML = ""; return; }
+    const marcadas = new Set(state.visitedLocs?.[muni] || []);
+    box.style.cssText = "margin-bottom:12px;padding:11px 12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px;display:block";
+    box.innerHTML =
+        '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">🏘️ ¿En qué localidades has estado?</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
+        + locs.map(l => {
+            const on = marcadas.has(l);
+            return '<label style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:999px;font-size:12px;cursor:pointer;border:1px solid '
+                + (on ? "rgba(34,176,80,0.5);background:rgba(34,176,80,0.15);color:#5DCAA5" : "rgba(255,255,255,0.14);background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)") + '">'
+                + '<input type="checkbox" class="loc-chk" value="' + esc(l) + '"' + (on ? " checked" : "")
+                + ' style="accent-color:#22b050;margin:0"/>'
+                + esc(l) + '</label>';
+        }).join("")
+        + '</div>';
+    // Repintar la pastilla al marcar/desmarcar
+    if (!box._wired) {
+        box._wired = !0;
+        box.addEventListener("change", ev => {
+            const chk = ev.target;
+            if (!chk.classList?.contains("loc-chk")) return;
+            const lab = chk.parentElement;
+            lab.style.border = chk.checked ? "1px solid rgba(34,176,80,0.5)" : "1px solid rgba(255,255,255,0.14)";
+            lab.style.background = chk.checked ? "rgba(34,176,80,0.15)" : "rgba(255,255,255,0.05)";
+            lab.style.color = chk.checked ? "#5DCAA5" : "rgba(255,255,255,0.6)";
+        });
+    }
 }
 
 function clearPhoto() {
@@ -555,6 +599,15 @@ async function confirmVisit() {
             gps_verificada: gpsVerificada,
             fecha: (new Date).toISOString().split("T")[0]
         }).select();
+        // Localidades marcadas en el checklist (si la columna existe)
+        const locsSel = [...document.querySelectorAll("#sheet-locs .loc-chk:checked")].map(c => c.value);
+        if (document.getElementById("sheet-locs")?.innerHTML) {
+            try {
+                await db.from("visits").update({ localidades: locsSel })
+                    .eq("user_id", state.user.id).eq("municipio", e);
+                (state.visitedLocs = state.visitedLocs || {})[e] = locsSel;
+            } catch (locErr) { console.warn("localidades:", locErr); }
+        }
         if (a) return console.error("Error guardando visita:", JSON.stringify(a)), alert("Error al guardar la visita: " + a.message), t.textContent = "Marcar como conquistado", void(t.disabled = !1);
         if (console.log("Visita guardada en Supabase:", o), n) {
             new Date;
@@ -822,12 +875,13 @@ async function confirmEventPhoto() {
             n || (t = i)
         }
         if (!t) return alert("Añade una foto antes de publicar"), e.textContent = "Publicar foto", void(e.disabled = !1);
-        await db.from("event_photos").insert({
+        try { await db.from("event_photos").insert({
             user_id: state.user.id,
             event_id: pendingEventId,
             storage_path: t,
             descripcion: document.getElementById("evidencia-desc").value.trim() || null
-        }), await db.from("photos").insert({
+        }); } catch (epErr) { console.warn("event_photos:", epErr); }
+        await db.from("photos").insert({
             user_id: state.user.id,
             municipio: "🎉 " + pendingEventName,
             storage_path: t,
@@ -1006,6 +1060,31 @@ function openMuniModal(e) {
     t.ruta && String(t.ruta).trim() && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(93,202,165,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#5DCAA5">🥾 Con ruta</div>');
     const d = state.popularidad?.[e] || 0;
     d > 0 && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(232,184,32,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#e8b820">🔥 ' + d + " visitas</div>"), document.getElementById("mm-pills").innerHTML = r.join(" "), document.getElementById("mm-desc").textContent = t.descripcion || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.", document.getElementById("mm-curiosidad").textContent = t.curiosidad || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.";
+    // Apartado de localidades (columna "localidades" de municipios)
+    let locEl = document.getElementById("mm-localidades");
+    if (!locEl) {
+        locEl = document.createElement("div");
+        locEl.id = "mm-localidades";
+        const curEl0 = document.getElementById("mm-curiosidad");
+        curEl0?.parentNode?.insertBefore(locEl, curEl0.nextSibling);
+    }
+    const fichaLocs = t.localidades || [];
+    if (fichaLocs.length) {
+        const mias = new Set(state.visitedLocs?.[e] || []);
+        const pisadas = fichaLocs.filter(l => mias.has(l)).length;
+        locEl.style.cssText = "margin:12px 0;padding:11px 13px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px";
+        locEl.innerHTML =
+            '<div style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.5);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">🏘️ Localidades <span style="color:#5DCAA5">' + pisadas + '/' + fichaLocs.length + '</span></div>'
+            + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
+            + fichaLocs.map(l => mias.has(l)
+                ? '<span style="padding:5px 11px;border-radius:999px;font-size:12px;background:rgba(34,176,80,0.15);border:1px solid rgba(34,176,80,0.45);color:#5DCAA5">✓ ' + esc(l) + '</span>'
+                : '<span style="padding:5px 11px;border-radius:999px;font-size:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:rgba(255,255,255,0.55)">' + esc(l) + '</span>'
+            ).join("") + '</div>';
+        locEl.style.display = "block";
+    } else {
+        locEl.style.display = "none";
+    }
+
     // Bloque de ruta (columna "ruta" de municipios en Supabase)
     let rutaEl = document.getElementById("mm-ruta");
     if (!rutaEl) {
@@ -2069,13 +2148,13 @@ async function loadMap() {
         if (vecinos.length) {
             g.append("path")
                 .datum(topojson.merge(i, vecinos))
-                .attr("d", l).attr("fill", "#6e5944")
-                .attr("stroke", "rgba(35,24,14,0.5)").attr("stroke-width", "0.5px")
+                .attr("d", l).attr("fill", "#cbb287")
+                .attr("stroke", "rgba(110,86,55,0.55)").attr("stroke-width", "0.5px")
                 .attr("pointer-events", "none");
             g.append("path")
                 .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a !== b && provOf(a.id) !== provOf(b.id)))
                 .attr("d", l).attr("fill", "none")
-                .attr("stroke", "rgba(35,24,14,0.55)").attr("stroke-width", "0.8px")
+                .attr("stroke", "rgba(110,86,55,0.7)").attr("stroke-width", "0.8px")
                 .attr("pointer-events", "none");
         }
 
@@ -2281,7 +2360,14 @@ async function toggleNotifications() {
         else {
             e.textContent = "Activando...", e.disabled = !0;
             try {
-                if ("granted" !== await Notification.requestPermission()) return alert("Necesitas dar permiso de notificaciones. Ve a Ajustes → Safari → Notificaciones y actívalas para esta web."), e.disabled = !1, void(e.innerHTML = "🔕 Activar notificaciones");
+                // En la app nativa (Capacitor) el permiso lo gestiona el plugin
+                if (!window.nativePushRegister) {
+                    if (typeof Notification === "undefined") {
+                        // iOS Safari sin instalar: no existe la API
+                        return alert("Para recibir notificaciones en iPhone, añade primero la app a la pantalla de inicio:\n\nCompartir → Añadir a pantalla de inicio, y ábrela desde ahí."), e.disabled = !1, void(e.innerHTML = "🔕 Activar notificaciones");
+                    }
+                    if ("granted" !== await Notification.requestPermission()) return alert("Necesitas dar permiso de notificaciones para activarlas."), e.disabled = !1, void(e.innerHTML = "🔕 Activar notificaciones");
+                }
                 await registerPushNotifications(), e.innerHTML = state.pushRegistered ? "🔔 Notificaciones activas" : "🔕 Activar notificaciones"
             } catch (t) {
                 alert("Error activando notificaciones: " + t.message), e.innerHTML = "🔕 Activar notificaciones"
