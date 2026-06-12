@@ -113,10 +113,8 @@
     .prog-lbl{display:flex;justify-content:space-between;padding:4px 18px 10px;font-size:10px;color:var(--hint);}
     .map-cont{margin:0 12px 8px;background:linear-gradient(180deg,#6aa3d8 0%,#4d87bf 55%,#3a6fa3 100%);border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);position:relative;box-shadow:0 8px 24px rgba(0,0,0,0.35);}
     #map-svg{width:100%;height:auto;display:block;touch-action:none;}
-    .muni-path{fill:#3d5268;stroke:#0c1622;stroke-width:.35px;paint-order:stroke fill;cursor:pointer;transition:fill .2s ease, filter .2s ease;}
-    .muni-path:hover{fill:#4a6280;}
-    .muni-path.is-coast{fill:#41597a;}
-    .muni-path.is-coast:hover{fill:#4e6a92;}
+    .muni-path{fill:#c3cdd6;stroke:#111418;stroke-width:.55px;paint-order:stroke fill;cursor:pointer;transition:fill .2s ease, filter .2s ease;}
+    .muni-path:hover{fill:#aebac6;}
     .muni-path.visited{fill:url(#grad-visited);filter:url(#glow-visited);}
     .muni-path.visited:hover{fill:url(#grad-visited);filter:url(#glow-visited) brightness(1.15);}
     .muni-path.selected{stroke:#ffb44d;stroke-width:1.6px;filter:drop-shadow(0 0 5px rgba(255,180,77,0.65));animation:muni-pulse 1.6s ease-in-out infinite;}
@@ -533,6 +531,10 @@
           style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">
           🥾 Rutas
         </button>
+        <button class="feed-filter-btn" data-filter="global" onclick="setFeedFilter('global')"
+          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">
+          🌍 Global
+        </button>
       </div>
       <div class="search-row">
         <input id="search-input" type="text" placeholder="Buscar usuario por nombre..." autocomplete="off"/>
@@ -566,6 +568,7 @@
         <button onclick="toggleEdit()" style="margin-top:10px;padding:7px 16px;background-color:#a04010;color:#ffd0a0;border:none;border-radius:999px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;display:inline-flex;align-items:center;gap:6px;">
           <i class="ti ti-pencil" aria-hidden="true" style="font-size:12px"></i> Editar nombre
         </button>
+        <a href="privacidad.html" target="_blank" rel="noopener" style="display:block;margin-top:6px;font-size:10px;color:rgba(255,255,255,0.3);text-decoration:underline">Política de privacidad</a>
         <button id="btn-notif" onclick="toggleNotifications()" style="margin-top:8px;padding:7px 16px;background-color:#1848a8;color:#b0d4ff;border:none;border-radius:999px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;display:inline-flex;align-items:center;gap:6px;">
           🔕 Activar notificaciones
         </button>
