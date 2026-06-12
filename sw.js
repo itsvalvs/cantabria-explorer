@@ -11,7 +11,7 @@
 //  reinstala solo y limpia las cachés antiguas.
 // ═══════════════════════════════════════════════════════════
 
-const VERSION = 'ylp-v2';
+const VERSION = 'ylp-v3';
 
 const PRECACHE = [
   './',
@@ -87,8 +87,19 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Mismo origen (app.js?v=..., manifest) y CDNs: SWR sin query
-  if (url.origin === location.origin || url.hostname === 'cdn.jsdelivr.net') {
+  // Mismo origen (app.js, index, manifest): RED PRIMERO, caché solo
+  // si no hay conexión — así cada deploy llega al instante
+  if (url.origin === location.origin) {
+    e.respondWith(
+      fetch(req).then(res => {
+        if (res && res.ok) caches.open(VERSION).then(c => c.put(strippedKey(req), res.clone()));
+        return res;
+      }).catch(() => caches.match(strippedKey(req)))
+    );
+    return;
+  }
+  // CDNs (librerías versionadas, topojson): caché primero
+  if (url.hostname === 'cdn.jsdelivr.net') {
     e.respondWith(swr(req, strippedKey(req)));
     return;
   }
