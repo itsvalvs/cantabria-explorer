@@ -463,6 +463,7 @@ function showMuniBar(e) {
 }
 
 function openSheet() {
+    pendingEventId = null, pendingEventName = null; // por si venimos de un evento
     if (!state.selectedMuni) return;
     const e = state.selectedMuni,
         t = state.visited[e];
@@ -758,12 +759,12 @@ function renderEventos() {
             }),
             s = new Date(e.fecha),
             r = (new Date - s) / 864e5,
-            d = (t || r >= 0) ? `<button onclick="openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
-        return `\n    <div class="ev-card">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${esc(e.nombre)}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>\n        <div class="ev-desc">${esc(e.descripcion||"")}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
+            d = (t || r >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
+        return `\n    <div class="ev-card" data-eid="${esc(e.id)}" onclick="openEventModal(this.dataset.eid)" style="cursor:pointer">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${esc(e.nombre)}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>\n        <div class="ev-desc">${esc(e.descripcion||"")}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="event.stopPropagation();toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
     }).join(""), n.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); })
 }
-async function loadEventPhotos(eventId) {
-    const cont = document.getElementById("ev-fotos-" + eventId);
+async function loadEventPhotos(eventId, targetId) {
+    const cont = document.getElementById(targetId || "ev-fotos-" + eventId);
     if (!cont) return;
     const { data: fotos } = await db.from("event_photos")
         .select("id, user_id, storage_path, descripcion, profiles(username)")
@@ -837,7 +838,7 @@ async function confirmEventPhoto() {
                 hour: "2-digit",
                 minute: "2-digit"
             })
-        }), state.feedCache = null, document.getElementById("upload-sheet").classList.remove("open"), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos()
+        }), state.feedCache = null, document.getElementById("upload-sheet").classList.remove("open"), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos(), alert("¡Foto del evento publicada! 🎉")
     } catch (e) {
         alert("Error: " + e.message)
     } finally {
@@ -927,11 +928,8 @@ function showDiceResult(e) {
     renderDice(e, t ? "#dce8f5" : "#d5ede3"), document.getElementById("rtop").className = "rcard-top " + (t ? "coast" : "mount");
     const s = document.getElementById("rtag");
     s.className = "r-type-tag " + (t ? "tag-coast" : "tag-mount"), s.querySelector("i").className = "ti " + (t ? "ti-waves" : "ti-mountain"), document.getElementById("rtag-txt").textContent = t ? "Costa" : "Montaña", document.getElementById("r-num").textContent = e, document.getElementById("r-muni").textContent = o, document.getElementById("r-comarca").textContent = "Comarca de " + (a.comarca || COMARCAS[Math.floor(Math.random() * COMARCAS.length)]), document.getElementById("r-area").textContent = a.area_km2 ? a.area_km2 + " km²" : Math.round(200 * Math.random() + 5) + " km²", document.getElementById("r-pop").textContent = a.poblacion ? a.poblacion.toLocaleString("es-ES") + " hab." : Math.round(3e4 * Math.random() + 100).toLocaleString("es-ES") + " hab.", document.getElementById("r-desc").textContent = a.descripcion || LOREM, document.getElementById("dice-hint").textContent = i.length ? "¡Tu próxima aventura te espera!" : "Ya lo visitaste — aquí de nuevo", setTimeout(() => document.getElementById("result-wrap").classList.add("show"), 60), document.getElementById("btn-go").onclick = () => {
-        state.selectedMuni = o, switchScreen("map"), setTimeout(() => {
-            document.querySelectorAll(".muni-path").forEach(e => e.classList.remove("selected")), document.querySelectorAll(".muni-path").forEach(e => {
-                e.getAttribute("data-name") === o && (e.classList.add("selected"), showMuniBar(o))
-            })
-        }, 250)
+        switchScreen("map");
+        setTimeout(() => highlightMuniOnMap(o), 300);
     };
     const r = document.getElementById("btn-saber-mas");
     r && (r.onclick = () => openMuniModal(o))
@@ -2063,6 +2061,24 @@ async function loadMap() {
         // Grupo zoomable: municipios + bordes
         const g = c.append("g").attr("id", "map-zoom-group");
 
+        // Comunidades vecinas como tierra MARRÓN (incluye Bizkaia y
+        // Álava para que no quede hueco azul a la derecha)
+        const provOf = id => String(id).padStart(5, "0").slice(0, 2);
+        const NEIGHBORS = ["33", "24", "34", "09", "48", "01"];
+        const vecinos = i.objects.municipalities.geometries.filter(gm => NEIGHBORS.includes(provOf(gm.id)));
+        if (vecinos.length) {
+            g.append("path")
+                .datum(topojson.merge(i, vecinos))
+                .attr("d", l).attr("fill", "#6e5944")
+                .attr("stroke", "rgba(35,24,14,0.5)").attr("stroke-width", "0.5px")
+                .attr("pointer-events", "none");
+            g.append("path")
+                .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a !== b && provOf(a.id) !== provOf(b.id)))
+                .attr("d", l).attr("fill", "none")
+                .attr("stroke", "rgba(35,24,14,0.55)").attr("stroke-width", "0.8px")
+                .attr("pointer-events", "none");
+        }
+
         // Sombra bajo Cantabria: profundidad sobre el mar/tierra
         const shadowF = defs.append("filter").attr("id", "cant-shadow")
             .attr("x", "-20%").attr("y", "-20%").attr("width", "140%").attr("height", "140%");
@@ -2097,8 +2113,8 @@ async function loadMap() {
             .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
             .attr("stroke-width", "0.6px").attr("pointer-events", "none").attr("class", "map-mesh-inner");
         g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e === t && u(e.id)))
-            .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
-            .attr("stroke-width", "1.3px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
+            .attr("d", l).attr("fill", "none").attr("stroke", "#0a0d10")
+            .attr("stroke-width", "2.4px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
 
         // Zoom y paneo (pellizcar / arrastrar)
         state.mapZoom = d3.zoom()
@@ -2108,7 +2124,7 @@ async function loadMap() {
                 g.attr("transform", ev.transform);
                 const k = ev.transform.k;
                 g.select(".map-mesh-inner").style("stroke-width", (0.4 / k) + "px");
-                g.select(".map-mesh-outer").style("stroke-width", (1 / k) + "px");
+                g.select(".map-mesh-outer").style("stroke-width", (2.4 / k) + "px");
                 const rb = document.getElementById("map-reset-zoom");
                 if (rb) rb.style.display = k > 1.05 ? "flex" : "none";
             });
@@ -2222,15 +2238,33 @@ document.getElementById("av-in").addEventListener("change", async function(e) {
         console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, alert("No se pudo subir el avatar: " + e.message)
     }
 }), init();
-const VAPID_PUBLIC_KEY = "";
+const VAPID_PUBLIC_KEY = "BHd_AlIhjmYZEPc6QKPMas09kOzwvd50A4Vsb2O58Ilh40HLvSLVb9zbB9H6AMgPs9wLsRn0ovnyZP3DuUKOjQ4";
+// La clave pública VAPID real se asigna a la constante existente abajo
 async function registerPushNotifications() {
-    if ("serviceWorker" in navigator && "PushManager" in window) {
-        if (state.user) try {
-            return "granted" !== await Notification.requestPermission() ? void console.log("Permiso de notificaciones denegado") : void console.log("VAPID key no configurada todavía")
-        } catch (e) {
-            console.error("Error registrando push:", e)
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        return void alert("Este dispositivo no soporta notificaciones push.\n\nEn iPhone: añade la app a la pantalla de inicio (Compartir → Añadir a pantalla de inicio) y ábrela desde ahí.");
+    }
+    if (!state.user) return;
+    try {
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+            sub = await reg.pushManager.subscribe({
+                userVisibleOnly: !0,
+                applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
         }
-    } else console.log("Push no soportado en este dispositivo")
+        const { error } = await db.from("push_subscriptions").upsert(
+            { user_id: state.user.id, subscription: sub.toJSON() },
+            { onConflict: "user_id" }
+        );
+        if (error) throw error;
+        state.pushRegistered = !0;
+        console.log("✅ Push registrado");
+    } catch (e) {
+        console.error("Error registrando push:", e);
+        throw e;
+    }
 }
 
 function urlBase64ToUint8Array(e) {
@@ -2841,4 +2875,63 @@ async function bloquearUsuario(uid, uname) {
     } catch (err) {
         alert("Error al bloquear: " + err.message);
     }
+}
+
+
+// ═══ FICHA DE EVENTO ════════════════════════════════════════
+function openEventModal(eid) {
+    const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
+    if (!ev) return;
+    let ov = document.getElementById("event-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "event-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:300;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) closeEventModal(); });
+        document.body.appendChild(ov);
+    }
+    const coast = !1;
+    const fecha = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
+    // Contacto: @usuario de IG, URL o texto plano
+    let contactoHtml = "";
+    const ct = (ev.contacto || "").trim();
+    if (ct) {
+        let href = null, label = ct;
+        if (ct.startsWith("@")) { href = "https://instagram.com/" + ct.slice(1); label = ct + " (Instagram)"; }
+        else if (/^https?:\/\//i.test(ct)) { href = ct; }
+        contactoHtml = '<div style="margin-top:12px;padding:11px 13px;background:rgba(34,114,232,0.08);border:1px solid rgba(34,114,232,0.25);border-radius:12px">'
+            + '<div style="font-size:10px;font-weight:600;color:#85B7EB;margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase">📞 Organización</div>'
+            + (href
+                ? '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer" style="font-size:13px;color:#7ab3e8;text-decoration:none">' + esc(label) + ' ↗</a>'
+                : '<span style="font-size:13px;color:rgba(255,255,255,0.7)">' + esc(label) + '</span>')
+            + '</div>';
+    }
+    const recoHtml = ev.recomendacion
+        ? '<div style="margin-top:10px;padding:11px 13px;background:rgba(232,201,58,0.08);border:1px solid rgba(232,201,58,0.25);border-radius:12px">'
+          + '<div style="font-size:10px;font-weight:600;color:#e8c93a;margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase">💡 Recomendación</div>'
+          + '<div style="font-size:13px;color:rgba(255,255,255,0.7);line-height:1.5">' + esc(ev.recomendacion) + '</div></div>'
+        : "";
+    const cartel = ev.imagen_url
+        ? '<div style="width:100%;height:210px;overflow:hidden;position:relative"><img src="' + esc(ev.imagen_url) + '" style="width:100%;height:100%;object-fit:cover;display:block" alt="' + esc(ev.nombre) + '"/><div style="position:absolute;inset:0;background:linear-gradient(to top,#141e2c 5%,transparent 60%)"></div></div>'
+        : '<div style="width:100%;height:110px;background:linear-gradient(135deg,#2a1f3d,#3d1f33);display:flex;align-items:center;justify-content:center;font-size:42px">🎉</div>';
+
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;position:relative" onclick="event.stopPropagation()">'
+        + '<button onclick="closeEventModal()" style="position:absolute;top:12px;right:12px;z-index:2;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:15px;cursor:pointer">✕</button>'
+        + cartel
+        + '<div style="padding:16px 18px 26px">'
+        + '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:700;color:#fff;line-height:1.25">' + esc(ev.nombre) + '</div>'
+        + '<div style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.55)">📅 ' + esc(fecha) + (ev.lugar ? ' · 📍 ' + esc(ev.lugar) : '') + '</div>'
+        + (ev.descripcion ? '<div style="margin-top:10px;font-size:13px;color:rgba(255,255,255,0.65);line-height:1.55">' + esc(ev.descripcion) + '</div>' : '')
+        + contactoHtml + recoHtml
+        + '<div id="evm-fotos" style="margin-top:14px"></div>'
+        + '<div style="display:flex;gap:8px;margin-top:16px">'
+        + '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" style="flex:1;padding:13px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto del evento</button>'
+        + '<button data-eid="' + esc(ev.id) + '" onclick="toggleInscripcion(this.dataset.eid);closeEventModal()" style="flex:1;padding:13px;background:' + (state.inscripciones[ev.id] ? 'rgba(34,176,80,0.18);color:#5DCAA5;border:1px solid rgba(34,176,80,0.4)' : '#22b050;color:#fff;border:none') + ';border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (state.inscripciones[ev.id] ? '✓ Apuntado' : 'Apuntarme') + '</button>'
+        + '</div></div>';
+    ov.style.display = "flex";
+    loadEventPhotos(ev.id, "evm-fotos");
+}
+function closeEventModal() {
+    const ov = document.getElementById("event-modal");
+    if (ov) ov.style.display = "none";
 }
