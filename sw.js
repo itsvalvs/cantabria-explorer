@@ -11,7 +11,7 @@
 //  reinstala solo y limpia las cachés antiguas.
 // ═══════════════════════════════════════════════════════════
 
-const VERSION = 'ylp-v1';
+const VERSION = 'ylp-v2';
 
 const PRECACHE = [
   './',
@@ -99,5 +99,27 @@ self.addEventListener('fetch', e => {
       if (res && res.ok) caches.open(VERSION).then(cc => cc.put(req, res.clone()));
       return res;
     }).catch(() => c))
+  );
+});
+
+// ═══ NOTIFICACIONES PUSH ═════════════════════════════════════
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data.json(); } catch (_) { d = { title: 'Ya lo pisé', body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Ya lo pisé', {
+    body: d.body || '',
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    data: { url: d.url || './' }
+  }));
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(ws => {
+      for (const w of ws) if ('focus' in w) return w.focus();
+      return clients.openWindow((e.notification.data && e.notification.data.url) || './');
+    })
   );
 });
