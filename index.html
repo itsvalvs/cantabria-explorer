@@ -810,17 +810,8 @@
     }
   });
 
-  // 3. Desregistrar SW y limpiar cache
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function(regs) {
-      regs.forEach(function(r) { r.unregister(); });
-    }).catch(function(){});
-  }
-  if ('caches' in window) {
-    caches.keys().then(function(keys) {
-      keys.forEach(function(k) { caches.delete(k); });
-    }).catch(function(){});
-  }
+  // 3. (eliminado) El service worker ahora SÍ se usa: da modo offline.
+  //    Su versionado se gestiona en sw.js + meta app-version.
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
