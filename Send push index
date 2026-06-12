@@ -1,0 +1,84 @@
+// ═══════════════════════════════════════════════════════════
+//  Edge Function: send-push — "Ya lo pisé"
+//  Recibe webhooks de la BD y envía notificaciones push:
+//  · friendships INSERT (pendiente) → notifica al receptor
+//  · photos INSERT (no privadas)    → notifica a los amigos
+//
+//  Desplegar:  supabase functions deploy send-push --no-verify-jwt
+//  (los secrets se configuran según instrucciones_push.md)
+// ═══════════════════════════════════════════════════════════
+import webpush from "npm:web-push@3.6.7";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+Deno.serve(async (req) => {
+  // Solo aceptamos llamadas del webhook con nuestro secreto
+  if (req.headers.get("x-webhook-secret") !== Deno.env.get("WEBHOOK_SECRET")) {
+    return new Response("forbidden", { status: 403 });
+  }
+
+  let payload: any;
+  try { payload = await req.json(); } catch { return new Response("bad request", { status: 400 }); }
+  const { type, table, record } = payload || {};
+  if (type !== "INSERT" || !record) return new Response("ok");
+
+  const sb = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  webpush.setVapidDetails(
+    "mailto:" + (Deno.env.get("VAPID_EMAIL") || "hola@example.com"),
+    Deno.env.get("VAPID_PUBLIC_KEY")!,
+    Deno.env.get("VAPID_PRIVATE_KEY")!
+  );
+
+  const nameOf = async (id: string) =>
+    (await sb.from("profiles").select("username").eq("id", id).single()).data?.username || "Alguien";
+
+  let targets: string[] = [];
+  let body = "";
+
+  if (table === "friendships" && record.estado === "pendiente") {
+    targets = [record.following_id];
+    body = "@" + (await nameOf(record.follower_id)) + " te ha enviado una solicitud de amistad 🤝";
+
+  } else if (table === "photos") {
+    if ((record.visibilidad || "") === "privado") return new Response("ok");
+    const { data: fs } = await sb.from("friendships")
+      .select("follower_id,following_id")
+      .eq("estado", "aceptado")
+      .or(`follower_id.eq.${record.user_id},following_id.eq.${record.user_id}`);
+    targets = [...new Set((fs || []).map((f: any) =>
+      f.follower_id === record.user_id ? f.following_id : f.follower_id))];
+    const muni = record.municipio || "Cantabria";
+    body = "@" + (await nameOf(record.user_id)) + " ha subido una foto en " + muni + " 📸";
+
+  } else {
+    return new Response("ok");
+  }
+
+  if (!targets.length) return new Response("ok");
+
+  // No notificar a quien ha bloqueado al autor
+  const autor = table === "friendships" ? record.follower_id : record.user_id;
+  const { data: bloqueos } = await sb.from("blocks")
+    .select("blocker_id").eq("blocked_id", autor).in("blocker_id", targets);
+  const bloqueadores = new Set((bloqueos || []).map((b: any) => b.blocker_id));
+  targets = targets.filter((t) => !bloqueadores.has(t));
+
+  const { data: subs } = await sb.from("push_subscriptions")
+    .select("user_id,subscription").in("user_id", targets);
+
+  const msg = JSON.stringify({ title: "Ya lo pisé", body, url: "/cantabria-explorer/" });
+
+  await Promise.allSettled((subs || []).map((s: any) =>
+    webpush.sendNotification(s.subscription, msg).catch(async (err: any) => {
+      // Suscripción caducada: limpiarla
+      if (err?.statusCode === 410 || err?.statusCode === 404) {
+        await sb.from("push_subscriptions").delete().eq("user_id", s.user_id);
+      }
+    })
+  ));
+
+  return new Response("ok");
+});
