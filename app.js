@@ -35,15 +35,24 @@ async function guardarNombre() {
 let feedFilter = 'descubriendo';
 function setFeedFilter(filter) {
   feedFilter = filter;
+  const isGlobalCache = state.feedCache?.mode === "global";
   document.querySelectorAll('.feed-filter-btn').forEach(b => {
     const active = b.dataset.filter === filter;
     b.style.backgroundColor = active ? '#2272e8' : 'rgba(255,255,255,0.08)';
     b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
   });
+  if (filter === 'global' && !isGlobalCache) return void loadGlobalFeed();
+  if (filter !== 'global' && isGlobalCache) return void loadFeed(!0);
   applyFeedFilter();
 }
 function applyFeedFilter() {
   const posts = document.querySelectorAll('.feed-post');
+  if (feedFilter === 'global') {
+    posts.forEach(p => p.style.display = '');
+    const em = document.querySelector('.feed-empty-msg');
+    if (em) em.style.display = 'none';
+    return;
+  }
   let visibles = 0;
   posts.forEach(post => {
     const locEl  = post.querySelector('.post-location');
@@ -315,6 +324,10 @@ async function loadUserData(e) {
             state.photos.forEach(p => { if (p.path && byPath[p.path]) p.src = byPath[p.path]; });
         }
     }
+    try {
+        const { data: bl } = await db.from("blocks").select("blocked_id").eq("blocker_id", state.user.id);
+        state.blockedIds = new Set((bl || []).map(b => b.blocked_id));
+    } catch (err) { state.blockedIds = new Set(); }
     o.data && o.data.forEach(e => {
         state.inscripciones[e.event_id] = !0
     }), updateProgress(), subscribeToFriendActivity()
@@ -410,23 +423,34 @@ function selectArea(comarca) {
 }
 
 function applyMapFilter() {
+    // Colores por filtro (los conquistados siempre quedan en verde)
+    const COLORES = {
+        costa:      "#1f4e79",  // azul oscuro
+        "montaña":  "#6b4a2e",  // marrón intermedio oscuro
+        pendientes: "#e85aa0",  // rosa
+        populares:  "#e8762e",  // naranja
+        area:       "#e8c93a"   // amarillo
+    };
     d3.selectAll(".muni-path").each(function() {
         const e = d3.select(this).attr("data-name"),
             t = state.municipiosData?.[e] || {},
             i = "costa" === t.tipo || isCoast(e),
             n = !!state.visited[e],
             o = t.sellos || [];
-        let a = !0;
-        if ("costa" === mapFilter) a = i;
-        else if ("montaña" === mapFilter) a = !i;
-        else if ("pendientes" === mapFilter) a = !n;
-        else if ("populares" === mapFilter) a = (state.popularidad?.[e] || 0) > 0;
-        else if ("rutas" === mapFilter) a = !!(t.ruta && String(t.ruta).trim());
-        else if (mapFilter.startsWith("area:")) a = t.comarca === mapFilter.slice(5);
-        else if ("areas" === mapFilter) a = !0;
-        else if (SELLOS[mapFilter]) a = o.includes(mapFilter);
-        d3.select(this).style("opacity", a ? 1 : .15)
-    })
+        let match = !1, color = null;
+        if ("costa" === mapFilter) { match = i; color = COLORES.costa; }
+        else if ("montaña" === mapFilter) { match = !i; color = COLORES["montaña"]; }
+        else if ("pendientes" === mapFilter) { match = !n; color = COLORES.pendientes; }
+        else if ("populares" === mapFilter) { match = (state.popularidad?.[e] || 0) > 0; color = COLORES.populares; }
+        else if ("rutas" === mapFilter) { match = !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
+        else if (mapFilter.startsWith("area:")) { match = t.comarca === mapFilter.slice(5); color = COLORES.area; }
+        else if (SELLOS[mapFilter]) { match = o.includes(mapFilter); color = COLORES.populares; }
+        // Pintar: el color del filtro en los que cumplen (no conquistados);
+        // el resto vuelve al gris base. Conquistados: verde siempre.
+        d3.select(this)
+            .style("fill", match && !n && color ? color : null)
+            .style("opacity", 1);
+    });
 }
 
 function showMuniBar(e) {
@@ -734,7 +758,7 @@ function renderEventos() {
             }),
             s = new Date(e.fecha),
             r = (new Date - s) / 864e5,
-            d = (t || r >= 0) ? `<button onclick="openEventFotoSheet('${e.id}','${e.nombre.replace(/'/g,"\\'")}','${e.source||"local"}')"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
+            d = (t || r >= 0) ? `<button onclick="openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
         return `\n    <div class="ev-card">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${esc(e.nombre)}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>\n        <div class="ev-desc">${esc(e.descripcion||"")}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
     }).join(""), n.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); })
 }
@@ -786,7 +810,8 @@ async function confirmEventPhoto() {
     try {
         let t = null;
         if (state.pendingBase64 && state.pendingMime) {
-            const e = await fetch("data:" + state.pendingMime + ";base64," + state.pendingBase64).then(e => e.blob()),
+            // pendingBase64 ya es una data-URL completa
+            const e = await fetch(state.pendingBase64).then(e => e.blob()),
                 i = state.user.id + "/eventos/" + pendingEventId + "_" + Date.now() + ".jpg",
                 {
                     error: n
@@ -1089,7 +1114,7 @@ async function loadFeed(reset = !1) {
         fotasByMuniUser: {},
         fotasByUser: {},
         friendProfiles: perfiles,
-        authors: [...new Set([...fids, state.user.id])],
+        authors: [...new Set([...fids, state.user.id])].filter(id => !state.blockedIds?.has(id)),
         cursor: null,
         done: !1,
         loading: !1,
@@ -1102,6 +1127,20 @@ async function loadFeed(reset = !1) {
 }
 
 const FEED_PAGE_SIZE = 10;
+
+async function loadGlobalFeed() {
+    if (!state.user) return;
+    const fp = document.getElementById("feed-posts");
+    document.getElementById("stories-row").innerHTML = "";
+    state.feedCache = {
+        mode: "global", visibleVisits: [], fotasByMuniUser: {}, fotasByUser: {},
+        friendProfiles: [], authors: [], cursor: null, done: !1, loading: !1, _fotoSeen: new Set()
+    };
+    state.feedCacheTime = Date.now();
+    fp.innerHTML = "";
+    ensureFeedSentinel();
+    await fetchFeedPage();
+}
 
 // Centinela al final del feed: cuando entra en pantalla, carga más
 function ensureFeedSentinel() {
@@ -1126,6 +1165,43 @@ async function fetchFeedPage() {
     const sent = document.getElementById("feed-sentinel");
     if (sent) sent.innerHTML = '<div class="spin" style="width:18px;height:18px;border-width:2px;margin:0 auto"></div>';
     try {
+        if (fc.mode === "global") {
+            // ── Feed global: fotos públicas de cualquier usuario ──
+            let qg = db.from("photos")
+                .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+                .eq("visibilidad", "publico")
+                .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+            if (fc.cursor) qg = qg.lt("created_at", fc.cursor);
+            const { data: gp } = await qg;
+            if (!gp || !gp.length) {
+                fc.done = !0;
+                if (sent) sent.textContent = fc.visibleVisits.length ? "🏔️ Has llegado al final" : "";
+                if (!fc.visibleVisits.length) document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px">🌍 Aún no hay fotos públicas</div>';
+                return;
+            }
+            fc.cursor = gp[gp.length - 1].created_at;
+            if (gp.length < FEED_PAGE_SIZE) fc.done = !0;
+            const list = gp.filter(f => !state.blockedIds?.has(f.user_id));
+            const uids = [...new Set(list.map(f => f.user_id))];
+            let profs = [];
+            if (uids.length) {
+                const { data: pp } = await db.from("profiles").select("id,username,avatar_url").in("id", uids);
+                profs = pp || [];
+            }
+            const pById = {};
+            profs.forEach(p => { pById[p.id] = p; });
+            profs.forEach(p => { fc.friendProfiles.find(x => x.id === p.id) || fc.friendProfiles.push(p); });
+            const page = list.map(f => ({
+                id: "gp_" + f.id, user_id: f.user_id, municipio: f.municipio,
+                visibilidad: f.visibilidad, created_at: f.created_at,
+                profiles: pById[f.user_id] || null, _foto: f
+            }));
+            fc.visibleVisits = [...fc.visibleVisits, ...page];
+            await renderFeedPosts(page, fc.fotasByMuniUser, fc.fotasByUser, fc.friendProfiles, !0);
+            if (sent) sent.textContent = fc.done ? (fc.visibleVisits.length ? "🏔️ Has llegado al final" : "") : "";
+            return;
+        }
+
         // Página: visitas + fotos de evento (🎉), por cursor de fecha
         let qv = db.from("visits")
             .select("id,user_id,municipio,visibilidad,created_at,gps_verificada,profiles(id,username,avatar_url)")
@@ -1135,10 +1211,23 @@ async function fetchFeedPage() {
             .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
             .in("user_id", fc.authors).like("municipio", "🎉%")
             .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
-        if (fc.cursor) { qv = qv.lt("created_at", fc.cursor); qe = qe.lt("created_at", fc.cursor); }
-        const [{ data: vs }, { data: eps }] = await Promise.all([qv, qe]);
+        let qr = db.from("recomendaciones")
+            .select("id,user_id,municipio,nombre,comentario,foto_path,created_at")
+            .in("user_id", fc.authors).not("foto_path", "is", null)
+            .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+        if (fc.cursor) { qv = qv.lt("created_at", fc.cursor); qe = qe.lt("created_at", fc.cursor); qr = qr.lt("created_at", fc.cursor); }
+        let [rv, re_, rr_] = await Promise.all([qv, qe, qr]);
+        if (rv.error && /gps_verificada/i.test(rv.error.message || "")) {
+            // Aún no se ejecutó gps_verificada.sql: reintento sin la columna
+            let q2 = db.from("visits")
+                .select("id,user_id,municipio,visibilidad,created_at,profiles(id,username,avatar_url)")
+                .in("user_id", fc.authors).order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+            if (fc.cursor) q2 = q2.lt("created_at", fc.cursor);
+            rv = await q2;
+        }
+        const vs = rv.data, eps = re_.data, recs = rr_.error ? [] : (rr_.data || []);
 
-        const allRaw = [...(vs || []), ...(eps || [])];
+        const allRaw = [...(vs || []), ...(eps || []), ...recs];
         if (!allRaw.length) {
             fc.done = !0;
             if (sent) sent.textContent = fc.visibleVisits.length ? "🏔️ Has llegado al final" : "";
@@ -1156,7 +1245,19 @@ async function fetchFeedPage() {
             visibilidad: f.visibilidad, created_at: f.created_at,
             profiles: profById[f.user_id] || null, _foto: f
         }));
-        let page = [...(vs || []).filter(visible), ...evPosts]
+        // Recomendaciones con foto → posts del feed (Descubriendo)
+        const recPosts = recs.map(r => ({
+            id: "rec_" + r.id, _tipo: "rec", user_id: r.user_id,
+            municipio: r.municipio, visibilidad: "amigos", created_at: r.created_at,
+            profiles: profById[r.user_id] || null,
+            _foto: {
+                id: "rec_" + r.id, user_id: r.user_id, municipio: r.municipio,
+                storage_path: r.foto_path,
+                descripcion: "💡 " + r.nombre + (r.comentario ? " — " + r.comentario : ""),
+                visibilidad: "amigos", created_at: r.created_at
+            }
+        }));
+        let page = [...(vs || []).filter(visible), ...evPosts, ...recPosts]
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
             .slice(0, FEED_PAGE_SIZE);
 
@@ -1165,7 +1266,7 @@ async function fetchFeedPage() {
         fc.cursor = page.length === FEED_PAGE_SIZE
             ? page[page.length - 1].created_at
             : allRaw.reduce((m, x) => x.created_at < m ? x.created_at : m, allRaw[0].created_at);
-        if ((vs || []).length < FEED_PAGE_SIZE && (eps || []).length < FEED_PAGE_SIZE) fc.done = !0;
+        if ((vs || []).length < FEED_PAGE_SIZE && (eps || []).length < FEED_PAGE_SIZE && recs.length < FEED_PAGE_SIZE) fc.done = !0;
 
         // Fotos-miniatura para las visitas de esta página
         const pageVisits = page.filter(p => !String(p.id).startsWith("ep_"));
@@ -1280,7 +1381,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         const avatarHtml = avatarUrl
             ? `<img src="${esc(avatarUrl)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
             : getInitials(username);
-        const foto  = pickFoto(v);
+        const foto  = v._foto || pickFoto(v);
         const hasImg = foto && foto.storage_path && foto.storage_path !== "text_only";
         const cid   = esc(foto ? foto.id : v.id);
         const fecha = new Date(v.created_at).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
@@ -1294,10 +1395,12 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           <div class="post-time">${fecha}</div>
         </div>
         ${v.gps_verificada ? '<span title="Visita verificada por GPS" style="font-size:9px;background:rgba(34,176,80,0.15);color:#22b050;border:1px solid rgba(34,176,80,0.35);border-radius:999px;padding:2px 7px;font-weight:600;white-space:nowrap">📍 Verificada</span>' : ""}
-        <div class="post-badge ${coast ? "pb-coast" : "pb-mount"}">
+        ${v._tipo === "rec"
+          ? '<div class="post-badge" style="background:rgba(232,201,58,0.16);color:#e8c93a">💡 Recomendación</div>'
+          : `<div class="post-badge ${coast ? "pb-coast" : "pb-mount"}">
           <i class="ti ${coast ? "ti-waves" : "ti-mountain"}" aria-hidden="true" style="font-size:10px"></i>
           ${coast ? "Costa" : "Montaña"}
-        </div>
+        </div>`}
       </div>
       <div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
         ${hasImg
@@ -1329,7 +1432,11 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${muniSafe}">
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
           </button>
-          ${v.user_id === state.user?.id ? `
+          ${v.user_id !== state.user?.id ? `
+          <button class="post-action" title="Reportar" data-cid="${cid}" data-uid="${esc(v.user_id)}" onclick="reportarContenido('post', this.dataset.cid, this.dataset.uid)" style="color:rgba(255,255,255,0.3)">
+            <i class="ti ti-flag" aria-hidden="true"></i>
+          </button>` : ""}
+          ${v.user_id === state.user?.id && v._tipo !== "rec" ? `
           <button class="post-action" data-vid="${esc(v.id)}" data-fid="${esc(foto ? foto.id : "")}" data-path="${esc(foto && (foto.path || foto.storage_path) || "")}" onclick="deleteFeedPost(this.dataset.vid, this.dataset.fid, this.dataset.path)" style="color:rgba(232,40,40,0.5)">
             <i class="ti ti-trash" aria-hidden="true"></i>
           </button>` : ""}
@@ -1341,6 +1448,9 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           <input class="comment-input" id="comment-input-${cid}" type="text" placeholder="Añade un comentario..." maxlength="200"
             data-cid="${cid}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
             onkeydown="if(event.key==='Enter')postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)"/>
+          <button class="comment-send" id="comment-cam-${cid}" data-cid="${cid}" onclick="pickCommentFoto(this.dataset.cid)" title="Adjuntar foto" style="background:rgba(255,255,255,0.07)">
+            <i class="ti ti-camera" aria-hidden="true"></i>
+          </button>
           <button class="comment-send" data-cid="${cid}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
             onclick="postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)">
             <i class="ti ti-send" aria-hidden="true"></i>
@@ -1359,7 +1469,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
     const fotosConStorage = [];
     const commentIds = [];
     visits.forEach(v => {
-        const foto = pickFoto(v);
+        const foto = v._foto || pickFoto(v);
         if (foto && foto.storage_path && foto.storage_path !== "text_only") fotosConStorage.push(foto);
         commentIds.push(foto?.id || v.id);
     });
@@ -1371,7 +1481,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         paths.length ? db.storage.from("evidencias").createSignedUrls(paths, 3600) : Promise.resolve({ data: [] }),
         likeIds.length ? db.from("photo_likes").select("photo_id,user_id").in("photo_id", likeIds) : Promise.resolve({ data: [] }),
         commentIds.length ? db.from("photo_comments")
-            .select("id,photo_id,user_id,texto,created_at, profiles(username,avatar_url)")
+            .select("id,photo_id,user_id,texto,foto_path,created_at, profiles(username,avatar_url)")
             .in("photo_id", commentIds).order("created_at", { ascending: true }) : Promise.resolve({ data: [] }),
     ]);
 
@@ -1412,9 +1522,16 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
     // 3) Comentarios
     const byPhoto = {};
     (commentsRes.data || []).forEach(c => { (byPhoto[c.photo_id] = byPhoto[c.photo_id] || []).push(c); });
+    // Firmar las fotos adjuntas a comentarios (si hay)
+    const cPaths = [...new Set((commentsRes.data || []).filter(c => c.foto_path).map(c => c.foto_path))];
+    const cUrls = {};
+    if (cPaths.length) {
+        const { data: cs } = await db.storage.from("evidencias").createSignedUrls(cPaths, 3600);
+        (cs || []).forEach(s => { if (s.signedUrl) cUrls[s.path] = s.signedUrl; });
+    }
     commentIds.forEach(cid => {
         const cont = document.getElementById("comments-" + cid);
-        if (cont) renderComments(cont, byPhoto[cid] || [], cid);
+        if (cont) renderComments(cont, byPhoto[cid] || [], cid, cUrls);
     });
 }
 
@@ -1423,12 +1540,19 @@ async function loadVisitComments(e, t) {
     const cont = document.getElementById("comments-" + id);
     if (!cont) return;
     const { data } = await db.from("photo_comments")
-        .select("id,photo_id,user_id,texto,created_at, profiles(username, avatar_url)")
+        .select("id,photo_id,user_id,texto,foto_path,created_at, profiles(username, avatar_url)")
         .eq("photo_id", id).order("created_at", { ascending: true });
-    renderComments(cont, data || [], id);
+    const cPaths = [...new Set((data || []).filter(c => c.foto_path).map(c => c.foto_path))];
+    const urls = {};
+    if (cPaths.length) {
+        const { data: signed } = await db.storage.from("evidencias").createSignedUrls(cPaths, 3600);
+        (signed || []).forEach(s => { if (s.signedUrl) urls[s.path] = s.signedUrl; });
+    }
+    renderComments(cont, data || [], id, urls);
 }
 
-function renderComments(container, comments, id) {
+function renderComments(container, comments, id, urls = {}) {
+    comments = comments.filter(c => !state.blockedIds?.has(c.user_id));
     const last3 = comments.slice(-3); // mismas 3 últimas que antes
     if (!last3.length) {
         container.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;padding:4px 0">Sin comentarios aún</div>';
@@ -1442,7 +1566,10 @@ function renderComments(container, comments, id) {
         const del = c.user_id === state.user?.id
             ? '<button class="c-del" data-cid="' + esc(c.id) + '" data-pid="' + esc(id) + '" onclick="deleteComment(this.dataset.cid, this.dataset.pid)" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
             : "";
-        return '<div class="comment"><div class="c-av">' + av + '</div><div class="c-text"><strong>' + esc(u) + '</strong> ' + renderMentions(esc(c.texto)) + '</div>' + del + '</div>';
+        const cFoto = c.foto_path && urls[c.foto_path]
+            ? '<img src="' + esc(urls[c.foto_path]) + '" style="display:block;max-width:160px;max-height:120px;border-radius:8px;margin-top:5px;object-fit:cover" alt="foto comentario"/>'
+            : "";
+        return '<div class="comment"><div class="c-av">' + av + '</div><div class="c-text"><strong>' + esc(u) + '</strong> ' + renderMentions(esc(c.texto || "")) + cFoto + '</div>' + del + '</div>';
     }).join("");
 }
 
@@ -1464,13 +1591,25 @@ async function postComment(e, t, i) {
     const n = document.getElementById("comment-input-" + e);
     if (!n || !state.user) return;
     const o = n.value.trim();
-    if (o) {
+    const cf = pendingCommentFotos[e];
+    if (o || cf) {
         n.value = "", n.disabled = !0;
         try {
+            let fotoPath = null;
+            if (cf) {
+                const blob = await (await fetch(cf.base64)).blob();
+                const pth = state.user.id + "/comment_" + Date.now() + ".jpg";
+                const { error: upe } = await db.storage.from("evidencias").upload(pth, blob, { contentType: cf.mime });
+                if (!upe) fotoPath = pth;
+                delete pendingCommentFotos[e];
+                const cam = document.getElementById("comment-cam-" + e);
+                if (cam) { cam.style.color = ""; cam.style.background = "rgba(255,255,255,0.07)"; }
+            }
             await db.from("photo_comments").insert({
                 user_id: state.user.id,
                 photo_id: e,
-                texto: o
+                texto: o || null,
+                foto_path: fotoPath
             }), await loadVisitComments(e);
             const t = o.match(/@(\w+)/g);
             if (t)
@@ -1527,6 +1666,18 @@ async function openFriendProfile(e, t) {
         ascending: !1
     }).limit(9)]), s = n.data, r = o.data || [], d = a.data || [], l = new Set(r.map(e => e.municipio));
     s?.avatar_url && (document.getElementById("fp-avatar").innerHTML = '<img src="' + esc(s.avatar_url) + "?t=" + Date.now() + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(t) + '"/>'), document.getElementById("fp-visits-count").textContent = r.length, document.getElementById("fp-photos-count").textContent = d.length, renderFriendMiniMap(l);
+
+    // Moderación: reportar / bloquear usuario
+    let mod = document.getElementById("fp-moderation");
+    if (!mod) {
+        mod = document.createElement("div");
+        mod.id = "fp-moderation";
+        document.getElementById("fp-gallery").parentNode.appendChild(mod);
+    }
+    mod.style.cssText = "display:flex;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)";
+    mod.innerHTML =
+        '<button data-uid="' + esc(e) + '" onclick="reportarContenido(\'usuario\', this.dataset.uid, this.dataset.uid)" style="flex:1;padding:9px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-flag" aria-hidden="true"></i> Reportar</button>' +
+        '<button data-uid="' + esc(e) + '" data-uname="' + esc(t) + '" onclick="bloquearUsuario(this.dataset.uid, this.dataset.uname)" style="flex:1;padding:9px;background:rgba(232,40,40,0.1);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-ban" aria-hidden="true"></i> Bloquear</button>';
     document.getElementById("fp-map").innerHTML = r.length ? r.slice(0, 8).map(e => {
         const t = isCoast(e.municipio),
             i = new Date(e.created_at).toLocaleDateString("es-ES", {
@@ -1731,9 +1882,79 @@ function openPM(e) {
 
 function openPMobj(e) {
     if (!e) return;
+    state.currentPM = e;
     const t = document.getElementById("pm-img");
-    e.src ? (t.src = e.src + "?nocache=" + Date.now(), t.style.display = "block") : (t.src = "", t.style.display = "none"), document.getElementById("pm-meta").innerHTML = `\n    <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${e.muni}</strong></div>\n    <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${e.date}</strong></div>\n    <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${e.time||"—"}</strong></div>\n    <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${e.coords||"—"}</strong></div>\n    ${e.desc?`<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${e.desc}</strong></div>`:""}\n    <div class="mrow" style="padding-bottom:4px;display:flex;gap:8px">\n      <button onclick="editPhoto('${e.id}')" style="flex:1;padding:10px;background:rgba(34,114,232,0.15);color:#85B7EB;border:1px solid rgba(34,114,232,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">\n        <i class="ti ti-pencil" aria-hidden="true"></i> Editar\n      </button>\n      <button onclick="deletePhoto(${i})" style="flex:1;padding:10px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px">\n        <i class="ti ti-trash" aria-hidden="true"></i> Borrar\n      </button>\n    </div>\n    <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>\n      <strong style="display:flex;gap:6px;margin-top:4px">\n        ${["privado","amigos","publico"].map(t=>`\n          <button onclick="changePhotoVis('${e.id}','${t}',this)"\n            style="padding:4px 10px;border:none;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;\n              background-color:${e.vis===t?"#2272e8":"rgba(255,255,255,0.1)"};\n              color:${e.vis===t?"#fff":"rgba(255,255,255,0.6)"};">\n            ${t}\n          </button>`).join("")}\n      </strong>\n    </div>`
+    e.src ? (t.src = e.src, t.style.display = "block") : (t.src = "", t.style.display = "none");
+    document.getElementById("pm-meta").innerHTML = `
+    <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${esc(e.muni)}</strong></div>
+    <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${esc(e.date || "—")}</strong></div>
+    <div class="mrow"><i class="ti ti-clock" aria-hidden="true"></i><span>Hora</span><strong>${esc(e.time || "—")}</strong></div>
+    <div class="mrow"><i class="ti ti-location" aria-hidden="true"></i><span>Coordenadas</span><strong>${esc(e.coords || "—")}</strong></div>
+    ${e.desc ? `<div class="mrow"><i class="ti ti-message-circle" aria-hidden="true"></i><span>Descripción</span><strong style="white-space:pre-wrap">${esc(e.desc)}</strong></div>` : ""}
+    <div class="mrow" style="padding-bottom:4px;display:flex;gap:8px">
+      <button data-pid="${esc(e.id)}" onclick="editPhoto(this.dataset.pid)" style="flex:1;padding:10px;background:rgba(34,114,232,0.15);color:#85B7EB;border:1px solid rgba(34,114,232,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:5px;margin-top:4px">
+        <i class="ti ti-pencil" aria-hidden="true"></i> Editar
+      </button>
+      ${e.src ? `<button onclick="exportarFotoGaleria()" style="flex:1;padding:10px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:5px;margin-top:4px">
+        <i class="ti ti-download" aria-hidden="true"></i> Exportar
+      </button>` : ""}
+      <button onclick="borrarFotoGaleria()" style="flex:1;padding:10px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:5px;margin-top:4px">
+        <i class="ti ti-trash" aria-hidden="true"></i> Borrar
+      </button>
+    </div>
+    <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>
+      <strong style="display:flex;gap:6px;margin-top:4px">
+        ${["privado", "amigos", "publico"].map(t => `
+          <button data-pid="${esc(e.id)}" data-vis="${t}" onclick="changePhotoVis(this.dataset.pid, this.dataset.vis, this)"
+            style="padding:4px 10px;border:none;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;
+              background-color:${e.vis === t ? "#2272e8" : "rgba(255,255,255,0.1)"};
+              color:${e.vis === t ? "#fff" : "rgba(255,255,255,0.6)"};">
+            ${t}
+          </button>`).join("")}
+      </strong>
+    </div>`;
 }
+
+// Borrar la foto abierta en el modal (BD + Storage + galería local)
+async function borrarFotoGaleria() {
+    const p = state.currentPM;
+    if (!p || !state.user) return;
+    if (!confirm("¿Borrar esta foto definitivamente?")) return;
+    try {
+        if (p.id) await db.from("photos").delete().eq("id", p.id).eq("user_id", state.user.id);
+        if (p.path && p.path !== "text_only") await db.storage.from("evidencias").remove([p.path]);
+        const idx = state.photos.findIndex(x => x.id === p.id);
+        if (idx >= 0) state.photos.splice(idx, 1);
+        renderGallery();
+        closePM();
+        state.feedCache = null; // que el feed se refresque
+    } catch (err) {
+        alert("Error al borrar: " + err.message);
+    }
+}
+
+// Exportar la foto abierta a la galería del móvil
+async function exportarFotoGaleria() {
+    const p = state.currentPM;
+    if (!p || !p.src) return;
+    try {
+        const blob = await fetch(p.src).then(r => r.blob());
+        const file = new File([blob], "ya-lo-pise-" + (p.muni || "foto").replace(/\s+/g, "-").toLowerCase() + ".jpg", { type: blob.type || "image/jpeg" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            // En iOS/Android sale "Guardar imagen" en el menú
+            await navigator.share({ files: [file] }).catch(() => {});
+        } else {
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = file.name;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
+        }
+    } catch (err) {
+        alert("No se pudo exportar la foto");
+    }
+}
+
 async function changePhotoVis(e, t, i) {
     if (!e) return;
     await db.from("photos").update({
@@ -1842,32 +2063,6 @@ async function loadMap() {
         // Grupo zoomable: municipios + bordes
         const g = c.append("g").attr("id", "map-zoom-group");
 
-        // Comunidades vecinas como tierra (Asturias, León, Palencia,
-        // Burgos, Bizkaia), debajo de Cantabria y sin interacción
-        const provOf = id => String(id).padStart(5, "0").slice(0, 2);
-        const NEIGHBORS = ["33", "24", "34", "09", "48"];
-        const vecinos = i.objects.municipalities.geometries.filter(gm => NEIGHBORS.includes(provOf(gm.id)));
-        if (vecinos.length) {
-            // Tierra unificada
-            g.append("path")
-                .datum(topojson.merge(i, vecinos))
-                .attr("d", l).attr("fill", "#5d665a")
-                .attr("stroke", "rgba(255,255,255,0.07)").attr("stroke-width", "0.5px")
-                .attr("pointer-events", "none");
-            // Límites entre provincias vecinas (sutil)
-            g.append("path")
-                .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a !== b && provOf(a.id) !== provOf(b.id)))
-                .attr("d", l).attr("fill", "none")
-                .attr("stroke", "rgba(25,35,30,0.45)").attr("stroke-width", "0.7px")
-                .attr("pointer-events", "none").attr("class", "map-mesh-prov");
-            // Costa/borde exterior de la tierra vecina
-            g.append("path")
-                .datum(topojson.mesh(i, { type: "GeometryCollection", geometries: vecinos }, (a, b) => a === b))
-                .attr("d", l).attr("fill", "none")
-                .attr("stroke", "rgba(15,25,35,0.4)").attr("stroke-width", "0.5px")
-                .attr("pointer-events", "none");
-        }
-
         // Sombra bajo Cantabria: profundidad sobre el mar/tierra
         const shadowF = defs.append("filter").attr("id", "cant-shadow")
             .attr("x", "-20%").attr("y", "-20%").attr("width", "140%").attr("height", "140%");
@@ -1885,7 +2080,6 @@ async function loadMap() {
             const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "Mun-" + e.id;
             let cls = "muni-path";
             if (state.visited[t]) cls += " visited";
-            else if (isCoast(t) || (state.municipiosData?.[t]?.tipo === "costa")) cls += " is-coast";
             return cls;
         }).attr("d", l).attr("data-name", e => {
             const t = e.properties.name || e.properties.NAME || e.properties.NAMEUNIT || "Mun-" + e.id;
@@ -1900,11 +2094,11 @@ async function loadMap() {
 
         const u = e => String(e).startsWith("39") || 53072 === e || "53072" === e;
         g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e !== t && u(e.id) && u(t.id)))
-            .attr("d", l).attr("fill", "none").attr("stroke", "#0c1622")
-            .attr("stroke-width", "0.4px").attr("pointer-events", "none").attr("class", "map-mesh-inner");
+            .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
+            .attr("stroke-width", "0.6px").attr("pointer-events", "none").attr("class", "map-mesh-inner");
         g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e === t && u(e.id)))
-            .attr("d", l).attr("fill", "none").attr("stroke", "#0c1622")
-            .attr("stroke-width", "1px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
+            .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
+            .attr("stroke-width", "1.3px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
 
         // Zoom y paneo (pellizcar / arrastrar)
         state.mapZoom = d3.zoom()
@@ -2584,3 +2778,67 @@ window.addEventListener("scroll", hideMentionDD, true);
 
 // Activar modo offline
 registerSW();
+
+
+// ═══ FOTOS EN COMENTARIOS ═══════════════════════════════════
+const pendingCommentFotos = {};
+function pickCommentFoto(cid) {
+    let inp = document.getElementById("comment-foto-in");
+    if (!inp) {
+        inp = document.createElement("input");
+        inp.type = "file";
+        inp.accept = "image/*";
+        inp.id = "comment-foto-in";
+        inp.style.display = "none";
+        document.body.appendChild(inp);
+        inp.addEventListener("change", async function() {
+            const f = inp.files && inp.files[0];
+            const c = inp.dataset.cid;
+            if (!f || !c) return;
+            const { base64, mime } = await compressImage(f, 1280, 0.8);
+            pendingCommentFotos[c] = { base64, mime };
+            const cam = document.getElementById("comment-cam-" + c);
+            if (cam) { cam.style.color = "#22b050"; cam.style.background = "rgba(34,176,80,0.15)"; }
+            inp.value = "";
+        });
+    }
+    inp.dataset.cid = cid;
+    inp.click();
+}
+
+// ═══ REPORTAR Y BLOQUEAR ════════════════════════════════════
+async function reportarContenido(tipo, contenidoId, usuarioId) {
+    if (!state.user) return;
+    const motivo = prompt("¿Por qué quieres reportarlo?\n(spam, contenido inapropiado, acoso, suplantación...)");
+    if (motivo === null) return;
+    try {
+        await db.from("reports").insert({
+            reporter_id: state.user.id,
+            reported_user_id: usuarioId || null,
+            content_type: tipo,
+            content_id: String(contenidoId || ""),
+            motivo: (motivo.trim() || "sin motivo").slice(0, 300)
+        });
+        alert("Gracias. Hemos recibido tu reporte y lo revisaremos.");
+    } catch (err) {
+        alert("No se pudo enviar el reporte");
+    }
+}
+
+async function bloquearUsuario(uid, uname) {
+    if (!state.user || !uid || uid === state.user.id) return;
+    if (!confirm("¿Bloquear a " + (uname || "este usuario") + "?\n\nDejaréis de ser amigos y no verás su contenido ni sus comentarios.")) return;
+    try {
+        await db.from("blocks").upsert({ blocker_id: state.user.id, blocked_id: uid });
+        await db.from("friendships").delete()
+            .or(`and(follower_id.eq.${state.user.id},following_id.eq.${uid}),and(follower_id.eq.${uid},following_id.eq.${state.user.id})`);
+        (state.blockedIds = state.blockedIds || new Set()).add(uid);
+        _friendsCache = null;
+        state.feedCache = null;
+        if (typeof closeFriendProfile === "function") closeFriendProfile();
+        if (typeof loadFriendCount === "function") loadFriendCount();
+        alert("Usuario bloqueado");
+    } catch (err) {
+        alert("Error al bloquear: " + err.message);
+    }
+}
