@@ -11,7 +11,7 @@
 //  reinstala solo y limpia las cachés antiguas.
 // ═══════════════════════════════════════════════════════════
 
-const VERSION = 'ylp-v3';
+const VERSION = 'ylp-v4';
 
 const PRECACHE = [
   './',
