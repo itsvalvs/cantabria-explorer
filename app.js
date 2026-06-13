@@ -429,7 +429,6 @@ function applyMapFilter() {
     const COLORES = {
         costa:      "#1f4e79",  // azul oscuro
         "montaña":  "#6b4a2e",  // marrón intermedio oscuro
-        pendientes: "#f2e08c",  // amarillo claro
         populares:  "#e8762e",  // naranja
         area:       "#e8c93a"   // amarillo
     };
@@ -442,7 +441,6 @@ function applyMapFilter() {
         let match = !1, color = null;
         if ("costa" === mapFilter) { match = i; color = COLORES.costa; }
         else if ("montaña" === mapFilter) { match = !i; color = COLORES["montaña"]; }
-        else if ("pendientes" === mapFilter) { match = !n; color = COLORES.pendientes; }
         else if ("populares" === mapFilter) { match = (state.popularidad?.[e] || 0) > 0; color = COLORES.populares; }
         else if ("rutas" === mapFilter) { match = !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
         else if (mapFilter.startsWith("area:")) { match = t.comarca === mapFilter.slice(5); color = COLORES.area; }
@@ -948,11 +946,12 @@ function renderDice(e, t) {
 
 function isCoast(e) {
     if (!e) return false;
-    // 1º la BD (editable en Supabase > municipios > tipo); 2º la lista
+    const nl = e.toLowerCase();
+    // Los Corrales de Buelna es MONTAÑA, diga lo que diga la BD
+    if (nl.includes('corrales de buelna') || nl.includes('los corrales')) return false;
+    // Después manda la BD (Supabase > municipios > tipo); luego la lista
     const md = state.municipiosData?.[e];
     if (md?.tipo) return md.tipo === 'costa';
-    const nl = e.toLowerCase();
-    if (nl.includes('corrales de buelna') || nl.includes('los corrales')) return false;
     return COAST_MUNIS.some(t => nl.includes(t.toLowerCase()));
 }
 
@@ -1448,6 +1447,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
 
     const __html = visits.map((v, i) => {
         const coast    = isCoast(v.municipio);
+        const isEv     = (v.municipio || "").startsWith("🎉");
         const muniSafe = esc(v.municipio);
         const username = v.profiles?.username || "Usuario";
         const userSafe = esc(username);
@@ -1474,6 +1474,8 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         ${v.gps_verificada ? '<span title="Visita verificada por GPS" style="font-size:9px;background:rgba(34,176,80,0.15);color:#22b050;border:1px solid rgba(34,176,80,0.35);border-radius:999px;padding:2px 7px;font-weight:600;white-space:nowrap">📍 Verificada</span>' : ""}
         ${v._tipo === "rec"
           ? '<div class="post-badge" style="background:rgba(232,201,58,0.16);color:#e8c93a">💡 Recomendación</div>'
+          : isEv
+          ? '<div class="post-badge" style="background:rgba(232,90,160,0.16);color:#f08fc4">🎉 Evento</div>'
           : `<div class="post-badge ${coast ? "pb-coast" : "pb-mount"}">
           <i class="ti ${coast ? "ti-waves" : "ti-mountain"}" aria-hidden="true" style="font-size:10px"></i>
           ${coast ? "Costa" : "Montaña"}
@@ -1503,12 +1505,16 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
             <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleReaction(this, this.dataset.fid, '🔥')" data-reacted="false" id="react-fire-${esc(foto.id)}" style="font-size:14px">🔥<span id="react-fire-count-${esc(foto.id)}" style="font-size:11px;margin-left:2px">0</span></button>
             <button class="post-action" data-fid="${esc(foto.id)}" onclick="toggleReaction(this, this.dataset.fid, '😍')" data-reacted="false" id="react-love-${esc(foto.id)}" style="font-size:14px">😍<span id="react-love-count-${esc(foto.id)}" style="font-size:11px;margin-left:2px">0</span></button>
           </div>` : "<div></div>"}
+          ${isEv ? `
+          <button class="post-action" style="margin-left:auto" onclick="goToEvento(this.dataset.muni)" data-muni="${muniSafe}">
+            <i class="ti ti-confetti" aria-hidden="true"></i><span style="font-size:11px">Ver evento</span>
+          </button>` : `
           <button class="post-action" style="margin-left:auto" onclick="openMuniModal(this.dataset.muni)" data-muni="${muniSafe}">
             <i class="ti ti-info-circle" aria-hidden="true"></i><span style="font-size:11px">Ver ficha</span>
           </button>
           <button class="post-action" onclick="goToMuniOnMap(this.dataset.muni)" data-muni="${muniSafe}">
             <i class="ti ti-map-pin" aria-hidden="true"></i><span style="font-size:11px">Mapa</span>
-          </button>
+          </button>`}
           ${v.user_id !== state.user?.id ? `
           <button class="post-action" title="Reportar" data-cid="${cid}" data-uid="${esc(v.user_id)}" onclick="reportarContenido('post', this.dataset.cid, this.dataset.uid)" style="color:rgba(255,255,255,0.3)">
             <i class="ti ti-flag" aria-hidden="true"></i>
@@ -1755,6 +1761,9 @@ async function openFriendProfile(e, t) {
     mod.innerHTML =
         '<button data-uid="' + esc(e) + '" onclick="reportarContenido(\'usuario\', this.dataset.uid, this.dataset.uid)" style="flex:1;padding:9px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-flag" aria-hidden="true"></i> Reportar</button>' +
         '<button data-uid="' + esc(e) + '" data-uname="' + esc(t) + '" onclick="bloquearUsuario(this.dataset.uid, this.dataset.uname)" style="flex:1;padding:9px;background:rgba(232,40,40,0.1);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-ban" aria-hidden="true"></i> Bloquear</button>';
+
+    // Amigos de este usuario (para enviarles solicitud)
+    renderFriendsOfFriend(e, mod);
     document.getElementById("fp-map").innerHTML = r.length ? r.slice(0, 8).map(e => {
         const t = isCoast(e.municipio),
             i = new Date(e.created_at).toLocaleDateString("es-ES", {
@@ -2192,8 +2201,8 @@ async function loadMap() {
             .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
             .attr("stroke-width", "0.6px").attr("pointer-events", "none").attr("class", "map-mesh-inner");
         g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e === t && u(e.id)))
-            .attr("d", l).attr("fill", "none").attr("stroke", "#0a0d10")
-            .attr("stroke-width", "2.4px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
+            .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
+            .attr("stroke-width", "0.6px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
 
         // Zoom y paneo (pellizcar / arrastrar)
         state.mapZoom = d3.zoom()
@@ -2203,7 +2212,7 @@ async function loadMap() {
                 g.attr("transform", ev.transform);
                 const k = ev.transform.k;
                 g.select(".map-mesh-inner").style("stroke-width", (0.4 / k) + "px");
-                g.select(".map-mesh-outer").style("stroke-width", (2.4 / k) + "px");
+                g.select(".map-mesh-outer").style("stroke-width", (0.6 / k) + "px");
                 const rb = document.getElementById("map-reset-zoom");
                 if (rb) rb.style.display = k > 1.05 ? "flex" : "none";
             });
@@ -3020,4 +3029,61 @@ function openEventModal(eid) {
 function closeEventModal() {
     const ov = document.getElementById("event-modal");
     if (ov) ov.style.display = "none";
+}
+
+
+// Desde un post de evento del feed → pantalla Eventos + su ficha
+function goToEvento(label) {
+    const nombre = String(label || "").replace(/^🎉\s*/, "").trim();
+    switchScreen("eventos");
+    setTimeout(() => {
+        const ev = (state.eventos || []).find(x => (x.nombre || "").trim() === nombre);
+        if (ev) openEventModal(ev.id);
+    }, 350);
+}
+
+
+// ═══ AMIGOS DE MIS AMIGOS ═══════════════════════════════════
+// Usa la función SQL friends_of() (SECURITY DEFINER): solo
+// puedes ver los amigos de alguien si tú eres su amigo.
+async function renderFriendsOfFriend(uid, antesDe) {
+    let cont = document.getElementById("fp-friends-of");
+    if (!cont) {
+        cont = document.createElement("div");
+        cont.id = "fp-friends-of";
+        antesDe.parentNode.insertBefore(cont, antesDe);
+    }
+    cont.innerHTML = "";
+    try {
+        const { data: amigos, error } = await db.rpc("friends_of", { target: uid });
+        if (error || !amigos || !amigos.length) { cont.style.display = "none"; return; }
+
+        // Mi relación con cada uno: amigos / pendiente / nada
+        const mios = new Set((await getFriendsCache()).map(p => p.id));
+        const { data: pend } = await db.from("friendships").select("follower_id,following_id")
+            .eq("estado", "pendiente")
+            .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`);
+        const pendientes = new Set((pend || []).flatMap(f => [f.follower_id, f.following_id]));
+
+        const items = amigos
+            .filter(a => a.id !== state.user.id && !state.blockedIds?.has(a.id))
+            .map(a => {
+                const av = a.avatar_url
+                    ? '<img src="' + esc(a.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(a.username) + '"/>'
+                    : getInitials(a.username);
+                let accion;
+                if (mios.has(a.id)) accion = '<span style="font-size:10px;color:#5DCAA5">✓ Amigos</span>';
+                else if (pendientes.has(a.id)) accion = '<span style="font-size:10px;color:rgba(255,255,255,0.35)">Pendiente</span>';
+                else accion = '<button data-uid="' + esc(a.id) + '" data-uname="' + esc(a.username) + '" onclick="sendFriendRequest(this.dataset.uid, this.dataset.uname, this)" style="padding:5px 11px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:10px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">+ Añadir</button>';
+                return '<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.05)">'
+                    + '<div style="width:30px;height:30px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:10px;color:#7ab3e8;flex-shrink:0;overflow:hidden">' + av + '</div>'
+                    + '<span style="flex:1;font-size:13px;color:#fff">' + esc(a.username) + '</span>'
+                    + accion + '</div>';
+            }).join("");
+        if (!items) { cont.style.display = "none"; return; }
+        cont.style.cssText = "margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08);display:block";
+        cont.innerHTML = '<div style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:6px;letter-spacing:.05em;text-transform:uppercase">👥 Sus amigos</div>' + items;
+    } catch (err) {
+        cont.style.display = "none";
+    }
 }
