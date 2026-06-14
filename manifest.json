@@ -1,9 +1,9 @@
 {
   "name": "Ya lo pisé",
   "short_name": "Ya lo pisé",
-  "description": "Explora los 102 municipios de Cantabria. Ya lo pisé.",
-  "start_url": "/cantabria-explorer/",
-  "scope": "/cantabria-explorer/",
+  "description": "Explora los 103 municipios de Cantabria. Ya lo pisé.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f1923",
