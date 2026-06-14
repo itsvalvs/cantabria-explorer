@@ -518,6 +518,15 @@ function renderSheetLocalidades(muni) {
     }
 }
 
+function closeUploadSheet() {
+    const sh = document.getElementById("upload-sheet");
+    sh.classList.remove("open");
+    sh.style.position = "";   // restaura a absolute (CSS por defecto)
+    sh.style.zIndex = "";
+    pendingEventId = null;
+    pendingEventName = null;
+}
+
 function clearPhoto() {
     document.getElementById("prev-w").style.display = "none";
     const e = document.getElementById("uzone")?.parentElement;
@@ -669,7 +678,7 @@ async function confirmVisit() {
         }
         state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
-        }), showMuniBar(e), document.getElementById("upload-sheet").classList.remove("open"), document.getElementById("file-in").value = "", document.getElementById("prev-w").style.display = "none", document.getElementById("uzone").style.display = "block", state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null, state.feedCache = null;
+        }), showMuniBar(e), closeUploadSheet(), document.getElementById("file-in").value = "", document.getElementById("prev-w").style.display = "none", document.getElementById("uzone").style.display = "block", state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null, state.feedCache = null;
         const s = document.getElementById("evidencia-desc");
         s && (s.value = ""), document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
@@ -686,7 +695,7 @@ async function confirmVisit() {
                 fecha: (new Date).toISOString().split("T")[0]
             }), state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
                 t.getAttribute("data-name") === e && t.classList.add("visited")
-            }), showMuniBar(e), document.getElementById("upload-sheet").classList.remove("open"), updateProgress(), alert("⚠️ Visita guardada pero sin foto. Error: " + t.message)
+            }), showMuniBar(e), closeUploadSheet(), updateProgress(), alert("⚠️ Visita guardada pero sin foto. Error: " + t.message)
         } catch (e) {
             alert("Error al guardar: " + t.message)
         } else alert("Error al guardar: " + t.message)
@@ -703,7 +712,7 @@ async function desmarcarVisit() {
     try {
         await db.from("visits").delete().eq("user_id", state.user.id).eq("municipio", e), delete state.visited[e], document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && (t.classList.remove("visited"), t.classList.remove("selected"))
-        }), document.getElementById("muni-bar").style.display = "none", document.getElementById("upload-sheet").classList.remove("open"), updateProgress()
+        }), document.getElementById("muni-bar").style.display = "none", closeUploadSheet(), updateProgress()
     } catch (e) {
         alert("Error al desmarcar: " + e.message)
     } finally {
@@ -853,7 +862,24 @@ let pendingEventId = null,
     pendingEventName = null;
 
 function openEventFotoSheet(e, t) {
-    pendingEventId = e, pendingEventName = t, state.selectedMuni = null, document.getElementById("sht-title").textContent = t, document.getElementById("sht-sub").textContent = "Sube una foto de la fiesta 📸", document.getElementById("btn-desmarcar").style.display = "none", document.getElementById("btn-conf").textContent = "Publicar foto", clearPhoto(), document.getElementById("evidencia-desc").value = "", document.getElementById("upload-sheet").classList.add("open")
+    pendingEventId = e;
+    pendingEventName = t;
+    document.getElementById("sht-title").textContent = t;
+    document.getElementById("sht-sub").textContent = "Sube una foto de la fiesta 📸";
+    document.getElementById("btn-desmarcar").style.display = "none";
+    document.getElementById("btn-conf").textContent = "Publicar foto";
+    clearPhoto();
+    const desc = document.getElementById("evidencia-desc");
+    if (desc) desc.value = "";
+    // Ocultar el checklist de localidades (es de municipios, no de eventos)
+    const locs = document.getElementById("sheet-locs");
+    if (locs) { locs.style.display = "none"; locs.innerHTML = ""; }
+    // Abrir la hoja como OVERLAY que flota sobre la pantalla actual
+    // (Eventos), en vez de saltar al mapa
+    const sh = document.getElementById("upload-sheet");
+    sh.style.position = "fixed";
+    sh.style.zIndex = "400";
+    sh.classList.add("open");
 }
 async function confirmEventPhoto() {
     if (!pendingEventId || !state.user) return;
@@ -890,7 +916,7 @@ async function confirmEventPhoto() {
                 hour: "2-digit",
                 minute: "2-digit"
             })
-        }), state.feedCache = null, document.getElementById("upload-sheet").classList.remove("open"), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos(), alert("¡Foto del evento publicada! 🎉")
+        }), state.feedCache = null, closeUploadSheet(), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos(), alert("¡Foto del evento publicada! 🎉")
     } catch (e) {
         alert("Error: " + e.message)
     } finally {
