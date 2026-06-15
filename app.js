@@ -286,14 +286,10 @@ async function doRegister() {
 }
 
 function setAuthLoading(e) {
-    document.getElementById("btn-login").disabled = e, document.getElementById("btn-register").disabled = e
+    const b = document.getElementById("btn-auth-submit");
+    if (b) b.disabled = e;
 }
 
-function toggleAuthForm() {
-    const e = document.getElementById("register-row"),
-        t = "flex" === e.style.display;
-    e.style.display = t ? "none" : "flex", document.getElementById("auth-toggle-txt").textContent = t ? "¿No tienes cuenta? Regístrate" : "¿Ya tienes cuenta? Inicia sesión", document.getElementById("auth-msg").style.display = "none"
-}
 async function doLogout() {
     await db.auth.signOut(), state.user = null, state.profile = null, state.visited = {}, state.photos = [], showAuth()
 }
@@ -3263,3 +3259,43 @@ async function renderRankingGlobal() {
         cont.style.display = "none";
     }
 }
+
+
+// ═══ RESTABLECER CONTRASEÑA (tras pulsar el enlace del email) ═══
+async function promptNuevaPassword() {
+    document.getElementById("splash")?.remove();
+    document.getElementById("app").style.display = "none";
+    document.getElementById("auth-screen").style.display = "flex";
+    document.getElementById("auth-choice").style.display = "none";
+    const form = document.getElementById("auth-form");
+    form.style.display = "block";
+    form.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:12px;text-align:center">Elige tu nueva contraseña</div>'
+        + '<input class="auth-input" id="new-pass" type="password" placeholder="Nueva contraseña (mín. 6)" autocomplete="new-password"/>'
+        + '<input class="auth-input" id="new-pass2" type="password" placeholder="Repite la contraseña" autocomplete="new-password"/>'
+        + '<button class="btn-login-main" onclick="guardarNuevaPassword()">Guardar contraseña</button>';
+}
+async function guardarNuevaPassword() {
+    const p1 = document.getElementById("new-pass").value;
+    const p2 = document.getElementById("new-pass2").value;
+    const msg = document.getElementById("auth-msg");
+    msg.style.color = "#e8288a";
+    if (p1.length < 6) { msg.textContent = "Mínimo 6 caracteres"; msg.style.display = "block"; return; }
+    if (p1 !== p2) { msg.textContent = "Las contraseñas no coinciden"; msg.style.display = "block"; return; }
+    setAuthLoading(!0);
+    const { error } = await db.auth.updateUser({ password: p1 });
+    setAuthLoading(!1);
+    if (error) {
+        msg.textContent = "Error: " + error.message; msg.style.display = "block";
+    } else {
+        msg.style.color = "#5DCAA5";
+        msg.textContent = "✅ Contraseña cambiada. Entrando...";
+        msg.style.display = "block";
+    }
+}
+
+
+// Enter en los campos de login/registro = enviar
+["auth-email", "auth-pass", "auth-username"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("keydown", e => { if (e.key === "Enter") submitAuth(); });
+});
