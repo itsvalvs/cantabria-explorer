@@ -243,6 +243,62 @@ function showAuth(e = "") {
 function showApp() {
     document.getElementById("splash")?.remove(), document.getElementById("auth-screen").style.display = "none", document.getElementById("app").style.display = "flex"
 }
+let authMode = null; // null = elegir, 'login', 'register'
+function setAuthMode(mode) {
+    authMode = mode;
+    const choice = document.getElementById("auth-choice"),
+        form = document.getElementById("auth-form"),
+        user = document.getElementById("auth-username"),
+        forgot = document.getElementById("auth-forgot"),
+        submit = document.getElementById("btn-auth-submit"),
+        msg = document.getElementById("auth-msg");
+    if (msg) msg.style.display = "none";
+    if (!mode) {
+        if (choice) choice.style.display = "block";
+        if (form) form.style.display = "none";
+        return;
+    }
+    if (choice) choice.style.display = "none";
+    if (form) form.style.display = "block";
+    if (mode === "register") {
+        if (user) user.style.display = "block";
+        if (forgot) forgot.style.display = "none";
+        if (submit) submit.textContent = "Crear cuenta";
+    } else {
+        if (user) user.style.display = "none";
+        if (forgot) forgot.style.display = "block";
+        if (submit) submit.textContent = "Iniciar sesión";
+    }
+    const em = document.getElementById("auth-email"), pa = document.getElementById("auth-pass");
+    if (em) em.value = ""; if (pa) pa.value = ""; if (user) user.value = "";
+}
+
+function submitAuth() {
+    if (authMode === "register") doRegister();
+    else doLogin();
+}
+
+async function doForgotPassword() {
+    const email = document.getElementById("auth-email").value.trim();
+    const msg = document.getElementById("auth-msg");
+    if (!email) {
+        msg.style.color = "#e8288a";
+        msg.textContent = "Escribe tu email arriba y vuelve a pulsar aquí";
+        msg.style.display = "block";
+        return;
+    }
+    setAuthLoading(!0);
+    const { error } = await db.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin + window.location.pathname
+    });
+    setAuthLoading(!1);
+    msg.style.color = error ? "#e8288a" : "#5DCAA5";
+    msg.textContent = error
+        ? "No se pudo enviar. Revisa el email."
+        : "📧 Te hemos enviado un correo para restablecer tu contraseña. Revisa tu bandeja (y spam).";
+    msg.style.display = "block";
+}
+
 async function doLogin() {
     const e = document.getElementById("auth-email").value.trim(),
         t = document.getElementById("auth-pass").value,
