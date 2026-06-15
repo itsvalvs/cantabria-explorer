@@ -330,6 +330,7 @@ async function loadUserData(e) {
         const { data: bl } = await db.from("blocks").select("blocked_id").eq("blocker_id", state.user.id);
         state.blockedIds = new Set((bl || []).map(b => b.blocked_id));
     } catch (err) { state.blockedIds = new Set(); }
+    await loadWishlist();
     o.data && o.data.forEach(e => {
         state.inscripciones[e.event_id] = !0
     }), updateProgress(), subscribeToFriendActivity()
@@ -443,6 +444,7 @@ function applyMapFilter() {
         else if ("montaña" === mapFilter) { match = !i; color = COLORES["montaña"]; }
         else if ("populares" === mapFilter) { match = (state.popularidad?.[e] || 0) > 0; color = COLORES.populares; }
         else if ("rutas" === mapFilter) { match = !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
+        else if ("wishlist" === mapFilter) { match = state.wishlist?.has(e); color = "#e85aa0"; }
         else if (mapFilter.startsWith("area:")) { match = t.comarca === mapFilter.slice(5); color = COLORES.area; }
         else if (SELLOS[mapFilter]) { match = o.includes(mapFilter); color = COLORES.populares; }
         // Pintar: el color del filtro en los que cumplen (no conquistados);
@@ -519,10 +521,7 @@ function renderSheetLocalidades(muni) {
 }
 
 function closeUploadSheet() {
-    const sh = document.getElementById("upload-sheet");
-    sh.classList.remove("open");
-    sh.style.position = "";   // restaura a absolute (CSS por defecto)
-    sh.style.zIndex = "";
+    document.getElementById("upload-sheet").classList.remove("open");
     pendingEventId = null;
     pendingEventName = null;
 }
@@ -1039,6 +1038,7 @@ function renderMuniList() {
 
 function openMuniModal(e) {
     if (!e) return;
+    state.currentMuni = e;
     if (!state.municipiosData) return void db.from("municipios").select("*").then(({
         data: t
     }) => {
@@ -1085,6 +1085,9 @@ function openMuniModal(e) {
     t.ruta && String(t.ruta).trim() && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(93,202,165,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#5DCAA5">🥾 Con ruta</div>');
     const d = state.popularidad?.[e] || 0;
     d > 0 && r.push('<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(232,184,32,0.15);border-radius:999px;padding:4px 10px;font-size:11px;color:#e8b820">🔥 ' + d + " visitas</div>"), document.getElementById("mm-pills").innerHTML = r.join(" "), document.getElementById("mm-desc").textContent = t.descripcion || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.", document.getElementById("mm-curiosidad").textContent = t.curiosidad || "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.";
+    // Estado del botón de wishlist
+    updateWishBtn(e);
+
     // Apartado de localidades (columna "localidades" de municipios)
     let locEl = document.getElementById("mm-localidades");
     if (!locEl) {
@@ -1714,13 +1717,16 @@ async function postComment(e, t, i) {
                 const cam = document.getElementById("comment-cam-" + e);
                 if (cam) { cam.style.color = ""; cam.style.background = "rgba(255,255,255,0.07)"; }
             }
-            await db.from("photo_comments").insert({
-                user_id: state.user.id,
-                photo_id: e,
-                texto: o || null,
-                foto_path: fotoPath
-            }), await loadVisitComments(e);
-            const t = o.match(/@(\w+)/g);
+            let insErr = (await db.from("photo_comments").insert({
+                user_id: state.user.id, photo_id: e, texto: o || null, foto_path: fotoPath
+            })).error;
+            if (insErr && /foto_path|column|schema cache/i.test(insErr.message || "")) {
+                // La columna foto_path aún no existe: guardar al menos el texto
+                if (o) await db.from("photo_comments").insert({ user_id: state.user.id, photo_id: e, texto: o });
+                alert("La foto en comentarios necesita un ajuste en la base de datos (ejecuta el SQL). De momento se guardó solo el texto.");
+            }
+            await loadVisitComments(e);
+            const t = (o || "").match(/@(\w+)/g);
             if (t)
                 for (const e of t) {
                     const t = e.slice(1),
@@ -2217,7 +2223,7 @@ async function loadMap() {
         }).style("stroke", "none").on("click", function() {
             const name = d3.select(this).attr("data-name");
             d3.selectAll(".muni-path").classed("selected", !1);
-            d3.select(this).classed("selected", !0).raise();
+            d3.select(this).classed("selected", !0);
             state.selectedMuni = name;
             showMuniBar(name);
         });
@@ -2229,6 +2235,8 @@ async function loadMap() {
         g.append("path").datum(topojson.mesh(i, i.objects.municipalities, (e, t) => e === t && u(e.id)))
             .attr("d", l).attr("fill", "none").attr("stroke", "#111418")
             .attr("stroke-width", "0.6px").attr("pointer-events", "none").attr("class", "map-mesh-outer");
+        // Los bordes siempre por encima (aunque un municipio se repinte)
+        g.selectAll(".map-mesh-inner,.map-mesh-outer").raise();
 
         // Zoom y paneo (pellizcar / arrastrar)
         state.mapZoom = d3.zoom()
@@ -2938,26 +2946,25 @@ registerSW();
 // ═══ FOTOS EN COMENTARIOS ═══════════════════════════════════
 const pendingCommentFotos = {};
 function pickCommentFoto(cid) {
-    let inp = document.getElementById("comment-foto-in");
-    if (!inp) {
-        inp = document.createElement("input");
-        inp.type = "file";
-        inp.accept = "image/*";
-        inp.id = "comment-foto-in";
-        inp.style.display = "none";
-        document.body.appendChild(inp);
-        inp.addEventListener("change", async function() {
-            const f = inp.files && inp.files[0];
-            const c = inp.dataset.cid;
-            if (!f || !c) return;
-            const { base64, mime } = await compressImage(f, 1280, 0.8);
-            pendingCommentFotos[c] = { base64, mime };
-            const cam = document.getElementById("comment-cam-" + c);
-            if (cam) { cam.style.color = "#22b050"; cam.style.background = "rgba(34,176,80,0.15)"; }
-            inp.value = "";
-        });
-    }
-    inp.dataset.cid = cid;
+    // Input nuevo en cada uso: evita listeners pegados y el bug de iOS
+    // al reutilizar el mismo <input> para varios comentarios
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/*";
+    inp.style.display = "none";
+    document.body.appendChild(inp);
+    inp.addEventListener("change", async function() {
+        const f = inp.files && inp.files[0];
+        if (f) {
+            try {
+                const { base64, mime } = await compressImage(f, 1280, 0.8);
+                pendingCommentFotos[cid] = { base64, mime };
+                const cam = document.getElementById("comment-cam-" + cid);
+                if (cam) { cam.style.color = "#22b050"; cam.style.background = "rgba(34,176,80,0.2)"; cam.style.borderColor = "rgba(34,176,80,0.4)"; }
+            } catch (e) { alert("No se pudo procesar la foto"); }
+        }
+        inp.remove();
+    });
     inp.click();
 }
 
@@ -3046,7 +3053,7 @@ function openEventModal(eid) {
         + contactoHtml + recoHtml
         + '<div id="evm-fotos" style="margin-top:14px"></div>'
         + '<div style="display:flex;gap:8px;margin-top:16px">'
-        + '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" style="flex:1;padding:13px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto del evento</button>'
+        + '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();setTimeout(()=>openEventFotoSheet(this.dataset.eid, this.dataset.ename),60)" style="flex:1;padding:13px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto del evento</button>'
         + '<button data-eid="' + esc(ev.id) + '" onclick="toggleInscripcion(this.dataset.eid);closeEventModal()" style="flex:1;padding:13px;background:' + (state.inscripciones[ev.id] ? 'rgba(34,176,80,0.18);color:#5DCAA5;border:1px solid rgba(34,176,80,0.4)' : '#22b050;color:#fff;border:none') + ';border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (state.inscripciones[ev.id] ? '✓ Apuntado' : 'Apuntarme') + '</button>'
         + '</div></div>';
     ov.style.display = "flex";
@@ -3111,5 +3118,49 @@ async function renderFriendsOfFriend(uid, antesDe) {
         cont.innerHTML = '<div style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:6px;letter-spacing:.05em;text-transform:uppercase">👥 Sus amigos</div>' + items;
     } catch (err) {
         cont.style.display = "none";
+    }
+}
+
+
+// ═══ WISHLIST DE SITIOS A VISITAR ═══════════════════════════
+// state.wishlist es un Set de nombres de municipio
+async function loadWishlist() {
+    if (!state.user) { state.wishlist = new Set(); return; }
+    try {
+        const { data } = await db.from("wishlist").select("municipio").eq("user_id", state.user.id);
+        state.wishlist = new Set((data || []).map(w => w.municipio));
+    } catch (e) { state.wishlist = new Set(); }
+}
+
+function updateWishBtn(muni) {
+    const lbl = document.getElementById("mm-wish-label");
+    const btn = document.getElementById("mm-btn-wish");
+    if (!lbl || !btn) return;
+    const on = state.wishlist?.has(muni);
+    lbl.textContent = on ? "En tu wishlist ✓" : "Añadir a mi wishlist";
+    btn.style.background = on ? "rgba(232,90,160,0.28)" : "rgba(232,90,160,0.15)";
+    btn.style.color = on ? "#ffa8d4" : "#f08fc4";
+}
+
+async function toggleWishlist(muni) {
+    if (!state.user || !muni) return;
+    state.wishlist = state.wishlist || new Set();
+    const estaba = state.wishlist.has(muni);
+    try {
+        if (estaba) {
+            await db.from("wishlist").delete().eq("user_id", state.user.id).eq("municipio", muni);
+            state.wishlist.delete(muni);
+        } else {
+            await db.from("wishlist").upsert(
+                { user_id: state.user.id, municipio: muni },
+                { onConflict: "user_id,municipio" }
+            );
+            state.wishlist.add(muni);
+        }
+        updateWishBtn(muni);
+        // Si el filtro wishlist está activo en el mapa, refrescar
+        if (mapFilter === "wishlist") applyMapFilter();
+    } catch (e) {
+        alert("No se pudo actualizar la wishlist. ¿Ejecutaste el SQL de wishlist?");
     }
 }
