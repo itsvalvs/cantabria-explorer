@@ -11,7 +11,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <meta name="app-version" content="202606151430"/>
+  <meta name="app-version" content="202606151600"/>
   <link rel="manifest" href="manifest.json"/>
   <title>Ya lo pisé</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -749,46 +749,6 @@
 </div><!-- /app -->
 
 <!-- Supabase JS -->
-<script>
-// ANTI-BFCACHE + ANTI-CACHE — ejecuta antes que todo
-(function() {
-  // 1. BFCache fix — cuando Safari restaura página congelada, recargar
-  window.addEventListener('pageshow', function(e) {
-    if (e.persisted) {
-      // La página viene del BFCache — forzar recarga completa
-      window.location.reload(true);
-    }
-  });
-
-  // 2. Visibilitychange fix — cuando vuelves a la pestaña tras fondo
-  document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible') {
-      // Comprobar si la app está en estado roto (pantalla negra)
-      setTimeout(function() {
-        const app = document.getElementById('app');
-        const auth = document.getElementById('auth-screen');
-        if (app && auth) {
-          const appVisible  = app.style.display !== 'none' && app.style.display !== '';
-          const authVisible = auth.style.display !== 'none' && auth.style.display !== '';
-          if (!appVisible && !authVisible) {
-            // Ninguna pantalla visible — estado roto, recargar
-            window.location.reload(true);
-          }
-        }
-      }, 500);
-    }
-  });
-
-  // 3. (eliminado) El service worker ahora SÍ se usa: da modo offline.
-  //    Su versionado se gestiona en sw.js + meta app-version.
-})();
-</script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<!-- D3 + TopoJSON -->
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
-<!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
-<script src="app.js?v=202606151430"></script>
     <div class="bsheet" id="upload-sheet">
       <div class="bhandle"></div>
       <div class="bst" id="sht-title">Subir evidencia</div>
@@ -828,5 +788,45 @@
       <button onclick="closeUploadSheet()" style="display:block;width:100%;margin-top:6px;padding:8px;background-color:transparent;color:rgba(255,255,255,0.45);border:none;font-size:13px;cursor:pointer;font-family:Inter,sans-serif;">Cancelar</button>
     </div>
 
+<script>
+// ANTI-BFCACHE + ANTI-CACHE — ejecuta antes que todo
+(function() {
+  // 1. BFCache fix — cuando Safari restaura página congelada, recargar
+  window.addEventListener('pageshow', function(e) {
+    if (e.persisted) {
+      // La página viene del BFCache — forzar recarga completa
+      window.location.reload(true);
+    }
+  });
+
+  // 2. Visibilitychange fix — cuando vuelves a la pestaña tras fondo
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+      // Comprobar si la app está en estado roto (pantalla negra)
+      setTimeout(function() {
+        const app = document.getElementById('app');
+        const auth = document.getElementById('auth-screen');
+        if (app && auth) {
+          const appVisible  = app.style.display !== 'none' && app.style.display !== '';
+          const authVisible = auth.style.display !== 'none' && auth.style.display !== '';
+          if (!appVisible && !authVisible) {
+            // Ninguna pantalla visible — estado roto, recargar
+            window.location.reload(true);
+          }
+        }
+      }, 500);
+    }
+  });
+
+  // 3. (eliminado) El service worker ahora SÍ se usa: da modo offline.
+  //    Su versionado se gestiona en sw.js + meta app-version.
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- D3 + TopoJSON -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
+<script src="app.js?v=202606151600"></script>
 </body>
 </html>
