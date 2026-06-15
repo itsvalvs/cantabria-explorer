@@ -11,7 +11,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <meta name="app-version" content="202606140900"/>
+  <meta name="app-version" content="202606151000"/>
   <link rel="manifest" href="manifest.json"/>
   <title>Ya lo pisé</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -136,7 +136,7 @@
     .ms{font-size:11px;color:var(--muted);margin-top:2px;}
 
     /* SHEET */
-    .bsheet{display:none;position:absolute;bottom:0;left:0;right:0;background:var(--bg3);border-top:1px solid rgba(255,255,255,0.1);border-radius:22px 22px 0 0;padding:16px 18px calc(24px + env(safe-area-inset-bottom));z-index:10;animation:su .22s ease;max-height:90vh;overflow-y:auto;}
+    .bsheet{display:none;position:fixed;bottom:0;left:0;right:0;max-width:520px;margin:0 auto;background:var(--bg3);border-top:1px solid rgba(255,255,255,0.1);border-radius:22px 22px 0 0;padding:16px 18px calc(24px + env(safe-area-inset-bottom));z-index:400;animation:su .22s ease;max-height:90vh;overflow-y:auto;}
     .bsheet.open{display:block;}
     @keyframes su{from{transform:translateY(100%);}to{transform:translateY(0);}}
     .bhandle{width:32px;height:4px;background:rgba(255,255,255,0.15);border-radius:999px;margin:0 auto 14px;}
@@ -350,6 +350,7 @@
         <button class="map-filter-btn" data-filter="montaña" onclick="setMapFilter('montaña')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">⛰️ Montaña</button>
         <button class="map-filter-btn" data-filter="areas" onclick="setMapFilter('areas')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🗺️ Áreas</button>
         <button class="map-filter-btn" data-filter="rutas" onclick="setMapFilter('rutas')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🥾 Rutas</button>
+        <button class="map-filter-btn" data-filter="wishlist" onclick="setMapFilter('wishlist')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">💖 Wishlist</button>
       </div>
       <!-- Desplegable de áreas/comarcas -->
       <div id="map-areas-dd" style="display:none;margin:0 12px 10px;background:#141e2c;border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:8px;flex-wrap:wrap;gap:6px"></div>
@@ -366,45 +367,8 @@
         </button>
       </div>
     </div>
-    <div class="bsheet" id="upload-sheet">
-      <div class="bhandle"></div>
-      <div class="bst" id="sht-title">Subir evidencia</div>
-      <div class="bss" id="sht-sub">Foto, descripción o ambas</div>
-      <!-- Visibilidad -->
-      <div class="vis-row">
-        <button class="vis-btn" id="vis-privado" onclick="setVis('privado')"><i class="ti ti-lock" aria-hidden="true" style="font-size:11px"></i> Privado</button>
-        <button class="vis-btn vis-active" id="vis-amigos" onclick="setVis('amigos')"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i> Amigos</button>
-        <button class="vis-btn" id="vis-publico" onclick="setVis('publico')"><i class="ti ti-world" aria-hidden="true" style="font-size:11px"></i> Público</button>
-      </div>
-      <!-- Preview foto -->
-      <div class="prev-w" id="prev-w">
-        <img id="prev-img" src="" alt="preview"/>
-        <div class="prev-meta" id="prev-meta"></div>
-        <button onclick="clearPhoto()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;">
-          <i class="ti ti-x" aria-hidden="true"></i>
-        </button>
-      </div>
-      <!-- Zona subir foto — input visible pero transparente encima del div -->
-      <div style="position:relative">
-        <div class="uzone" id="uzone" style="pointer-events:none">
-          <i class="ti ti-camera-plus" aria-hidden="true"></i>
-          Toca para añadir foto <span style="color:rgba(255,255,255,0.4)">(opcional)</span>
-          <div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div>
-        </div>
-        <input type="file" id="file-in" accept="image/*"
-          style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:10;">
-      </div>
-      <!-- Descripción -->
-      <textarea id="evidencia-desc" placeholder="Añade una descripción de tu visita... (opcional)"
-        style="display:block;width:100%;margin-top:10px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;min-height:72px;line-height:1.5;"></textarea>
-      <!-- Botones -->
-      <button id="btn-conf" onclick="confirmVisit()" style="display:block;width:100%;margin-top:12px;padding:13px;background-color:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">Marcar como conquistado</button>
-      <button id="btn-desmarcar" onclick="desmarcarVisit()" style="display:none;width:100%;margin-top:8px;padding:11px;background-color:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">
-        <i class="ti ti-trash" aria-hidden="true" style="font-size:13px"></i> Desmarcar como conquistado
-      </button>
-      <button onclick="closeUploadSheet()" style="display:block;width:100%;margin-top:6px;padding:8px;background-color:transparent;color:rgba(255,255,255,0.45);border:none;font-size:13px;cursor:pointer;font-family:Inter,sans-serif;">Cancelar</button>
-    </div>
     <div class="nav" id="nav-map"></div>
+
   </div>
 
   <!-- EVENTOS -->
@@ -726,6 +690,9 @@
               <div id="mm-friend-evidence"></div>
             </div>
             <!-- Botones acción -->
+            <button id="mm-btn-wish" onclick="toggleWishlist(state.currentMuni)" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:13px;background-color:rgba(232,90,160,0.15);color:#f08fc4;border:1px solid rgba(232,90,160,0.4);border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;margin-bottom:8px;">
+              <i class="ti ti-heart" aria-hidden="true"></i> <span id="mm-wish-label">Añadir a mi wishlist</span>
+            </button>
             <button id="mm-btn-mapa" style="display:flex;width:100%;align-items:center;justify-content:center;gap:7px;padding:13px;background-color:#e8b820;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;margin-bottom:8px;">
               <i class="ti ti-map-pin" aria-hidden="true"></i> Ver en el mapa
             </button>
@@ -821,6 +788,45 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
-<script src="app.js?v=202606140900"></script>
+<script src="app.js?v=202606151000"></script>
+    <div class="bsheet" id="upload-sheet">
+      <div class="bhandle"></div>
+      <div class="bst" id="sht-title">Subir evidencia</div>
+      <div class="bss" id="sht-sub">Foto, descripción o ambas</div>
+      <!-- Visibilidad -->
+      <div class="vis-row">
+        <button class="vis-btn" id="vis-privado" onclick="setVis('privado')"><i class="ti ti-lock" aria-hidden="true" style="font-size:11px"></i> Privado</button>
+        <button class="vis-btn vis-active" id="vis-amigos" onclick="setVis('amigos')"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i> Amigos</button>
+        <button class="vis-btn" id="vis-publico" onclick="setVis('publico')"><i class="ti ti-world" aria-hidden="true" style="font-size:11px"></i> Público</button>
+      </div>
+      <!-- Preview foto -->
+      <div class="prev-w" id="prev-w">
+        <img id="prev-img" src="" alt="preview"/>
+        <div class="prev-meta" id="prev-meta"></div>
+        <button onclick="clearPhoto()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;">
+          <i class="ti ti-x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <!-- Zona subir foto — input visible pero transparente encima del div -->
+      <div style="position:relative">
+        <div class="uzone" id="uzone" style="pointer-events:none">
+          <i class="ti ti-camera-plus" aria-hidden="true"></i>
+          Toca para añadir foto <span style="color:rgba(255,255,255,0.4)">(opcional)</span>
+          <div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div>
+        </div>
+        <input type="file" id="file-in" accept="image/*"
+          style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:10;">
+      </div>
+      <!-- Descripción -->
+      <textarea id="evidencia-desc" placeholder="Añade una descripción de tu visita... (opcional)"
+        style="display:block;width:100%;margin-top:10px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;min-height:72px;line-height:1.5;"></textarea>
+      <!-- Botones -->
+      <button id="btn-conf" onclick="confirmVisit()" style="display:block;width:100%;margin-top:12px;padding:13px;background-color:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">Marcar como conquistado</button>
+      <button id="btn-desmarcar" onclick="desmarcarVisit()" style="display:none;width:100%;margin-top:8px;padding:11px;background-color:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;text-align:center;">
+        <i class="ti ti-trash" aria-hidden="true" style="font-size:13px"></i> Desmarcar como conquistado
+      </button>
+      <button onclick="closeUploadSheet()" style="display:block;width:100%;margin-top:6px;padding:8px;background-color:transparent;color:rgba(255,255,255,0.45);border:none;font-size:13px;cursor:pointer;font-family:Inter,sans-serif;">Cancelar</button>
+    </div>
+
 </body>
 </html>
