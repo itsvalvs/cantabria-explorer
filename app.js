@@ -299,7 +299,8 @@ async function doLogout() {
 }
 async function loadUserData(e) {
     state.user = e;
-    const [t, i, n, o] = await Promise.all([db.from("profiles").select("*").eq("id", e.id).single(), db.from("visits").select("municipio,localidades").eq("user_id", e.id), db.from("photos").select("*").eq("user_id", e.id).order("created_at", {
+    try {
+    const [t, i, n, o] = await Promise.all([db.from("profiles").select("*").eq("id", e.id).single(), db.from("visits").select("*").eq("user_id", e.id), db.from("photos").select("*").eq("user_id", e.id).order("created_at", {
         ascending: !1
     }), db.from("event_signups").select("event_id").eq("user_id", e.id)]), a = t.data;
     if (state.profile = a, a && (document.getElementById("u-name").textContent = a.username, document.getElementById("av-init").textContent = a.username.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2), a.avatar_url)) {
@@ -333,7 +334,12 @@ async function loadUserData(e) {
     await loadWishlist();
     o.data && o.data.forEach(e => {
         state.inscripciones[e.event_id] = !0
-    }), updateProgress(), subscribeToFriendActivity()
+    }), updateProgress(), subscribeToFriendActivity();
+    } catch (err) {
+        console.error("loadUserData no bloqueante:", err);
+        state.wishlist = state.wishlist || new Set();
+        state.blockedIds = state.blockedIds || new Set();
+    }
 }
 
 function switchScreen(e) {
@@ -2319,7 +2325,12 @@ async function init() {
                 session: t
             }
         } = await db.auth.getSession();
-    clearTimeout(e), t?.user ? (await loadUserData(t.user), showApp(), loadMap(), loadEventos()) : showAuth(), db.auth.onAuthStateChange(async (e, t) => {
+    clearTimeout(e);
+    if (t?.user) {
+        try { await loadUserData(t.user); } catch (err) { console.error("init:", err); }
+        showApp(); loadMap(); loadEventos();
+    } else showAuth();
+    db.auth.onAuthStateChange(async (e, t) => {
         "SIGNED_OUT" === e ? showAuth() : "SIGNED_IN" === e && t?.user && !state.user && (await loadUserData(t.user), showApp(), loadMap(), loadEventos())
     })
 }
@@ -3088,8 +3099,23 @@ async function renderFriendsOfFriend(uid, antesDe) {
     }
     cont.innerHTML = "";
     try {
-        const { data: amigos, error } = await db.rpc("friends_of", { target: uid });
-        if (error || !amigos || !amigos.length) { cont.style.display = "none"; return; }
+        let amigos = null;
+        const rpc = await db.rpc("friends_of", { target: uid });
+        if (!rpc.error && Array.isArray(rpc.data)) amigos = rpc.data;
+        if (!amigos) {
+            const { data: fs } = await db.from("friendships")
+                .select("follower_id,following_id")
+                .eq("estado", "aceptado")
+                .or(`follower_id.eq.${uid},following_id.eq.${uid}`);
+            const ids = [...new Set((fs || [])
+                .map(f => f.follower_id === uid ? f.following_id : f.follower_id)
+                .filter(id => id && id !== uid))];
+            if (ids.length) {
+                const { data: profs } = await db.from("profiles").select("id,username,avatar_url").in("id", ids);
+                amigos = profs || [];
+            } else amigos = [];
+        }
+        if (!amigos.length) { cont.style.display = "none"; return; }
 
         // Mi relación con cada uno: amigos / pendiente / nada
         const mios = new Set((await getFriendsCache()).map(p => p.id));
