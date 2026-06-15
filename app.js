@@ -3190,3 +3190,76 @@ async function toggleWishlist(muni) {
         alert("No se pudo actualizar la wishlist. ¿Ejecutaste el SQL de wishlist?");
     }
 }
+
+
+// ═══ RANKING GLOBAL: top 10 por municipios verificados ══════
+async function renderRankingGlobal() {
+    let cont = document.getElementById("ranking-global");
+    if (!cont) {
+        cont = document.createElement("div");
+        cont.id = "ranking-global";
+        const fp = document.getElementById("feed-posts");
+        fp.parentNode.insertBefore(cont, fp);
+    }
+    cont.innerHTML = '<div style="text-align:center;padding:14px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 8px"></div>Cargando ranking...</div>';
+    try {
+        // Traer visitas verificadas por GPS (paginado por si hay muchas)
+        let all = [], from = 0;
+        for (let p = 0; p < 20; p++) {
+            const { data, error } = await db.from("visits")
+                .select("user_id, municipio")
+                .eq("gps_verificada", !0)
+                .range(from, from + 999);
+            if (error) {
+                // Si la columna no existe aún, ocultar el ranking
+                cont.style.display = "none"; return;
+            }
+            if (!data || !data.length) break;
+            all = all.concat(data);
+            if (data.length < 1000) break;
+            from += 1000;
+        }
+        // Contar municipios DISTINTOS verificados por usuario
+        const porUser = {};
+        all.forEach(v => {
+            (porUser[v.user_id] = porUser[v.user_id] || new Set()).add(v.municipio);
+        });
+        const ids = Object.keys(porUser);
+        if (!ids.length) {
+            cont.innerHTML = '<div style="background:var(--bg2,#141e2c);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px;margin-bottom:14px;text-align:center;color:rgba(255,255,255,0.4);font-size:13px">🏆 Aún no hay visitas verificadas por GPS. ¡Sé el primero en aparecer en el ranking!</div>';
+            return;
+        }
+        // Top 10
+        const ranking = ids.map(id => ({ id, n: porUser[id].size }))
+            .sort((a, b) => b.n - a.n).slice(0, 10);
+        // Nombres y avatares
+        const { data: profs } = await db.from("profiles")
+            .select("id, username, avatar_url").in("id", ranking.map(r => r.id));
+        const pById = {};
+        (profs || []).forEach(p => { pById[p.id] = p; });
+
+        const medalla = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : (i + 1) + "º";
+        const filas = ranking.map((r, i) => {
+            const p = pById[r.id] || {};
+            const u = p.username || "Usuario";
+            const mine = r.id === state.user?.id;
+            const av = p.avatar_url
+                ? '<img src="' + esc(p.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
+                : getInitials(u);
+            return '<div style="display:flex;align-items:center;gap:11px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,0.05)' + (mine ? ';background:rgba(34,176,80,0.08);border-radius:10px' : '') + '">'
+                + '<span style="font-size:15px;width:30px;text-align:center;flex-shrink:0">' + medalla(i) + '</span>'
+                + '<div style="width:34px;height:34px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:11px;color:#7ab3e8;flex-shrink:0;overflow:hidden">' + av + '</div>'
+                + '<span style="flex:1;font-size:14px;color:#fff;font-weight:' + (mine ? "700" : "500") + '">' + esc(u) + (mine ? ' <span style="font-size:10px;color:#5DCAA5">(tú)</span>' : '') + '</span>'
+                + '<span style="font-size:15px;font-weight:700;color:#5DCAA5">' + r.n + '</span>'
+                + '<span style="font-size:10px;color:rgba(255,255,255,0.35)">📍</span>'
+                + '</div>';
+        }).join("");
+
+        cont.innerHTML = '<div style="background:var(--bg2,#141e2c);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:16px;margin-bottom:16px">'
+            + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:18px">🏆</span><span style="font-family:Georgia,serif;font-style:italic;font-weight:700;font-size:17px;color:#fff">Top exploradores</span></div>'
+            + '<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-bottom:10px">Municipios conquistados con ubicación verificada</div>'
+            + filas + '</div>';
+    } catch (err) {
+        cont.style.display = "none";
+    }
+}
