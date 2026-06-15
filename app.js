@@ -2369,6 +2369,9 @@ function registerSW() {
 }
 async function init() {
     buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4);
+    if (/type=recovery/.test(window.location.hash + window.location.search) || /access_token=/.test(window.location.hash)) {
+        state.recoveryMode = !0;
+    }
     const e = setTimeout(() => {
             document.getElementById("splash")?.remove(), showAuth()
         }, 5e3),
@@ -2378,11 +2381,15 @@ async function init() {
             }
         } = await db.auth.getSession();
     clearTimeout(e);
-    if (t?.user) {
+    if (state.recoveryMode) {
+        promptNuevaPassword();
+    } else if (t?.user) {
         try { await loadUserData(t.user); } catch (err) { console.error("init:", err); }
         showApp(); loadMap(); loadEventos();
     } else showAuth();
     db.auth.onAuthStateChange(async (e, t) => {
+        if ("PASSWORD_RECOVERY" === e) { state.recoveryMode = !0; return promptNuevaPassword(); }
+        if (state.recoveryMode) return;
         "SIGNED_OUT" === e ? showAuth() : "SIGNED_IN" === e && t?.user && !state.user && (await loadUserData(t.user), showApp(), loadMap(), loadEventos())
     })
 }
