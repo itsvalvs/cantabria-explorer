@@ -443,6 +443,30 @@ document.addEventListener("click", function(e) {
 });
 let mapFilter = "todos";
 
+// Cada ruta con su municipio (para resaltarlo) y datos
+const RUTAS = [
+  { nombre:"Puertos de Áliva desde Fuente Dé", km:13.7, muni:"Camaleño", url:"https://es.wikiloc.com/rutas-senderismo/puertos-de-aliva-3161661" },
+  { nombre:"Puertos de Áliva (circular completa)", km:13.5, muni:"Camaleño", url:"https://es.wikiloc.com/rutas-senderismo/fuente-de-puertos-de-aliva-picos-de-europa-29603244" },
+  { nombre:"Urdón → Tresviso", km:12.5, muni:"Peñarrubia", url:"https://es.wikiloc.com/rutas-senderismo/urdon-tresviso-84904190" },
+  { nombre:"Subida a Tresviso desde Urdón", km:11.2, muni:"Peñarrubia", url:"https://es.wikiloc.com/rutas-senderismo/subida-a-tresviso-desde-urdon-13504518" },
+  { nombre:"Costa Quebrada (Liencres)", km:10.2, muni:"Piélagos", url:"https://es.wikiloc.com/rutas-senderismo/paseo-por-la-costa-quebrada-acantilados-y-playas-de-liencres-con-la-cima-de-pedruquios-14853422" },
+  { nombre:"Costa Quebrada (corta)", km:9.8, muni:"Piélagos", url:"https://es.wikiloc.com/rutas-senderismo/costa-quebrada-53267516" },
+  { nombre:"Costa Quebrada (larga)", km:28.8, muni:"Piélagos", url:"https://es.wikiloc.com/rutas-senderismo/circular-de-senderismo-costa-quebrada-desde-la-playa-de-la-virgen-del-mar-hasta-el-parque-natural-d-269256081" },
+  { nombre:"Monte Buciero + Faro del Caballo", km:13.3, muni:"Santoña", url:"https://es.wikiloc.com/rutas-senderismo/monte-buciero-faro-del-caballo-30259901" },
+  { nombre:"Nacimiento del río Asón (circular)", km:8.0, muni:"Soba", url:"https://es.wikiloc.com/rutas-senderismo/ason-cascada-del-ason-nacimiento-del-rio-ason-88011439" },
+  { nombre:"Nacimiento del río Asón (senda fluvial)", km:7.5, muni:"Soba", url:"https://es.wikiloc.com/rutas-senderismo/nacimiento-del-rio-ason-por-la-senda-fluvial-desde-las-casucas-de-ason-parque-natural-de-los-collad-130640502" },
+  { nombre:"Río Asón cascada", km:7.0, muni:"Soba", url:"https://es.wikiloc.com/rutas-senderismo/rio-ason-cascada-del-nacimiento-del-rio-ason-84894519" },
+  { nombre:"Nacimiento del Pisueña (La Garma)", km:6.8, muni:"Saro", url:null },
+  { nombre:"Cascadas de Lamiña", km:4.5, muni:"Ruente", url:null },
+  { nombre:"Senda fluvial del Nansa", km:13.6, muni:"Rionansa", url:null },
+  { nombre:"Castro Valnera (Valles Pasiegos)", km:12.0, muni:"Vega de Pas", url:null },
+  { nombre:"Horcados Rojos desde Fuente Dé", km:15.9, muni:"Camaleño", url:null },
+  { nombre:"Cabaña Verónica desde Fuente Dé", km:15.1, muni:"Camaleño", url:null },
+  { nombre:"Pico Tesorero desde El Cable", km:11.9, muni:"Camaleño", url:null },
+  { nombre:"Vega de Liordes (circular)", km:13.5, muni:"Camaleño", url:null },
+  { nombre:"Peña Vieja desde Fuente Dé", km:12.5, muni:"Camaleño", url:null },
+];
+
 function setMapFilter(e) {
     const dd = document.getElementById("map-areas-dd");
     if (e === "areas") {
@@ -504,11 +528,19 @@ function applyMapFilter() {
         else if ("rutas" === mapFilter) { match = !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
         else if ("wishlist" === mapFilter) { match = state.wishlist?.has(e); color = "#e85aa0"; }
         else if (mapFilter.startsWith("area:")) { match = t.comarca === mapFilter.slice(5); color = COLORES.area; }
+        else if (mapFilter.startsWith("ruta:")) {
+            // Resaltar el municipio por donde pasa la ruta seleccionada
+            const _r = RUTAS[+mapFilter.slice(5)];
+            match = !!(_r && _r.muni === e); color = "#5DCAA5";
+        }
         else if (SELLOS[mapFilter]) { match = o.includes(mapFilter); color = COLORES.populares; }
         // Pintar: el color del filtro en los que cumplen (no conquistados);
         // el resto vuelve al gris base. Conquistados: verde siempre.
+        const esRuta = mapFilter.startsWith("ruta:");
         d3.select(this)
-            .style("fill", match && !n && color ? color : null)
+            .style("fill", match && color && (esRuta || !n) ? color : null)
+            .style("stroke", match && esRuta ? "#5DCAA5" : null)
+            .style("stroke-width", match && esRuta ? "1.4px" : null)
             .style("opacity", 1);
     });
 }
@@ -3369,3 +3401,42 @@ async function guardarNuevaPassword() {
     const el = document.getElementById(id);
     if (el) el.addEventListener("keydown", e => { if (e.key === "Enter") submitAuth(); });
 });
+
+
+// ═══ SELECCIÓN DE UNA RUTA CONCRETA ═════════════════════════
+function selectRuta(idx) {
+    const r = RUTAS[+idx];
+    if (!r) return;
+    mapFilter = "ruta:" + idx;
+    // Resaltar el municipio de la ruta en el mapa
+    applyMapFilter();
+    // Marcar visualmente el botón elegido
+    document.querySelectorAll(".ruta-dd-btn").forEach(b => {
+        const act = b.dataset.ridx === String(idx);
+        b.style.background = act ? "rgba(34,176,80,0.2)" : "rgba(255,255,255,0.05)";
+        b.style.borderColor = act ? "rgba(34,176,80,0.55)" : "rgba(255,255,255,0.12)";
+    });
+    // Llevar el mapa al municipio y mostrar tarjeta de la ruta
+    if (typeof highlightMuniOnMap === "function" && r.muni) {
+        // sin abrir ficha completa, solo centrar
+        try { zoomToMuni(r.muni); } catch(e) {}
+    }
+    mostrarTarjetaRuta(r);
+}
+
+function mostrarTarjetaRuta(r) {
+    let card = document.getElementById("ruta-card");
+    if (!card) {
+        card = document.createElement("div");
+        card.id = "ruta-card";
+        const dd = document.getElementById("map-areas-dd");
+        dd.parentNode.insertBefore(card, dd.nextSibling);
+    }
+    const link = r.url
+        ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:12px;color:#7ab3e8;text-decoration:none">🔗 Ver ruta en Wikiloc ↗</a>'
+        : '<div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.35)">Sin enlace disponible</div>';
+    card.style.cssText = "margin:0 12px 10px;padding:13px 15px;background:rgba(93,202,165,0.08);border:1px solid rgba(93,202,165,0.3);border-radius:14px";
+    card.innerHTML = '<div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:3px">🥾 ' + esc(r.nombre) + '</div>'
+        + '<div style="font-size:12px;color:rgba(255,255,255,0.6)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
+        + link;
+}
