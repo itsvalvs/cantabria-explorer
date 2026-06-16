@@ -128,6 +128,47 @@ async function compressImage(file, maxDim = 1600, quality = 0.82) {
   return { base64: out, mime: 'image/jpeg', compressed: true };
 }
 
+// Genera una miniatura (~480px) a partir de un dataURL ya existente.
+// Se usa para subir un "thumb" ligero que alimenta el feed y la galería.
+async function dataUrlToThumb(dataUrl, maxDim = 480, quality = 0.7) {
+  try {
+    const img = await new Promise((res, rej) => {
+      const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataUrl;
+    });
+    if (!img.width) return null;
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const cx = c.getContext('2d'); cx.imageSmoothingQuality = 'high';
+    cx.drawImage(img, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', quality);
+  } catch (e) { return null; }
+}
+
+// Caché en memoria de URLs firmadas del bucket "evidencias".
+// Evita volver a firmar la misma ruta una y otra vez en cada re-render
+// (la firma vale 1 h; la cacheamos ~55 min para ir sobre seguro).
+const _signedCache = new Map(); // path -> { url, exp }
+async function signPaths(paths) {
+  const out = {};
+  const now = Date.now();
+  const need = [];
+  for (const p of [...new Set((paths || []).filter(p => p && p !== 'text_only'))]) {
+    const c = _signedCache.get(p);
+    if (c && c.exp > now) out[p] = c.url;
+    else need.push(p);
+  }
+  if (need.length) {
+    try {
+      const { data } = await db.storage.from('evidencias').createSignedUrls(need, 3600);
+      (data || []).forEach(s => {
+        if (s.signedUrl) { out[s.path] = s.signedUrl; _signedCache.set(s.path, { url: s.signedUrl, exp: now + 3300e3 }); }
+      });
+    } catch (e) { console.warn('signPaths:', e); }
+  }
+  return out;
+}
+
 // Zoom del mapa: volar hasta un municipio / resetear
 function zoomToMuni(muni) {
   if (!state.mapZoom || !state.mapDims) return;
@@ -357,7 +398,7 @@ async function loadUserData(e) {
     }), db.from("event_signups").select("event_id").eq("user_id", e.id)]), a = t.data;
     if (state.profile = a, a && (document.getElementById("u-name").textContent = a.username, document.getElementById("av-init").textContent = a.username.split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2), a.avatar_url)) {
         const e = document.getElementById("av-ring"),
-            t = a.avatar_url + "?t=" + Date.now();
+            t = a.avatar_url;
         e.innerHTML = '<img src="' + t + '" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>'
     }
     state.visitedLocs = state.visitedLocs || {};
@@ -369,15 +410,10 @@ async function loadUserData(e) {
         state.photos = n.data.map(e => ({
             id: e.id, src: null, muni: e.municipio, date: e.fecha,
             time: e.hora || "", coords: e.coords || "", desc: e.descripcion || "",
-            vis: e.visibilidad, path: e.storage_path
+            vis: e.visibilidad, path: e.storage_path, thumb: e.thumb_path || null
         }));
-        const paths = [...new Set(n.data.filter(e => e.storage_path && "text_only" !== e.storage_path).map(e => e.storage_path))];
-        if (paths.length) {
-            const { data: signed } = await db.storage.from("evidencias").createSignedUrls(paths, 3600);
-            const byPath = {};
-            (signed || []).forEach(s => { if (s.signedUrl) byPath[s.path] = s.signedUrl; });
-            state.photos.forEach(p => { if (p.path && byPath[p.path]) p.src = byPath[p.path]; });
-        }
+        // Ya NO firmamos aquí todas las fotos (podían ser cientos y bloqueaba el
+        // arranque). Se firman bajo demanda al abrir la galería (renderGallery).
     }
     try {
         const { data: bl } = await db.from("blocks").select("blocked_id").eq("blocker_id", state.user.id);
@@ -789,8 +825,25 @@ async function confirmVisit() {
                 coords: state.lastCoords || "",
                 desc: i || "",
                 vis: selectedVisibilidad,
-                path: n
-            })
+                path: n,
+                thumb: null
+            });
+            // Miniatura ligera para feed/galería. Es ADITIVO: si falla la subida
+            // o aún no existe la columna thumb_path, la app sigue usando la foto
+            // completa sin romperse.
+            try {
+                const td = await dataUrlToThumb(state.pendingBase64, 480, 0.7);
+                if (td) {
+                    const tb = await (await fetch(td)).blob();
+                    const tp = n.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
+                    const { error: te } = await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 });
+                    if (!te) {
+                        const { error: ue } = await db.from("photos").update({ thumb_path: tp }).eq("id", o?.id);
+                        if (ue) console.warn("thumb_path no guardado (¿falta la columna? ejecuta el SQL):", ue.message);
+                        else if (state.photos[0]) state.photos[0].thumb = tp;
+                    }
+                }
+            } catch (te) { console.warn("miniatura:", te); }
         } else if (i) {
             const t = new Date;
             await db.from("photos").insert({
@@ -1471,12 +1524,21 @@ async function fetchFeedPage() {
     try {
         if (fc.mode === "global") {
             // ── Feed global: fotos públicas de cualquier usuario ──
-            let qg = db.from("photos")
-                .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+            const gcols = "id,user_id,municipio,storage_path,thumb_path,descripcion,visibilidad,created_at";
+            let qg = db.from("photos").select(gcols)
                 .eq("visibilidad", "publico")
                 .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
             if (fc.cursor) qg = qg.lt("created_at", fc.cursor);
-            const { data: gp } = await qg;
+            let rg = await qg;
+            if (rg.error && /thumb_path|column|schema cache/i.test(rg.error.message || "")) {
+                let qg2 = db.from("photos")
+                    .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+                    .eq("visibilidad", "publico")
+                    .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+                if (fc.cursor) qg2 = qg2.lt("created_at", fc.cursor);
+                rg = await qg2;
+            }
+            const gp = rg.data;
             if (!gp || !gp.length) {
                 fc.done = !0;
                 if (sent) sent.textContent = fc.visibleVisits.length ? "🏔️ Has llegado al final" : "";
@@ -1578,10 +1640,16 @@ async function fetchFeedPage() {
         const munis = [...new Set(pageVisits.map(p => p.municipio))];
         let lookup = [];
         if (users.length && munis.length) {
-            const { data: fl } = await db.from("photos")
-                .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+            let r = await db.from("photos")
+                .select("id,user_id,municipio,storage_path,thumb_path,descripcion,visibilidad,created_at")
                 .in("user_id", users).in("municipio", munis);
-            lookup = fl || [];
+            if (r.error && /thumb_path|column|schema cache/i.test(r.error.message || "")) {
+                // Aún no se ha creado la columna thumb_path: reintento sin ella
+                r = await db.from("photos")
+                    .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+                    .in("user_id", users).in("municipio", munis);
+            }
+            lookup = r.data || [];
         }
         evPosts.forEach(p => lookup.push(p._foto));
         lookup.forEach(f => {
@@ -1684,7 +1752,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         const fp       = userId === state.user?.id ? state.profile : (friendProfiles || []).find(f => f.id === userId);
         const avatarUrl  = fp?.avatar_url || v.profiles?.avatar_url;
         const avatarHtml = avatarUrl
-            ? `<img src="${esc(avatarUrl)}?t=${Date.now()}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
+            ? `<img src="${esc(avatarUrl)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
             : getInitials(username);
         const foto  = v._foto || pickFoto(v);
         const hasImg = foto && foto.storage_path && foto.storage_path !== "text_only";
@@ -1710,7 +1778,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         </div>`}
       </div>
       ${hasImg ? `<div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
-        <img src="" data-foto-id="${esc(foto.id)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
+        <img src="" data-foto-id="${esc(foto.id)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
         <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
           <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
         </div>
@@ -1780,11 +1848,13 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         commentIds.push(foto?.id || v.id);
     });
     const fotoIds = [...new Set(fotosConStorage.map(f => f.id))];
-    const paths   = [...new Set(fotosConStorage.map(f => f.storage_path))];
+    // Preferimos la miniatura (thumb_path) si existe; si no, la foto completa.
+    const feedKey = f => f.thumb_path || f.storage_path;
+    const paths   = [...new Set(fotosConStorage.map(feedKey))];
     const likeIds = fotoIds.flatMap(id => [id, id + "_fire", id + "_love"]);
 
-    const [signedRes, likesRes, commentsRes] = await Promise.all([
-        paths.length ? db.storage.from("evidencias").createSignedUrls(paths, 3600) : Promise.resolve({ data: [] }),
+    const [urlByPath, likesRes, commentsRes] = await Promise.all([
+        signPaths(paths),
         likeIds.length ? db.from("photo_likes").select("photo_id,user_id").in("photo_id", likeIds) : Promise.resolve({ data: [] }),
         commentIds.length ? db.from("photo_comments")
             .select("id,photo_id,user_id,texto,foto_path,created_at, profiles(username,avatar_url)")
@@ -1792,10 +1862,8 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
     ]);
 
     // 1) Imágenes
-    const urlByPath = {};
-    (signedRes.data || []).forEach(s => { if (s.signedUrl) urlByPath[s.path] = s.signedUrl; });
     fotosConStorage.forEach(f => {
-        const url = urlByPath[f.storage_path];
+        const url = urlByPath[feedKey(f)];
         if (!url) return;
         const img = document.querySelector('img[data-foto-id="' + f.id + '"]');
         if (img) {
@@ -1830,11 +1898,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
     (commentsRes.data || []).forEach(c => { (byPhoto[c.photo_id] = byPhoto[c.photo_id] || []).push(c); });
     // Firmar las fotos adjuntas a comentarios (si hay)
     const cPaths = [...new Set((commentsRes.data || []).filter(c => c.foto_path).map(c => c.foto_path))];
-    const cUrls = {};
-    if (cPaths.length) {
-        const { data: cs } = await db.storage.from("evidencias").createSignedUrls(cPaths, 3600);
-        (cs || []).forEach(s => { if (s.signedUrl) cUrls[s.path] = s.signedUrl; });
-    }
+    const cUrls = cPaths.length ? await signPaths(cPaths) : {};
     commentIds.forEach(cid => {
         const cont = document.getElementById("comments-" + cid);
         if (cont) renderComments(cont, byPhoto[cid] || [], cid, cUrls);
@@ -1849,11 +1913,7 @@ async function loadVisitComments(e, t) {
         .select("id,photo_id,user_id,texto,foto_path,created_at, profiles(username, avatar_url)")
         .eq("photo_id", id).order("created_at", { ascending: true });
     const cPaths = [...new Set((data || []).filter(c => c.foto_path).map(c => c.foto_path))];
-    const urls = {};
-    if (cPaths.length) {
-        const { data: signed } = await db.storage.from("evidencias").createSignedUrls(cPaths, 3600);
-        (signed || []).forEach(s => { if (s.signedUrl) urls[s.path] = s.signedUrl; });
-    }
+    const urls = cPaths.length ? await signPaths(cPaths) : {};
     renderComments(cont, data || [], id, urls);
 }
 
@@ -1982,7 +2042,7 @@ async function openFriendProfile(e, t) {
     }), db.from("photos").select("*").eq("user_id", e).in("visibilidad", ["amigos", "publico"]).order("created_at", {
         ascending: !1
     }).limit(9)]), s = n.data, r = o.data || [], d = a.data || [], l = new Set(r.map(e => e.municipio));
-    s?.avatar_url && (document.getElementById("fp-avatar").innerHTML = '<img src="' + esc(s.avatar_url) + "?t=" + Date.now() + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(t) + '"/>'), document.getElementById("fp-visits-count").textContent = r.length, document.getElementById("fp-photos-count").textContent = d.length, renderFriendMiniMap(l);
+    s?.avatar_url && (document.getElementById("fp-avatar").innerHTML = '<img src="' + esc(s.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(t) + '"/>'), document.getElementById("fp-visits-count").textContent = r.length, document.getElementById("fp-photos-count").textContent = d.length, renderFriendMiniMap(l);
 
     // Moderación: reportar / bloquear usuario
     let mod = document.getElementById("fp-moderation");
@@ -2180,14 +2240,20 @@ async function cancelarSolicitud(e, t) {
     confirm("Cancelar la solicitud enviada a " + t + "?") && (await db.from("friendships").delete().eq("follower_id", state.user.id).eq("following_id", e), await loadSolicitudes())
 }
 
-function renderGallery() {
+async function renderGallery() {
     const e = document.getElementById("gallery"),
         t = document.getElementById("g-empty");
     if (!state.photos.length) return e.innerHTML = "", void(t.style.display = "block");
     t.style.display = "none";
+    // Firmar bajo demanda: miniatura si existe, si no la foto completa.
+    const pending = state.photos.filter(p => !p.src && (p.thumb || (p.path && p.path !== "text_only")));
+    if (pending.length) {
+        const urls = await signPaths(pending.map(p => p.thumb || p.path));
+        pending.forEach(p => { p.src = urls[p.thumb] || urls[p.path] || p.src; });
+    }
     const i = state.photos.filter(e => e.src && "" !== e.src);
     if (document.getElementById("sph").textContent = i.length, !i.length) return e.innerHTML = "", void(document.getElementById("g-empty").style.display = "block");
-    document.getElementById("g-empty").style.display = "none", e.innerHTML = i.map((e, t) => `\n    <div class="gi" onclick="openPMbyId('${e.id||t}')">\n      <img src="${e.src}" alt="${esc(e.muni)}" loading="lazy"\n        onerror="this.parentElement.style.display='none'"/>\n      <div class="gi-hov">\n        <div class="gm">\n          <div style="font-weight:500">${esc(e.muni.length>14?e.muni.substring(0,12)+"…":e.muni)}</div>\n          <div>${e.date}</div>\n        </div>\n      </div>\n    </div>`).join("")
+    document.getElementById("g-empty").style.display = "none", e.innerHTML = i.map((e, t) => `\n    <div class="gi" onclick="openPMbyId('${e.id||t}')">\n      <img src="${e.src}" alt="${esc(e.muni)}" loading="lazy" decoding="async"\n        onerror="this.parentElement.style.display='none'"/>\n      <div class="gi-hov">\n        <div class="gm">\n          <div style="font-weight:500">${esc(e.muni.length>14?e.muni.substring(0,12)+"…":e.muni)}</div>\n          <div>${e.date}</div>\n        </div>\n      </div>\n    </div>`).join("")
 }
 
 function openPMbyId(e) {
@@ -2205,6 +2271,13 @@ function openPMobj(e) {
     state.currentPM = e;
     const t = document.getElementById("pm-img");
     e.src ? (t.src = e.src, t.style.display = "block") : (t.src = "", t.style.display = "none");
+    // Cargar la versión a resolución completa (la galería muestra miniatura)
+    if (e.path && e.path !== "text_only") {
+        signPaths([e.path]).then(u => {
+            const full = u[e.path];
+            if (full && state.currentPM === e) { t.src = full; t.style.display = "block"; e.fullSrc = full; }
+        });
+    }
     document.getElementById("pm-meta").innerHTML = `
     <div class="mrow"><i class="ti ti-map-pin" aria-hidden="true"></i><span>Municipio</span><strong>${esc(e.muni)}</strong></div>
     <div class="mrow"><i class="ti ti-calendar" aria-hidden="true"></i><span>Fecha</span><strong>${esc(e.date || "—")}</strong></div>
@@ -2567,14 +2640,16 @@ document.getElementById("av-in").addEventListener("change", async function(e) {
             data: s
         } = db.storage.from("avatares").getPublicUrl(n), r = s?.publicUrl;
         if (!r) throw new Error("No se pudo obtener la URL pública");
-        const d = r + "?t=" + Date.now(),
-            {
+        // Versión estable en la propia URL: caché eficiente y solo se invalida
+        // cuando cambia el avatar (no en cada render).
+        const versioned = r + "?v=" + Date.now();
+        const {
                 error: l
             } = await db.from("profiles").update({
-                avatar_url: r
+                avatar_url: versioned
             }).eq("id", state.user.id);
         if (l) throw l;
-        state.profile && (state.profile.avatar_url = r), i.innerHTML = `<img src="${d}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`
+        state.profile && (state.profile.avatar_url = versioned), i.innerHTML = `<img src="${versioned}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`
     } catch (e) {
         console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, alert("No se pudo subir el avatar: " + e.message)
     }
