@@ -441,6 +441,31 @@ document.addEventListener("click", function(e) {
         e && (e.style.display = "none")
     }
 });
+
+// Deseleccionar el municipio amarillo
+function deselectMuni() {
+    d3.selectAll(".muni-path").classed("selected", !1);
+    state.selectedMuni = null;
+    const bar = document.getElementById("muni-bar");
+    if (bar) bar.style.display = "none";
+}
+
+// Tocar fuera del municipio seleccionado → se desmarca
+document.addEventListener("click", function(e) {
+    if (!state.selectedMuni) return;
+    if (!document.getElementById("screen-map")?.classList.contains("active")) return;
+    const t = e.target;
+    // No desmarcar si el toque es sobre otro municipio o sobre UI relevante
+    if (t.closest(".muni-path")) return;           // otro municipio (lo gestiona el handler de D3)
+    if (t.closest("#muni-bar")) return;            // barra de acción del municipio
+    if (t.closest(".bsheet")) return;              // hoja "subir evidencia" abierta
+    if (t.closest("#muni-modal")) return;          // ficha del municipio
+    if (t.closest("#recomendacion-modal")) return; // modal de recomendar
+    if (t.closest("#map-search-input") || t.closest("#map-search-results")) return;
+    if (t.closest(".map-filter-btn") || t.closest(".area-dd-btn") || t.closest(".ruta-dd-btn")) return;
+    if (t.closest("#map-reset-zoom") || t.closest("#ruta-card")) return;
+    deselectMuni();
+});
 let mapFilter = "todos";
 
 // Cada ruta con su municipio (para resaltarlo) y datos
@@ -467,8 +492,14 @@ const RUTAS = [
   { nombre:"Peña Vieja desde Fuente Dé", km:12.5, muni:"Camaleño", url:null },
 ];
 
+// Rutas reales: las de la BD (tabla "rutas") si existen; si no, el array de arriba como semilla.
+function getRutas() {
+    return (state.rutas && state.rutas.length) ? state.rutas : RUTAS;
+}
+
 function setMapFilter(e) {
     const dd = document.getElementById("map-areas-dd");
+    const removeRutaCard = () => { const c = document.getElementById("ruta-card"); if (c) c.remove(); };
     if (e === "areas") {
         // Toggle del desplegable de comarcas
         if (dd) {
@@ -483,13 +514,33 @@ function setMapFilter(e) {
                 dd.style.display = "none";
             }
         }
+        removeRutaCard();
         mapFilter = "areas";
+    } else if (e === "rutas") {
+        // Toggle del desplegable de rutas (desde la BD)
+        if (dd) {
+            if (dd.style.display === "none" || !dd.style.display) {
+                const rutas = getRutas();
+                dd.innerHTML = rutas.length
+                    ? rutas.map((r, idx) => '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km</button>').join("")
+                    : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Aún no hay rutas en la base de datos</span>';
+                dd.style.display = "flex";
+            } else {
+                dd.style.display = "none";
+                removeRutaCard();
+            }
+        }
+        mapFilter = "rutas";
     } else {
         if (dd) dd.style.display = "none";
+        removeRutaCard();
         mapFilter = e;
     }
     document.querySelectorAll(".map-filter-btn").forEach(t => {
-        const isActive = t.dataset.filter === (mapFilter.startsWith("area:") ? "areas" : mapFilter);
+        const activeFilter = mapFilter.startsWith("area:") ? "areas"
+            : (mapFilter.startsWith("ruta:") || mapFilter === "rutas") ? "rutas"
+            : mapFilter;
+        const isActive = t.dataset.filter === activeFilter;
         t.style.backgroundColor = isActive ? "#22b050" : "rgba(255,255,255,0.08)";
         t.style.color = isActive ? "#fff" : "rgba(255,255,255,0.5)";
     });
@@ -515,6 +566,8 @@ function applyMapFilter() {
         populares:  "#e8762e",  // naranja
         area:       "#e8c93a"   // amarillo
     };
+    const rutasList = getRutas();
+    const rutaMunis = new Set(rutasList.map(r => r.muni));
     d3.selectAll(".muni-path").each(function() {
         const e = d3.select(this).attr("data-name"),
             t = state.municipiosData?.[e] || {},
@@ -525,12 +578,12 @@ function applyMapFilter() {
         if ("costa" === mapFilter) { match = i; color = COLORES.costa; }
         else if ("montaña" === mapFilter) { match = !i; color = COLORES["montaña"]; }
         else if ("populares" === mapFilter) { match = (state.popularidad?.[e] || 0) > 0; color = COLORES.populares; }
-        else if ("rutas" === mapFilter) { match = !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
+        else if ("rutas" === mapFilter) { match = rutaMunis.has(e) || !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
         else if ("wishlist" === mapFilter) { match = state.wishlist?.has(e); color = "#e85aa0"; }
         else if (mapFilter.startsWith("area:")) { match = t.comarca === mapFilter.slice(5); color = COLORES.area; }
         else if (mapFilter.startsWith("ruta:")) {
             // Resaltar el municipio por donde pasa la ruta seleccionada
-            const _r = RUTAS[+mapFilter.slice(5)];
+            const _r = rutasList[+mapFilter.slice(5)];
             match = !!(_r && _r.muni === e); color = "#5DCAA5";
         }
         else if (SELLOS[mapFilter]) { match = o.includes(mapFilter); color = COLORES.populares; }
@@ -1286,6 +1339,7 @@ function closeMuniModal() {
 }
 async function loadFeed(reset = !1) {
     if (!state.user) return;
+    clearGlobalRanking();
     if (!reset && state.feedCache && Date.now() - state.feedCacheTime < 18e4) return void renderFeedFromCache();
 
     const fp = document.getElementById("feed-posts");
@@ -1333,8 +1387,63 @@ async function loadGlobalFeed() {
     };
     state.feedCacheTime = Date.now();
     fp.innerHTML = "";
+    renderGlobalRanking();   // 🏆 Top 10 (no bloquea la carga de publicaciones)
     ensureFeedSentinel();
     await fetchFeedPage();
+}
+
+// Quita el bloque del ranking (al salir de Global)
+function clearGlobalRanking() {
+    document.getElementById("global-ranking")?.remove();
+}
+
+// 🏆 Top 10 exploradores — por nº de municipios conquistados.
+// Usa la función RPC "ranking_exploradores" de Supabase (ver SQL).
+// Si la RPC no existe todavía, simplemente no muestra el ranking.
+async function renderGlobalRanking() {
+    clearGlobalRanking();
+    const fp = document.getElementById("feed-posts");
+    if (!fp) return;
+    const box = document.createElement("div");
+    box.id = "global-ranking";
+    box.style.cssText = "margin:0 12px 16px";
+    box.innerHTML = '<div style="text-align:center;padding:14px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="width:16px;height:16px;border-width:2px;margin:0 auto 6px"></div>Cargando ranking...</div>';
+    fp.parentNode.insertBefore(box, fp);
+
+    let rows = null;
+    try {
+        const { data, error } = await db.rpc("ranking_exploradores", { lim: 10 });
+        if (!error && Array.isArray(data)) rows = data;
+        else if (error) console.warn("ranking_exploradores:", error.message);
+    } catch (err) { console.warn("ranking RPC no disponible:", err); }
+
+    if (!rows || !rows.length) { box.remove(); return; }
+    rows = rows.filter(r => !state.blockedIds?.has(r.user_id)).slice(0, 10);
+    if (!rows.length) { box.remove(); return; }
+
+    const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : (i + 1) + ".";
+    box.innerHTML =
+        '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:18px;overflow:hidden">'
+      + '<div style="padding:13px 15px 10px;display:flex;align-items:center;gap:7px;border-bottom:1px solid rgba(255,255,255,0.06)">'
+      +   '<span style="font-size:16px">🏆</span>'
+      +   '<span style="font-family:\'Playfair Display\',serif;font-size:15px;font-weight:700;color:#fff">Top exploradores</span>'
+      +   '<span style="margin-left:auto;font-size:10px;color:rgba(255,255,255,0.35)">municipios conquistados</span>'
+      + '</div>'
+      + rows.map((r, i) => {
+            const uname = esc(r.username || "Usuario");
+            const av = r.avatar_url
+                ? '<img src="' + esc(r.avatar_url) + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover" alt="' + uname + '" onerror="this.style.display=\'none\'"/>'
+                : '<div style="width:28px;height:28px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:11px;font-family:\'Playfair Display\',serif;color:#fff">' + esc(getInitials(r.username || "U")) + '</div>';
+            const me = r.user_id === state.user?.id;
+            return '<div data-uid="' + esc(r.user_id) + '" data-uname="' + uname + '" onclick="openFriendProfile(this.dataset.uid, this.dataset.uname)" '
+                 + 'style="display:flex;align-items:center;gap:10px;padding:9px 15px;cursor:pointer' + (me ? ';background:rgba(34,114,232,0.08)' : '') + (i < rows.length - 1 ? ';border-bottom:1px solid rgba(255,255,255,0.04)' : '') + '">'
+                 + '<span style="width:24px;text-align:center;font-size:14px;font-weight:700;color:' + (i < 3 ? '#e8c93a' : 'rgba(255,255,255,0.4)') + '">' + medal(i) + '</span>'
+                 + av
+                 + '<span style="flex:1;font-size:13px;font-weight:500;color:#fff">' + uname + (me ? ' <span style="font-size:10px;color:#7ab3e8">(tú)</span>' : '') + '</span>'
+                 + '<span style="font-size:13px;font-weight:700;color:#22b050">' + (r.total || 0) + '</span>'
+                 + '</div>';
+        }).join("")
+      + '</div>';
 }
 
 // Centinela al final del feed: cuando entra en pantalla, carga más
@@ -1600,18 +1709,13 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           ${coast ? "Costa" : "Montaña"}
         </div>`}
       </div>
-      <div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
-        ${hasImg
-          ? `<img src="" data-foto-id="${esc(foto.id)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
-             <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
-               <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
-             </div>`
-          : `<div style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
-               <i class="ti ${coast ? "ti-waves" : "ti-mountain"}" aria-hidden="true" style="font-size:38px"></i>
-               <span style="font-size:11px">Sin foto de evidencia</span>
-             </div>`}
+      ${hasImg ? `<div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
+        <img src="" data-foto-id="${esc(foto.id)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
+        <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
+          <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
+        </div>
         <div class="post-location"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
-      </div>
+      </div>` : ""}
       <div class="post-body">
         <div class="post-muni">${muniSafe}</div>
         ${foto?.descripcion ? `<div class="post-desc">${renderMentions(esc(foto.descripcion))}</div>` : ""}
@@ -1768,8 +1872,11 @@ function renderComments(container, comments, id, urls = {}) {
         const del = c.user_id === state.user?.id
             ? '<button class="c-del" data-cid="' + esc(c.id) + '" data-pid="' + esc(id) + '" onclick="deleteComment(this.dataset.cid, this.dataset.pid)" title="Borrar"><i class="ti ti-trash" aria-hidden="true"></i></button>'
             : "";
-        const cFoto = c.foto_path && urls[c.foto_path]
-            ? '<img src="' + esc(urls[c.foto_path]) + '" style="display:block;max-width:160px;max-height:120px;border-radius:8px;margin-top:5px;object-fit:cover" alt="foto comentario"/>'
+        const cFotoUrl = c.foto_path
+            ? (urls[c.foto_path] || db.storage.from("evidencias").getPublicUrl(c.foto_path).data?.publicUrl)
+            : null;
+        const cFoto = cFotoUrl
+            ? '<img src="' + esc(cFotoUrl) + '" style="display:block;max-width:160px;max-height:120px;border-radius:8px;margin-top:5px;object-fit:cover" alt="foto comentario" onerror="this.style.display=\'none\'"/>'
             : "";
         return '<div class="comment"><div class="c-av">' + av + '</div><div class="c-text"><strong>' + esc(u) + '</strong> ' + renderMentions(esc(c.texto || "")) + cFoto + '</div>' + del + '</div>';
     }).join("");
@@ -1802,7 +1909,12 @@ async function postComment(e, t, i) {
                 const blob = await (await fetch(cf.base64)).blob();
                 const pth = state.user.id + "/comment_" + Date.now() + ".jpg";
                 const { error: upe } = await db.storage.from("evidencias").upload(pth, blob, { contentType: cf.mime });
-                if (!upe) fotoPath = pth;
+                if (upe) {
+                    console.error("Error subiendo foto de comentario:", upe);
+                    alert("No se pudo subir la foto del comentario: " + (upe.message || JSON.stringify(upe)));
+                } else {
+                    fotoPath = pth;
+                }
                 delete pendingCommentFotos[e];
                 const cam = document.getElementById("comment-cam-" + e);
                 if (cam) { cam.style.color = ""; cam.style.background = "rgba(255,255,255,0.07)"; }
@@ -2220,6 +2332,11 @@ async function loadMap() {
         }, {
             data: t
         }] = await Promise.all([db.from("municipios").select("*"), db.from("visits").select("municipio")]);
+        // Rutas desde la BD (tabla "rutas"). Si no existe aún, se usa el array semilla.
+        try {
+            const { data: rt, error: rtErr } = await db.from("rutas").select("nombre,km,muni,url").order("km", { ascending: !1 });
+            if (!rtErr && Array.isArray(rt)) state.rutas = rt;
+        } catch (_) { /* tabla rutas no creada todavía */ }
         e && (state.municipiosData = {}, e.forEach(e => {
             state.municipiosData[e.nombre] = e
         }), state.coast = e.filter(e => "costa" === e.tipo).map(e => e.nombre), state.mountain = e.filter(e => "montaña" === e.tipo).map(e => e.nombre)), state.popularidad = {}, (t || []).forEach(e => {
@@ -3405,7 +3522,7 @@ async function guardarNuevaPassword() {
 
 // ═══ SELECCIÓN DE UNA RUTA CONCRETA ═════════════════════════
 function selectRuta(idx) {
-    const r = RUTAS[+idx];
+    const r = getRutas()[+idx];
     if (!r) return;
     mapFilter = "ruta:" + idx;
     // Resaltar el municipio de la ruta en el mapa
