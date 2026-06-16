@@ -41,11 +41,50 @@ function setFeedFilter(filter) {
     b.style.backgroundColor = active ? '#2272e8' : 'rgba(255,255,255,0.08)';
     b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
   });
+  if (filter === 'rutas') return void renderRutasFeed();
   if (filter === 'global' && !isGlobalCache) return void loadGlobalFeed();
   if (filter !== 'global' && isGlobalCache) return void loadFeed(!0);
+  if ((filter === 'descubriendo' || filter === 'eventos') && state._feedMode === 'rutas') { return void loadFeed(); }
   applyFeedFilter();
 }
+
+// Pestaña "🥾 Rutas" del feed: lista las rutas desde la BD.
+async function renderRutasFeed() {
+  state._feedMode = 'rutas';
+  clearGlobalRanking();
+  const sr = document.getElementById('stories-row');
+  if (sr) { sr.innerHTML = ''; sr.style.display = 'none'; }
+  const sent = document.getElementById('feed-sentinel');
+  if (sent) sent.textContent = '';
+  const fp = document.getElementById('feed-posts');
+  if (!fp) return;
+  fp.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 8px"></div>Cargando rutas...</div>';
+  let rutas = getRutas();
+  if (!state.rutas || !state.rutas.length) {
+    try {
+      const { data } = await db.from('rutas').select('nombre,km,muni,url').order('km', { ascending: !1 });
+      if (data && data.length) { state.rutas = data; rutas = data; }
+    } catch (_) {}
+  }
+  if (feedFilter !== 'rutas') return; // el usuario cambió de pestaña mientras cargaba
+  if (!rutas.length) { fp.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:13px">🥾 Aún no hay rutas</div>'; return; }
+  fp.innerHTML = rutas.map(r => {
+    const visited = state.visited?.[r.muni];
+    return '<div class="feed-post" style="padding:14px">'
+      + '<div style="display:flex;align-items:flex-start;gap:11px">'
+      + '<div style="font-size:22px;line-height:1">🥾</div>'
+      + '<div style="flex:1">'
+      + '<div style="font-family:\'Playfair Display\',serif;font-size:15px;font-weight:700;color:#fff;line-height:1.2">' + esc(r.nombre) + '</div>'
+      + '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:3px">📏 ' + esc(String(r.km)) + ' km · 📍 ' + esc(r.muni || '—') + (visited ? ' · <span style="color:#5DCAA5">✓ conquistado</span>' : '') + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
+      + (r.muni ? '<button data-m="' + esc(r.muni) + '" onclick="goToMuniOnMap(this.dataset.m)" style="padding:6px 12px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.3);border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📍 Ver en el mapa</button>' : '')
+      + (r.url ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" style="padding:6px 12px;background:rgba(34,114,232,0.15);color:#7ab3e8;border:1px solid rgba(34,114,232,0.3);border-radius:999px;font-size:11px;font-weight:600;text-decoration:none;font-family:Inter,sans-serif">🔗 Wikiloc ↗</a>' : '')
+      + '</div></div></div></div>';
+  }).join('');
+}
+
 function applyFeedFilter() {
+  if (feedFilter === 'rutas') return; // la pestaña de rutas se pinta aparte
   const posts = document.querySelectorAll('.feed-post');
   if (feedFilter === 'global') {
     posts.forEach(p => p.style.display = '');
@@ -62,7 +101,6 @@ function applyFeedFilter() {
     let show = true;
     if (feedFilter === 'descubriendo') show = !isEvento;
     else if (feedFilter === 'eventos')  show = isEvento;
-    else if (feedFilter === 'rutas')    show = false;
     post.style.display = show ? '' : 'none';
     if (show) visibles++;
   });
@@ -75,8 +113,7 @@ function applyFeedFilter() {
       emptyMsg.style.cssText = 'text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px';
       feedPosts.appendChild(emptyMsg);
     }
-    emptyMsg.textContent = feedFilter === 'rutas' ? '🥾 Las rutas están en camino...'
-      : feedFilter === 'eventos' ? '🎉 Aún no hay fotos de eventos' : '';
+    emptyMsg.textContent = feedFilter === 'eventos' ? '🎉 Aún no hay fotos de eventos' : '';
     emptyMsg.style.display = 'block';
   } else if (emptyMsg) emptyMsg.style.display = 'none';
 }
@@ -200,14 +237,15 @@ const SUPABASE_URL = "https://sdsdbfjmpjbrcgrbyvkm.supabase.co",
         profile: null,
         visited: {},
         photos: [],
-        totalMuni: 102,
+        totalMuni: 103,
         coast: [],
         mountain: [],
         rolling: !1,
         selectedMuni: null,
         eventos: [],
         inscripciones: {},
-        feedPosts: []
+        feedPosts: [],
+        pendingPhotos: []
     },
     NAV_ITEMS = [{
         id: "map",
@@ -422,7 +460,7 @@ async function loadUserData(e) {
     await loadWishlist();
     o.data && o.data.forEach(e => {
         state.inscripciones[e.event_id] = !0
-    }), updateProgress(), subscribeToFriendActivity();
+    }), updateProgress(), subscribeToFriendActivity(), loadNotifBadge();
     } catch (err) {
         console.error("loadUserData no bloqueante:", err);
         state.wishlist = state.wishlist || new Set();
@@ -536,6 +574,9 @@ function getRutas() {
 function setMapFilter(e) {
     const dd = document.getElementById("map-areas-dd");
     const removeRutaCard = () => { const c = document.getElementById("ruta-card"); if (c) c.remove(); };
+    if (e === "amigos" && !state.friendVisitsLoaded) {
+        loadFriendVisits().then(() => { if (mapFilter === "amigos") applyMapFilter(); });
+    }
     if (e === "areas") {
         // Toggle del desplegable de comarcas
         if (dd) {
@@ -616,6 +657,7 @@ function applyMapFilter() {
         else if ("populares" === mapFilter) { match = (state.popularidad?.[e] || 0) > 0; color = COLORES.populares; }
         else if ("rutas" === mapFilter) { match = rutaMunis.has(e) || !!(t.ruta && String(t.ruta).trim()); color = COLORES.area; }
         else if ("wishlist" === mapFilter) { match = state.wishlist?.has(e); color = "#e85aa0"; }
+        else if ("amigos" === mapFilter) { match = !!(state.friendVisits?.[e]?.length); color = "#2272e8"; }
         else if (mapFilter.startsWith("area:")) { match = t.comarca === mapFilter.slice(5); color = COLORES.area; }
         else if (mapFilter.startsWith("ruta:")) {
             // Resaltar el municipio por donde pasa la ruta seleccionada
@@ -638,9 +680,36 @@ function showMuniBar(e) {
     document.getElementById("muni-bar").style.display = "flex", document.getElementById("bar-name").textContent = e;
     const t = state.visited[e];
     const rt = state.municipiosData?.[e]?.ruta;
-    document.getElementById("bar-st").textContent = (t ? "✓ Conquistado" : "Sin visitar") + (rt ? " · 🥾 Tiene ruta" : "");
+    const nf = state.friendVisits?.[e]?.length || 0;
+    document.getElementById("bar-st").textContent = (t ? "✓ Conquistado" : "Sin visitar")
+        + (rt ? " · 🥾 Tiene ruta" : "")
+        + (nf ? " · 👥 " + nf + " amig" + (nf === 1 ? "o" : "os") : "");
     const i = document.getElementById("btn-ev");
     i.style.backgroundColor = t ? "#1a7a3e" : "#22b050", i.style.color = "#ffffff", i.innerHTML = t ? '<i class="ti ti-camera" aria-hidden="true"></i> Añadir foto' : '<i class="ti ti-camera" aria-hidden="true"></i> Evidencia'
+}
+
+// Carga qué municipios ha visitado cada amigo (para la capa "👥 Amigos" del mapa)
+async function loadFriendVisits() {
+    if (!state.user) return;
+    try {
+        const { data: fs } = await db.from("friendships")
+            .select("follower_id,following_id")
+            .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
+            .eq("estado", "aceptado");
+        const fids = [...new Set((fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id))]
+            .filter(id => !state.blockedIds?.has(id));
+        state.friendVisits = {};
+        if (fids.length) {
+            const { data: vs } = await db.from("visits")
+                .select("municipio,user_id,profiles(username,avatar_url)")
+                .in("user_id", fids).in("visibilidad", ["amigos", "publico"]);
+            (vs || []).forEach(v => {
+                (state.friendVisits[v.municipio] = state.friendVisits[v.municipio] || [])
+                    .push({ user_id: v.user_id, username: v.profiles?.username, avatar_url: v.profiles?.avatar_url });
+            });
+        }
+        state.friendVisitsLoaded = true;
+    } catch (err) { console.warn("loadFriendVisits:", err); state.friendVisits = state.friendVisits || {}; }
 }
 
 function openSheet() {
@@ -706,7 +775,9 @@ function closeUploadSheet() {
 }
 
 function clearPhoto() {
-    document.getElementById("prev-w").style.display = "none";
+    state.pendingPhotos = [];
+    const w = document.getElementById("prev-w");
+    if (w) w.style.display = "none";
     const e = document.getElementById("uzone")?.parentElement;
     e && (e.style.display = "block");
     try {
@@ -739,51 +810,21 @@ async function confirmVisit() {
     }
     t.textContent = "Guardando...", t.disabled = !0;
     try {
-        let n = null;
-        if (state.pendingBase64) {
-            const {
-                data: e
-            } = await db.auth.getSession(), t = e?.session?.user;
-            if (!t) throw new Error("Sesión expirada — sal y vuelve a entrar");
-            const i = t.id,
-                o = state.pendingBase64.split(",")[1],
-                a = state.pendingMime || "image/jpeg",
-                s = atob(o),
-                r = [];
-            for (let e = 0; e < s.length; e += 512) {
-                const t = s.slice(e, e + 512),
-                    i = new Uint8Array(t.length);
-                for (let e = 0; e < t.length; e++) i[e] = t.charCodeAt(e);
-                r.push(i)
-            }
-            const d = new Blob(r, {
-                    type: a
-                }),
-                l = a.includes("png") ? "png" : "jpg",
-                c = `${i}/${Date.now()}.${l}`;
-            console.log("Subiendo evidencia desde base64:", c, a, d.size + "b");
-            const {
-                data: u,
-                error: p
-            } = await db.storage.from("evidencias").upload(c, d, {
-                contentType: a,
-                cacheControl: "3600",
-                upsert: !1
-            });
-            if (p) throw console.error("Upload error:", JSON.stringify(p)), new Error("Error foto: " + (p.message || JSON.stringify(p)));
-            console.log("Subida OK:", c), n = c
-        }
-        const {
-            data: o,
-            error: a
-        } = await db.from("visits").upsert({
+        // 1) Guardar / actualizar la VISITA
+        const _visitPayload = {
             user_id: state.user.id,
             municipio: e,
             visibilidad: selectedVisibilidad,
             coords: state.lastCoords || null,
-            gps_verificada: gpsVerificada,
             fecha: (new Date).toISOString().split("T")[0]
-        }).select();
+        };
+        // Solo tocamos gps_verificada en la 1ª conquista o si ahora sí verifica,
+        // para no "desverificar" una visita ya verificada al añadir más fotos.
+        if (!state.visited[e] || gpsVerificada) _visitPayload.gps_verificada = gpsVerificada;
+        const {
+            data: o,
+            error: a
+        } = await db.from("visits").upsert(_visitPayload, { onConflict: "user_id,municipio" }).select();
         // Localidades marcadas en el checklist (si la columna existe)
         const locsSel = [...document.querySelectorAll("#sheet-locs .loc-chk:checked")].map(c => c.value);
         if (document.getElementById("sheet-locs")?.innerHTML) {
@@ -794,86 +835,75 @@ async function confirmVisit() {
             } catch (locErr) { console.warn("localidades:", locErr); }
         }
         if (a) return console.error("Error guardando visita:", JSON.stringify(a)), alert("Error al guardar la visita: " + a.message), t.textContent = "Marcar como conquistado", void(t.disabled = !1);
-        if (console.log("Visita guardada en Supabase:", o), n) {
-            new Date;
-            const t = new Date,
-                {
-                    data: o
-                } = await db.from("photos").insert({
-                    user_id: state.user.id,
-                    municipio: e,
-                    storage_path: n,
-                    descripcion: i || null,
-                    visibilidad: selectedVisibilidad,
-                    coords: state.lastCoords || null,
-                    fecha: t.toISOString().split("T")[0],
-                    hora: t.toLocaleTimeString("es-ES", {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                    })
-                }).select().single(),
-                a = (await db.storage.from("evidencias").createSignedUrl(n, 3600)).data?.signedUrl || "";
-            state.photos.unshift({
-                id: o?.id,
-                src: a,
-                muni: e,
-                date: t.toLocaleDateString("es-ES"),
-                time: t.toLocaleTimeString("es-ES", {
-                    hour: "2-digit",
-                    minute: "2-digit"
-                }),
-                coords: state.lastCoords || "",
-                desc: i || "",
-                vis: selectedVisibilidad,
-                path: n,
-                thumb: null
-            });
-            // Miniatura ligera para feed/galería. Es ADITIVO: si falla la subida
-            // o aún no existe la columna thumb_path, la app sigue usando la foto
-            // completa sin romperse.
-            try {
-                const td = await dataUrlToThumb(state.pendingBase64, 480, 0.7);
-                if (td) {
-                    const tb = await (await fetch(td)).blob();
-                    const tp = n.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
-                    const { error: te } = await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 });
-                    if (!te) {
-                        const { error: ue } = await db.from("photos").update({ thumb_path: tp }).eq("id", o?.id);
-                        if (ue) console.warn("thumb_path no guardado (¿falta la columna? ejecuta el SQL):", ue.message);
-                        else if (state.photos[0]) state.photos[0].thumb = tp;
+
+        // 2) Guardar las FOTOS (pueden ser varias). La descripción va con la primera.
+        const _photos = state.pendingPhotos.length
+            ? state.pendingPhotos
+            : (state.pendingBase64 ? [{ base64: state.pendingBase64, mime: state.pendingMime }] : []);
+        if (_photos.length) {
+            const sess = (await db.auth.getSession()).data?.session?.user;
+            if (!sess) throw new Error("Sesión expirada — sal y vuelve a entrar");
+            const uid = sess.id;
+            for (let idx = 0; idx < _photos.length; idx++) {
+                const ph = _photos[idx];
+                try {
+                    const b64 = ph.base64.split(",")[1];
+                    const mime = ph.mime || "image/jpeg";
+                    const bin = atob(b64), chunks = [];
+                    for (let j = 0; j < bin.length; j += 512) {
+                        const sl = bin.slice(j, j + 512), u8 = new Uint8Array(sl.length);
+                        for (let k = 0; k < sl.length; k++) u8[k] = sl.charCodeAt(k);
+                        chunks.push(u8);
                     }
-                }
-            } catch (te) { console.warn("miniatura:", te); }
+                    const blob = new Blob(chunks, { type: mime });
+                    const ext = mime.includes("png") ? "png" : "jpg";
+                    const path = `${uid}/${Date.now()}_${idx}.${ext}`;
+                    const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: mime, cacheControl: "3600", upsert: !1 });
+                    if (upErr) { console.error("Upload error:", upErr); alert("No se pudo subir una foto: " + (upErr.message || JSON.stringify(upErr))); continue; }
+                    const now = new Date();
+                    const desc = idx === 0 ? (i || null) : null;
+                    const { data: row } = await db.from("photos").insert({
+                        user_id: state.user.id, municipio: e, storage_path: path, descripcion: desc,
+                        visibilidad: selectedVisibilidad, coords: state.lastCoords || null,
+                        fecha: now.toISOString().split("T")[0],
+                        hora: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+                    }).select().single();
+                    const signed = (await signPaths([path]))[path] || "";
+                    const stateP = {
+                        id: row?.id, src: signed, muni: e, date: now.toLocaleDateString("es-ES"),
+                        time: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
+                        coords: state.lastCoords || "", desc: desc || "", vis: selectedVisibilidad, path, thumb: null
+                    };
+                    state.photos.unshift(stateP);
+                    // Miniatura (aditivo: no rompe si falta la columna thumb_path)
+                    try {
+                        const td = await dataUrlToThumb(ph.base64, 480, 0.7);
+                        if (td) {
+                            const tb = await (await fetch(td)).blob();
+                            const tp = path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
+                            const { error: te } = await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 });
+                            if (!te) { const { error: ue } = await db.from("photos").update({ thumb_path: tp }).eq("id", row?.id); if (!ue) stateP.thumb = tp; }
+                        }
+                    } catch (_) {}
+                } catch (perr) { console.error("foto idx " + idx + ":", perr); }
+            }
         } else if (i) {
-            const t = new Date;
+            const now = new Date();
             await db.from("photos").insert({
-                user_id: state.user.id,
-                municipio: e,
-                storage_path: "text_only",
-                descripcion: i,
-                visibilidad: selectedVisibilidad,
-                coords: state.lastCoords || null,
-                fecha: t.toISOString().split("T")[0],
-                hora: t.toLocaleTimeString("es-ES", {
-                    hour: "2-digit",
-                    minute: "2-digit"
-                })
-            }), state.photos.unshift({
-                src: null,
-                muni: e,
-                date: t.toLocaleDateString("es-ES"),
-                time: t.toLocaleTimeString("es-ES", {
-                    hour: "2-digit",
-                    minute: "2-digit"
-                }),
-                coords: "",
-                desc: i,
-                vis: selectedVisibilidad
-            })
+                user_id: state.user.id, municipio: e, storage_path: "text_only", descripcion: i,
+                visibilidad: selectedVisibilidad, coords: state.lastCoords || null,
+                fecha: now.toISOString().split("T")[0],
+                hora: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+            });
+            state.photos.unshift({
+                src: null, muni: e, date: now.toLocaleDateString("es-ES"),
+                time: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
+                coords: "", desc: i, vis: selectedVisibilidad
+            });
         }
         state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
-        }), showMuniBar(e), closeUploadSheet(), document.getElementById("file-in").value = "", document.getElementById("prev-w").style.display = "none", document.getElementById("uzone").style.display = "block", state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null, state.feedCache = null;
+        }), showMuniBar(e), closeUploadSheet(), document.getElementById("file-in").value = "", document.getElementById("prev-w").style.display = "none", document.getElementById("uzone").style.display = "block", state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null, state.pendingPhotos = [], state.feedCache = null;
         const s = document.getElementById("evidencia-desc");
         s && (s.value = ""), document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
@@ -888,7 +918,7 @@ async function confirmVisit() {
                 visibilidad: selectedVisibilidad,
                 coords: state.lastCoords || null,
                 fecha: (new Date).toISOString().split("T")[0]
-            }), state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
+            }, { onConflict: "user_id,municipio" }), state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
                 t.getAttribute("data-name") === e && t.classList.add("visited")
             }), showMuniBar(e), closeUploadSheet(), updateProgress(), alert("⚠️ Visita guardada pero sin foto. Error: " + t.message)
         } catch (e) {
@@ -945,34 +975,54 @@ function verifyGPSInMuni(muni) {
     });
 }
 
-async function handleFileSelected(file) {
-    if (!file) return;
-    try {
-        const { base64, mime, compressed } = await compressImage(file);
-        state.pendingBase64 = base64;
-        state.pendingMime   = mime;
-        state.pendingFile   = null;
-        console.log('Foto lista' + (compressed ? ' (comprimida)' : ' (original)') + ', ' + (base64.length / 1024).toFixed(0) + 'KB');
-        document.getElementById('prev-img').src = base64;
-        const now = new Date();
-        document.getElementById('prev-meta').textContent =
-            now.toLocaleDateString('es-ES') + ' · ' +
-            now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-        document.getElementById('prev-w').style.display = 'block';
-        const uz = document.getElementById('uzone')?.parentElement;
-        if (uz) uz.style.display = 'none';
-    } catch (err) {
-        alert('Error al leer la foto. Inténtalo de nuevo.');
+async function handleFilesSelected(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const room = 8 - state.pendingPhotos.length;
+    if (room <= 0) { alert("Máximo 8 fotos por visita."); return; }
+    for (const f of list.slice(0, room)) {
+        try {
+            const { base64, mime } = await compressImage(f);
+            state.pendingPhotos.push({ base64, mime });
+        } catch (err) { console.warn("foto:", err); }
     }
+    // Compat: la primera foto también en las vars antiguas (flujo de eventos + thumb)
+    if (state.pendingPhotos[0]) { state.pendingBase64 = state.pendingPhotos[0].base64; state.pendingMime = state.pendingPhotos[0].mime; }
+    renderPendingPreviews();
     getCoords();
 }
+// Compat hacia atrás (por si algo llama al nombre antiguo en singular)
+async function handleFileSelected(file) { return handleFilesSelected(file ? [file] : []); }
+
+function renderPendingPreviews() {
+    const w = document.getElementById('prev-w');
+    const uz = document.getElementById('uzone')?.parentElement;
+    if (!w) return;
+    if (!state.pendingPhotos.length) { w.style.display = 'none'; if (uz) uz.style.display = 'block'; return; }
+    let strip = document.getElementById('prev-strip');
+    if (!strip) { strip = document.createElement('div'); strip.id = 'prev-strip'; strip.style.cssText = 'display:flex;gap:6px;overflow-x:auto;padding:2px'; w.innerHTML = ''; w.appendChild(strip); }
+    strip.innerHTML = state.pendingPhotos.map((p, idx) =>
+        '<div style="position:relative;flex-shrink:0">'
+        + '<img src="' + p.base64 + '" style="width:84px;height:84px;object-fit:cover;border-radius:10px;display:block" alt="foto ' + (idx + 1) + '"/>'
+        + '<button onclick="removePendingPhoto(' + idx + ')" style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,0.65);color:#fff;border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center">✕</button>'
+        + '</div>'
+    ).join('') + (state.pendingPhotos.length < 8
+        ? '<button onclick="document.getElementById(\'file-in\').click()" style="flex-shrink:0;width:84px;height:84px;border:1px dashed rgba(255,255,255,0.25);border-radius:10px;background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.5);font-size:26px;cursor:pointer;line-height:1">+</button>'
+        : '');
+    w.style.display = 'block';
+    if (uz) uz.style.display = 'none';
+}
+function removePendingPhoto(idx) {
+    state.pendingPhotos.splice(idx, 1);
+    if (state.pendingPhotos[0]) { state.pendingBase64 = state.pendingPhotos[0].base64; state.pendingMime = state.pendingPhotos[0].mime; }
+    else { state.pendingBase64 = null; state.pendingMime = null; }
+    renderPendingPreviews();
+}
 const fileInput = document.getElementById("file-in");
-fileInput.addEventListener("input", function(e) {
-    const t = e.target.files && e.target.files[0];
-    t && handleFileSelected(t)
-}), fileInput.addEventListener("change", function(e) {
-    const t = e.target.files && e.target.files[0];
-    t && handleFileSelected(t)
+fileInput.addEventListener("change", function(e) {
+    const fs = e.target.files;
+    if (fs && fs.length) handleFilesSelected(fs);
+    e.target.value = ""; // permite volver a elegir las mismas / añadir más
 });
 let currentFilter = "todos";
 async function loadEventos() {
@@ -1392,6 +1442,8 @@ function closeMuniModal() {
 }
 async function loadFeed(reset = !1) {
     if (!state.user) return;
+    state._feedMode = null;
+    const _sr = document.getElementById("stories-row"); if (_sr) _sr.style.display = "";
     clearGlobalRanking();
     if (!reset && state.feedCache && Date.now() - state.feedCacheTime < 18e4) return void renderFeedFromCache();
 
@@ -2101,8 +2153,8 @@ async function renderFriendMiniMap(e) {
             const i = t.properties.name || t.properties.NAME || t.properties.NAMEUNIT || "";
             return e.has(i) ? "#22b050" : "#2a3a4a"
         }).attr("stroke", "#0f1923").attr("stroke-width", .5);
-        const l = Math.round(e.size / 102 * 100);
-        t.insertAdjacentHTML("afterbegin", '<div style="text-align:center;font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px">' + e.size + " / 102 municipios · " + l + "%</div>")
+        const l = Math.round(e.size / (state.totalMuni||103) * 100);
+        t.insertAdjacentHTML("afterbegin", '<div style="text-align:center;font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px">' + e.size + " / " + (state.totalMuni||103) + " municipios · " + l + "%</div>")
     } catch (e) {
         t.innerHTML = '<div style="color:rgba(255,255,255,0.2);font-size:11px;text-align:center;padding:10px">No se pudo cargar el mapa</div>'
     }
@@ -2590,7 +2642,7 @@ function registerSW() {
     navigator.serviceWorker.register("sw.js?v=" + v).catch(e => console.warn("SW:", e));
 }
 async function init() {
-    buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4);
+    buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4), setInterval(() => { if (state.user) loadNotifBadge(); }, 12e4);
     if (/type=recovery/.test(window.location.hash + window.location.search) || /access_token=/.test(window.location.hash)) {
         state.recoveryMode = !0;
     }
@@ -2750,7 +2802,7 @@ function checkInsignia(e, t) {
 function showInsignia() {
     if (document.getElementById("insignia-modal")) return;
     const e = document.createElement("div");
-    e.id = "insignia-modal", e.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px;text-align:center", e.innerHTML = '<div style="font-size:72px;margin-bottom:16px">🏔️</div><div style="font-family:Playfair Display,serif;font-size:28px;font-weight:700;color:#fff;margin-bottom:8px">¡El Cántabru!</div><div style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6;margin-bottom:24px">Has pisado los 102 municipios de Cantabria.<br>Eres oficialmente un Cántabru de pura cepa.</div><div style="background:linear-gradient(135deg,#e8b820,#e86820);border-radius:16px;padding:16px 24px;margin-bottom:24px"><div style="font-size:11px;color:rgba(255,255,255,0.7);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">Insignia desbloqueada</div><div style="font-size:18px;font-weight:700;color:#fff">🏆 El Cántabru</div></div><button onclick="document.getElementById(\'insignia-modal\').remove()" style="padding:12px 28px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">¡A por más aventuras!</button>', document.getElementById("app").appendChild(e), launchConfetti(), launchConfetti(), launchConfetti()
+    e.id = "insignia-modal", e.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px;text-align:center", e.innerHTML = '<div style="font-size:72px;margin-bottom:16px">🏔️</div><div style="font-family:Playfair Display,serif;font-size:28px;font-weight:700;color:#fff;margin-bottom:8px">¡El Cántabru!</div><div style="font-size:14px;color:rgba(255,255,255,0.6);line-height:1.6;margin-bottom:24px">Has pisado los 103 municipios de Cantabria.<br>Eres oficialmente un Cántabru de pura cepa.</div><div style="background:linear-gradient(135deg,#e8b820,#e86820);border-radius:16px;padding:16px 24px;margin-bottom:24px"><div style="font-size:11px;color:rgba(255,255,255,0.7);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px">Insignia desbloqueada</div><div style="font-size:18px;font-weight:700;color:#fff">🏆 El Cántabru</div></div><button onclick="document.getElementById(\'insignia-modal\').remove()" style="padding:12px 28px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">¡A por más aventuras!</button>', document.getElementById("app").appendChild(e), launchConfetti(), launchConfetti(), launchConfetti()
 }
 
 function launchConfetti() {
@@ -3631,4 +3683,114 @@ function mostrarTarjetaRuta(r) {
     card.innerHTML = '<div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:3px">🥾 ' + esc(r.nombre) + '</div>'
         + '<div style="font-size:12px;color:rgba(255,255,255,0.6)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
         + link;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CENTRO DE NOTIFICACIONES  (derivado de los datos existentes,
+//  sin tabla nueva: solicitudes de amistad + comentarios + likes
+//  sobre tus fotos. El "visto" se guarda en localStorage.)
+// ═══════════════════════════════════════════════════════════
+function _notifSeenKey() { return "ylp_notif_seen_" + (state.user?.id || "x"); }
+function _notifLastSeen() { try { return +(localStorage.getItem(_notifSeenKey()) || 0); } catch (_) { return 0; } }
+function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return "ahora";
+    const m = Math.floor(s / 60); if (m < 60) return "hace " + m + " min";
+    const h = Math.floor(m / 60); if (h < 24) return "hace " + h + " h";
+    const d = Math.floor(h / 24); if (d < 7) return "hace " + d + " d";
+    return new Date(ts).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+}
+
+async function fetchNotifications() {
+    if (!state.user) return [];
+    const items = [];
+    // 1) Solicitudes de amistad pendientes (siempre "no leídas" hasta aceptarlas)
+    try {
+        const { data: reqs } = await db.from("friendships")
+            .select("follower_id, profiles:profiles!friendships_follower_id_fkey(username,avatar_url)")
+            .eq("following_id", state.user.id).eq("estado", "pendiente");
+        (reqs || []).filter(r => !state.blockedIds?.has(r.follower_id)).forEach(r => items.push({
+            ts: Date.now(), always: true, icon: "👋",
+            text: "<strong>@" + esc(r.profiles?.username || "alguien") + "</strong> quiere ser tu amigo",
+            action: "switchScreen('profile')"
+        }));
+    } catch (e) { console.warn("notif reqs:", e); }
+
+    const myIds = state.photos.map(p => p.id).filter(Boolean).slice(0, 200);
+    if (myIds.length) {
+        // 2) Comentarios en tus fotos
+        try {
+            const { data: cs } = await db.from("photo_comments")
+                .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
+                .in("photo_id", myIds).neq("user_id", state.user.id)
+                .order("created_at", { ascending: false }).limit(30);
+            (cs || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => items.push({
+                ts: +new Date(c.created_at), icon: "💬",
+                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> comentó: " + esc((c.texto || "").slice(0, 50))
+            }));
+        } catch (e) { console.warn("notif comments:", e); }
+        // 3) Likes / reacciones en tus fotos
+        try {
+            const likeIds = myIds.flatMap(id => [id, id + "_fire", id + "_love"]);
+            let r = await db.from("photo_likes").select("user_id,photo_id,created_at")
+                .in("photo_id", likeIds).neq("user_id", state.user.id)
+                .order("created_at", { ascending: false }).limit(40);
+            if (r.error) r = await db.from("photo_likes").select("user_id,photo_id").in("photo_id", likeIds).neq("user_id", state.user.id).limit(40);
+            const ls = (r.data || []).filter(l => !state.blockedIds?.has(l.user_id));
+            const likers = [...new Set(ls.map(l => l.user_id))];
+            const names = {};
+            if (likers.length) { const { data: ps } = await db.from("profiles").select("id,username").in("id", likers); (ps || []).forEach(p => names[p.id] = p.username); }
+            ls.forEach(l => items.push({
+                ts: +new Date(l.created_at || Date.now()),
+                icon: String(l.photo_id).endsWith("_fire") ? "🔥" : String(l.photo_id).endsWith("_love") ? "😍" : "❤️",
+                text: "<strong>@" + esc(names[l.user_id] || "alguien") + "</strong> reaccionó a tu foto"
+            }));
+        } catch (e) { console.warn("notif likes:", e); }
+    }
+    items.sort((a, b) => b.ts - a.ts);
+    return items.slice(0, 40);
+}
+
+async function loadNotifBadge() {
+    try {
+        const items = await fetchNotifications();
+        state._notifs = items;
+        const lastSeen = _notifLastSeen();
+        const unread = items.filter(i => i.always || i.ts > lastSeen).length;
+        document.querySelectorAll(".notif-badge").forEach(b => {
+            if (unread > 0) { b.textContent = unread > 9 ? "9+" : unread; b.style.display = "flex"; }
+            else b.style.display = "none";
+        });
+    } catch (e) { console.warn("loadNotifBadge:", e); }
+}
+
+async function openNotifs() {
+    const ov = document.getElementById("notif-ov");
+    const list = document.getElementById("notif-list");
+    if (!ov || !list) return;
+    ov.style.display = "flex";
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 10px"></div>Cargando...</div>';
+    const items = state._notifs || await fetchNotifications();
+    state._notifs = items;
+    const lastSeen = _notifLastSeen();
+    if (!items.length) {
+        list.innerHTML = '<div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.3);font-size:13px"><i class="ti ti-bell-off" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>No tienes notificaciones todavía</div>';
+    } else {
+        list.innerHTML = items.map(i => {
+            const unread = i.always || i.ts > lastSeen;
+            return '<div ' + (i.action ? 'onclick="closeNotifs();' + i.action + '" style="cursor:pointer;' : 'style="')
+                + 'display:flex;gap:11px;align-items:flex-start;padding:11px 18px;' + (unread ? 'background:rgba(34,114,232,0.06);' : '') + 'border-bottom:1px solid rgba(255,255,255,0.04)">'
+                + '<span style="font-size:18px;flex-shrink:0;line-height:1.3">' + i.icon + '</span>'
+                + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.45">' + i.text
+                + '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px">' + timeAgo(i.ts) + '</div></div>'
+                + (unread ? '<span style="width:7px;height:7px;border-radius:50%;background:#2272e8;flex-shrink:0;margin-top:5px"></span>' : '')
+                + '</div>';
+        }).join("");
+    }
+    markNotifsRead();
+}
+function closeNotifs() { const ov = document.getElementById("notif-ov"); if (ov) ov.style.display = "none"; }
+function markNotifsRead() {
+    try { localStorage.setItem(_notifSeenKey(), String(Date.now())); } catch (_) {}
+    loadNotifBadge(); // tras esto el badge solo refleja solicitudes pendientes
 }
