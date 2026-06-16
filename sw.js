@@ -11,13 +11,15 @@
 //  reinstala solo y limpia las cachés antiguas.
 // ═══════════════════════════════════════════════════════════
 
-const VERSION = 'ylp-v18';
+const VERSION = 'ylp-v19';
 
 const PRECACHE = [
   './',
   'index.html',
   'app.js',
   'manifest.json',
+  'icon-192.png',
+  'icon-512.png',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js',
   'https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js',
   'https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js',
