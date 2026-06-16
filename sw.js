@@ -11,7 +11,7 @@
 //  reinstala solo y limpia las cachés antiguas.
 // ═══════════════════════════════════════════════════════════
 
-const VERSION = 'ylp-v19';
+const VERSION = 'ylp-v20';
 
 const PRECACHE = [
   './',
@@ -50,12 +50,29 @@ function strippedKey(request) {
   return u.toString();
 }
 
+// Limita el nº de imágenes cacheadas (evita que la caché crezca sin freno
+// y acabe llenando la cuota del dispositivo). Borra las más antiguas.
+async function trimImageCache(max = 220) {
+  try {
+    const cache = await caches.open(VERSION);
+    const keys = await cache.keys();
+    const imgs = keys.filter(r => r.url.includes('/storage/v1/object/'));
+    if (imgs.length > max) {
+      const toDelete = imgs.slice(0, imgs.length - max); // keys() va en orden de inserción
+      await Promise.all(toDelete.map(r => cache.delete(r)));
+    }
+  } catch (_) {}
+}
+
 // stale-while-revalidate con clave normalizada
 async function swr(request, key) {
   const cache = await caches.open(VERSION);
   const cached = await cache.match(key);
   const network = fetch(request).then(res => {
-    if (res && res.ok) cache.put(key, res.clone());
+    if (res && res.ok) {
+      cache.put(key, res.clone());
+      if (key.includes('/storage/v1/object/') && Math.random() < 0.1) trimImageCache();
+    }
     return res;
   }).catch(() => null);
   return cached || network || Response.error();
