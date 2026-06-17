@@ -1938,7 +1938,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
       ${hasImg ? `<div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
         <div class="post-carousel" data-n="${carruselFotos.length}" style="position:absolute;inset:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none">
           ${carruselFotos.map(f => `<div class="cslide" style="min-width:100%;height:100%;flex-shrink:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center;background:${coast ? "#0d2535" : "#0d2a1e"}">
-            <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
+            <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:contain;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
             <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
           </div>`).join("")}
         </div>
@@ -2323,8 +2323,14 @@ async function toggleLike(e, t) {
         if (wasLiked) {
             err = (await db.from("photo_likes").delete().eq("user_id", state.user.id).eq("photo_id", t)).error;
         } else {
-            // upsert evita el error de clave duplicada si ya existía la fila
-            err = (await db.from("photo_likes").upsert({ user_id: state.user.id, photo_id: t }, { onConflict: "user_id,photo_id" })).error;
+            // 1º upsert (necesita la clave única). Si esa clave aún no existe,
+            // probamos un insert normal y tratamos el duplicado como "ya estaba".
+            let r = await db.from("photo_likes").upsert({ user_id: state.user.id, photo_id: t }, { onConflict: "user_id,photo_id" });
+            if (r.error && /on conflict|constraint|unique|exclusion/i.test(r.error.message || "")) {
+                r = await db.from("photo_likes").insert({ user_id: state.user.id, photo_id: t });
+                if (r.error && (r.error.code === "23505" || /duplicate/i.test(r.error.message || ""))) r = { error: null };
+            }
+            err = r.error;
         }
         if (err) throw err;
     } catch (err) {
@@ -3361,7 +3367,7 @@ async function deleteRecomendacion(e, t) {
 // Al escribir @ en un campo de comentario, sugiere tus amigos.
 let _friendsCache = null;
 async function getFriendsCache() {
-    if (_friendsCache) return _friendsCache;
+    if (_friendsCache && _friendsCache.length) return _friendsCache;
     if (!state.user) return [];
     const { data } = await db.from("friendships")
         .select("follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)")
@@ -3433,6 +3439,11 @@ document.addEventListener("mousedown", e => {
     if (item) { e.preventDefault(); applyMention(item.dataset.uname); }
     else if (!e.target.closest?.("#mention-dd")) hideMentionDD();
 });
+// touchstart para móvil (gana al blur del teclado)
+document.addEventListener("touchstart", e => {
+    const item = e.target.closest?.(".mention-dd-item");
+    if (item) { e.preventDefault(); applyMention(item.dataset.uname); }
+}, { passive: !1 });
 window.addEventListener("scroll", hideMentionDD, true);
 
 
