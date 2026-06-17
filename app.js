@@ -1788,6 +1788,30 @@ async function getPhotoUrl(e) {
     } = await db.storage.from("evidencias").createSignedUrl(e, 3600);
     return t?.signedUrl || db.storage.from("evidencias").getPublicUrl(e).data?.publicUrl || null
 }
+// Actualiza el contador (1/N) y los puntitos al deslizar el carrusel del feed
+function wireCarousels(scope) {
+    (scope || document).querySelectorAll(".post-carousel").forEach(c => {
+        if (c._wired) return;
+        c._wired = !0;
+        const n = +c.dataset.n || 1;
+        if (n < 2) return;
+        const box = c.parentElement;
+        const counter = box.querySelector(".cs-counter");
+        const dotsEl = box.querySelector(".cs-dots");
+        const dots = dotsEl ? [...dotsEl.children] : [];
+        let raf = null;
+        c.addEventListener("scroll", () => {
+            if (raf) return;
+            raf = requestAnimationFrame(() => {
+                raf = null;
+                const i = Math.max(0, Math.min(n - 1, Math.round(c.scrollLeft / c.clientWidth)));
+                if (counter) counter.textContent = (i + 1) + "/" + n;
+                dots.forEach((d, di) => d.style.background = di === i ? "#fff" : "rgba(255,255,255,0.4)");
+            });
+        }, { passive: !0 });
+    });
+}
+
 async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfiles, append = !1) {
     if (!visits.length) {
         if (!append) document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px;line-height:1.7"><i class="ti ti-map-2" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>Tus amigos aún no han conquistado municipios.</div>';
@@ -1798,6 +1822,17 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         const fotos = fotasByMuniUser[v.user_id + "|" + normalizeMuni(v.municipio)]
                    || fotasByMuniUser[v.user_id + "_" + normalizeMuni(v.municipio)] || [];
         return fotos.find(f => normalizeMuni(f.municipio) === normalizeMuni(v.municipio)) || fotos[0] || null;
+    };
+
+    // Todas las fotos (con imagen) de una publicación, en orden cronológico,
+    // para el carrusel. En el feed global cada post ya trae su _foto única.
+    const allFotos = v => {
+        if (v._foto) return (v._foto.storage_path && v._foto.storage_path !== "text_only") ? [v._foto] : [];
+        const fotos = fotasByMuniUser[v.user_id + "|" + normalizeMuni(v.municipio)]
+                   || fotasByMuniUser[v.user_id + "_" + normalizeMuni(v.municipio)] || [];
+        return fotos
+            .filter(f => f.storage_path && f.storage_path !== "text_only" && normalizeMuni(f.municipio) === normalizeMuni(v.municipio))
+            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     };
 
     const __html = visits.map((v, i) => {
@@ -1814,7 +1849,10 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
             ? `<img src="${esc(avatarUrl)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="${userSafe}"/>`
             : getInitials(username);
         const foto  = v._foto || pickFoto(v);
-        const hasImg = foto && foto.storage_path && foto.storage_path !== "text_only";
+        const fotosArr = allFotos(v);
+        const hasImg = fotosArr.length > 0 || (foto && foto.storage_path && foto.storage_path !== "text_only");
+        const carruselFotos = fotosArr.length ? fotosArr : (hasImg && foto ? [foto] : []);
+        const descFoto = carruselFotos.find(f => f.descripcion)?.descripcion || foto?.descripcion;
         const cid   = esc(foto ? foto.id : v.id);
         const fecha = new Date(v.created_at).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" });
 
@@ -1837,15 +1875,19 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         </div>`}
       </div>
       ${hasImg ? `<div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
-        <img src="" data-foto-id="${esc(foto.id)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
-        <div class="post-img-placeholder" style="display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)">
-          <div class="spin" style="width:20px;height:20px;border-width:2px"></div>
+        <div class="post-carousel" data-n="${carruselFotos.length}" style="position:absolute;inset:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none">
+          ${carruselFotos.map(f => `<div class="cslide" style="min-width:100%;height:100%;flex-shrink:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center;background:${coast ? "#0d2535" : "#0d2a1e"}">
+            <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
+            <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
+          </div>`).join("")}
         </div>
-        <div class="post-location"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
+        <div class="post-location" style="z-index:2"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
+        ${carruselFotos.length > 1 ? `<div class="cs-counter" style="position:absolute;top:8px;right:8px;z-index:2;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;backdrop-filter:blur(4px)">1/${carruselFotos.length}</div>
+        <div class="cs-dots" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:2;display:flex;gap:5px">${carruselFotos.map((_, di) => `<span style="width:6px;height:6px;border-radius:50%;transition:background .2s;background:${di === 0 ? "#fff" : "rgba(255,255,255,0.4)"}"></span>`).join("")}</div>` : ""}
       </div>` : ""}
       <div class="post-body">
         <div class="post-muni">${muniSafe}</div>
-        ${foto?.descripcion ? `<div class="post-desc">${renderMentions(esc(foto.descripcion))}</div>` : ""}
+        ${descFoto ? `<div class="post-desc">${renderMentions(esc(descFoto))}</div>` : ""}
         <div class="post-actions">
           ${foto ? `
           <div style="display:flex;gap:6px;align-items:center">
@@ -1897,16 +1939,19 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
     else fpEl.innerHTML = __html;
 
     applyFeedFilter();
+    wireCarousels(fpEl);
 
-    // ── Carga EN LOTE: 3 llamadas totales (antes 3 por post) ──
-    const fotosConStorage = [];
-    const commentIds = [];
+    // ── Carga EN LOTE ──
+    // Para likes/comentarios usamos la foto "principal" de cada post (anclaje
+    // histórico). Para las imágenes firmamos TODAS las del carrusel.
+    const fotosConStorage = []; // todas las del carrusel (para mostrar)
+    const commentIds = [];      // una por post (anclaje de likes/comentarios)
     visits.forEach(v => {
         const foto = v._foto || pickFoto(v);
-        if (foto && foto.storage_path && foto.storage_path !== "text_only") fotosConStorage.push(foto);
         commentIds.push(foto?.id || v.id);
+        allFotos(v).forEach(f => fotosConStorage.push(f));
     });
-    const fotoIds = [...new Set(fotosConStorage.map(f => f.id))];
+    const fotoIds = [...new Set(commentIds.filter(Boolean))];
     // Preferimos la miniatura (thumb_path) si existe; si no, la foto completa.
     const feedKey = f => f.thumb_path || f.storage_path;
     const paths   = [...new Set(fotosConStorage.map(feedKey))];
@@ -1920,7 +1965,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
             .in("photo_id", commentIds).order("created_at", { ascending: true }) : Promise.resolve({ data: [] }),
     ]);
 
-    // 1) Imágenes
+    // 1) Imágenes (todas las del carrusel)
     fotosConStorage.forEach(f => {
         const url = urlByPath[feedKey(f)];
         if (!url) return;
@@ -1928,7 +1973,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         if (img) {
             img.src = url;
             img.style.display = "block";
-            img.closest(".post-img")?.querySelector(".post-img-placeholder")?.remove();
+            (img.closest(".cslide") || img.closest(".post-img"))?.querySelector(".post-img-placeholder")?.remove();
         }
     });
 
