@@ -4,14 +4,14 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
   <meta name="theme-color" content="#0f1923"/>
-  <meta name="description" content="Explora los 102 municipios de Cantabria. Conquístalos todos."/>
+  <meta name="description" content="Explora los 103 municipios de Cantabria. Conquístalos todos."/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="Ya lo pisé"/>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <meta name="app-version" content="202606161300"/>
+  <meta name="app-version" content="202606161430"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png"/>
@@ -302,13 +302,28 @@
   z-index:9999;
   font-family:'Inter',sans-serif;
 ">
+  <img src="icon-192.png" alt="Ya lo pisé" width="92" height="92" style="border-radius:22px;margin-bottom:18px;box-shadow:0 8px 30px rgba(0,0,0,0.4)"/>
   <div style="font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:#fff;letter-spacing:.05em;margin-bottom:8px">Ya lo pisé</div>
   <div style="font-size:13px;color:rgba(255,255,255,0.35);margin-bottom:32px">Cantabria</div>
   <div style="width:32px;height:32px;border:3px solid rgba(255,255,255,0.1);border-top-color:#22b050;border-radius:50%;animation:spin .8s linear infinite"></div>
 </div>
 
+<!-- ══ TOASTS + CONFIRMACIÓN ══ -->
+<div id="toast-wrap" style="position:fixed;left:0;right:0;bottom:calc(80px + env(safe-area-inset-bottom));z-index:10000;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;padding:0 16px"></div>
+<div id="confirm-ov" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10001;align-items:center;justify-content:center;padding:28px">
+  <div style="background:#141e2c;border:1px solid rgba(255,255,255,0.08);border-radius:18px;max-width:340px;width:100%;padding:22px 20px;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+    <div id="confirm-title" style="font-family:'Playfair Display',serif;font-size:17px;font-weight:700;color:#fff;margin-bottom:8px"></div>
+    <div id="confirm-msg" style="font-size:13px;color:rgba(255,255,255,0.7);line-height:1.5;margin-bottom:20px"></div>
+    <div style="display:flex;gap:10px">
+      <button id="confirm-cancel" style="flex:1;padding:11px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);border:none;border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Cancelar</button>
+      <button id="confirm-ok" style="flex:1;padding:11px;background:#22b050;color:#fff;border:none;border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Confirmar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ PANTALLA DE LOGIN ══ -->
 <div id="auth-screen">
+  <img src="icon-192.png" alt="Ya lo pisé" width="76" height="76" style="border-radius:18px;margin-bottom:14px;box-shadow:0 6px 24px rgba(0,0,0,0.35)"/>
   <div class="auth-logo">Ya lo pisé</div>
   <div class="auth-sub">Explora los 103 municipios.<br>Conquístalos todos.</div>
   <div class="auth-box">
@@ -337,7 +352,7 @@
 
   <!-- MAPA -->
   <div class="screen active" id="screen-map">
-    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Ya lo pisé</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sbar"><span style="width:24px"></span><span class="sbar-title">Ya lo pisé</span><button class="notif-bell" onclick="openNotifs()" aria-label="Notificaciones" style="background:none;border:none;color:rgba(255,255,255,0.55);cursor:pointer;position:relative;padding:2px 4px;font-size:16px;line-height:1"><i class="ti ti-bell" aria-hidden="true"></i><span class="notif-badge" style="display:none;position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 3px;background:#e8288a;color:#fff;border-radius:999px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span></button></div>
     <div class="sc">
       <div class="map-top"><h1>Tu mapa<br>de aventuras</h1><p>Toca un municipio y sube tu evidencia</p></div>
       <div style="padding:0 12px 8px;position:relative">
@@ -349,7 +364,7 @@
         <div id="map-search-results" style="display:none;position:absolute;left:12px;right:12px;top:calc(100% - 4px);background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:0 0 12px 12px;z-index:20;max-height:200px;overflow-y:auto"></div>
       </div>
       <div class="prog-wrap"><div class="prog-fill" id="pfill"></div></div>
-      <div class="prog-lbl"><span id="plabel">0 municipios conquistados</span><span id="ppct">0 / 102</span></div>
+      <div class="prog-lbl"><span id="plabel">0 municipios conquistados</span><span id="ppct">0 / 103</span></div>
       <div class="map-cont" id="map-cont">
         <div class="map-load" id="map-load"><div class="spin"></div><p>Cargando mapa...</p></div>
         <svg id="map-svg" viewBox="0 0 410 200"></svg>
@@ -362,6 +377,7 @@
         <button class="map-filter-btn" data-filter="areas" onclick="setMapFilter('areas')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🗺️ Áreas</button>
         <button class="map-filter-btn" data-filter="rutas" onclick="setMapFilter('rutas')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">🥾 Rutas</button>
         <button class="map-filter-btn" data-filter="wishlist" onclick="setMapFilter('wishlist')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">💖 Wishlist</button>
+        <button class="map-filter-btn" data-filter="amigos" onclick="setMapFilter('amigos')" style="padding:5px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;white-space:nowrap;flex-shrink:0;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">👥 Amigos</button>
       </div>
       <!-- Desplegable de áreas/comarcas -->
       <div id="map-areas-dd" style="display:none;margin:0 12px 10px;background:#141e2c;border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:8px;flex-wrap:wrap;gap:6px"></div>
@@ -384,7 +400,7 @@
 
   <!-- EVENTOS -->
   <div class="screen" id="screen-eventos">
-    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Ya lo pisé</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sbar"><span style="width:24px"></span><span class="sbar-title">Ya lo pisé</span><button class="notif-bell" onclick="openNotifs()" aria-label="Notificaciones" style="background:none;border:none;color:rgba(255,255,255,0.55);cursor:pointer;position:relative;padding:2px 4px;font-size:16px;line-height:1"><i class="ti ti-bell" aria-hidden="true"></i><span class="notif-badge" style="display:none;position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 3px;background:#e8288a;color:#fff;border-radius:999px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span></button></div>
     <div class="sc">
       <div class="ev-header"><h1>Eventos</h1><span style="font-size:11px;color:rgba(255,255,255,0.35)">Próximas fiestas</span></div>
       <div class="ev-tabs">
@@ -403,7 +419,7 @@
 
   <!-- DADO -->
   <div class="screen" id="screen-dado">
-    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Ya lo pisé</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sbar"><span style="width:24px"></span><span class="sbar-title">Ya lo pisé</span><button class="notif-bell" onclick="openNotifs()" aria-label="Notificaciones" style="background:none;border:none;color:rgba(255,255,255,0.55);cursor:pointer;position:relative;padding:2px 4px;font-size:16px;line-height:1"><i class="ti ti-bell" aria-hidden="true"></i><span class="notif-badge" style="display:none;position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 3px;background:#e8288a;color:#fff;border-radius:999px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span></button></div>
     <div class="sc">
       <!-- DADO -->
       <div class="dado-hero"><h1>Tu próximo destino</h1><p>Par = costa · Impar = montaña</p>
@@ -488,7 +504,7 @@
 
   <!-- FEED -->
   <div class="screen" id="screen-feed">
-    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Ya lo pisé</span><i class="ti ti-wifi" aria-hidden="true" style="font-size:13px"></i></div>
+    <div class="sbar"><span style="width:24px"></span><span class="sbar-title">Ya lo pisé</span><button class="notif-bell" onclick="openNotifs()" aria-label="Notificaciones" style="background:none;border:none;color:rgba(255,255,255,0.55);cursor:pointer;position:relative;padding:2px 4px;font-size:16px;line-height:1"><i class="ti ti-bell" aria-hidden="true"></i><span class="notif-badge" style="display:none;position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 3px;background:#e8288a;color:#fff;border-radius:999px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span></button></div>
     <div class="sc">
       <div class="feed-header"><h1>Amigos</h1></div>
       <!-- Filtros del feed -->
@@ -523,8 +539,8 @@
 
   <!-- PERFIL -->
   <div class="screen" id="screen-profile">
-    <div class="sbar"><span class="clock">9:41</span><span class="sbar-title">Ya lo pisé</span>
-      <button onclick="doLogout()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">Salir</button>
+    <div class="sbar"><span style="width:24px"></span><span class="sbar-title">Ya lo pisé</span><span style="display:flex;align-items:center;gap:10px"><button class="notif-bell" onclick="openNotifs()" aria-label="Notificaciones" style="background:none;border:none;color:rgba(255,255,255,0.55);cursor:pointer;position:relative;padding:2px 4px;font-size:16px;line-height:1"><i class="ti ti-bell" aria-hidden="true"></i><span class="notif-badge" style="display:none;position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 3px;background:#e8288a;color:#fff;border-radius:999px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span></button>
+      <button onclick="doLogout()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:11px;cursor:pointer;font-family:Inter,sans-serif;">Salir</button></span>
     </div>
     <div class="sc">
       <div class="ph"><h1>Mi perfil</h1></div>
@@ -556,6 +572,8 @@
           <div class="sl" style="color:#e86820">Amigos</div>
         </div>
       </div>
+      <!-- NIVEL + INSIGNIAS -->
+      <div id="profile-progress" style="padding:0 14px"></div>
       <!-- SOLICITUDES DE AMISTAD -->
       <div id="solicitudes-section" style="border-bottom:1px solid rgba(255,255,255,0.07)"></div>
       <div class="gal-sec">
@@ -763,6 +781,20 @@
 
 </div><!-- /app -->
 
+<!-- CENTRO DE NOTIFICACIONES -->
+<div id="notif-ov" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:500;flex-direction:column;justify-content:flex-end" onclick="if(event.target===this)closeNotifs()">
+  <div style="background:#141e2c;border-radius:22px 22px 0 0;max-height:80vh;display:flex;flex-direction:column;animation:su .22s ease;max-width:520px;margin:0 auto;width:100%">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px;border-bottom:1px solid rgba(255,255,255,0.08)">
+      <h3 style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#fff">Notificaciones</h3>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button onclick="markNotifsRead()" style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:12px;cursor:pointer;font-family:Inter,sans-serif">Marcar leídas</button>
+        <button onclick="closeNotifs()" style="background:rgba(255,255,255,0.1);border:none;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:13px"><i class="ti ti-x" aria-hidden="true"></i></button>
+      </div>
+    </div>
+    <div id="notif-list" style="overflow-y:auto;padding:8px 0 calc(16px + env(safe-area-inset-bottom))"></div>
+  </div>
+</div>
+
 <!-- Supabase JS -->
     <div class="bsheet" id="upload-sheet">
       <div class="bhandle"></div>
@@ -774,22 +806,18 @@
         <button class="vis-btn vis-active" id="vis-amigos" onclick="setVis('amigos')"><i class="ti ti-users" aria-hidden="true" style="font-size:11px"></i> Amigos</button>
         <button class="vis-btn" id="vis-publico" onclick="setVis('publico')"><i class="ti ti-world" aria-hidden="true" style="font-size:11px"></i> Público</button>
       </div>
-      <!-- Preview foto -->
-      <div class="prev-w" id="prev-w">
-        <img id="prev-img" src="" alt="preview"/>
-        <div class="prev-meta" id="prev-meta"></div>
-        <button onclick="clearPhoto()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);color:#fff;border:none;border-radius:50%;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;">
-          <i class="ti ti-x" aria-hidden="true"></i>
-        </button>
+      <!-- Preview fotos (varias) -->
+      <div class="prev-w" id="prev-w" style="display:none">
+        <div id="prev-strip" style="display:flex;gap:6px;overflow-x:auto;padding:2px"></div>
       </div>
       <!-- Zona subir foto — input visible pero transparente encima del div -->
       <div style="position:relative">
         <div class="uzone" id="uzone" style="pointer-events:none">
           <i class="ti ti-camera-plus" aria-hidden="true"></i>
-          Toca para añadir foto <span style="color:rgba(255,255,255,0.4)">(opcional)</span>
+          Toca para añadir fotos <span style="color:rgba(255,255,255,0.4)">(puedes elegir varias)</span>
           <div style="font-size:11px;margin-top:4px;color:rgba(255,255,255,0.3)">Se guardará con ubicación y hora</div>
         </div>
-        <input type="file" id="file-in" accept="image/*"
+        <input type="file" id="file-in" accept="image/*" multiple
           style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:10;">
       </div>
       <!-- Descripción -->
@@ -842,6 +870,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
-<script src="app.js?v=202606161300"></script>
+<script src="app.js?v=202606161430"></script>
 </body>
 </html>
