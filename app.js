@@ -18,12 +18,12 @@ async function guardarNombre() {
   row.setAttribute('data-open', '0');
   if (!v || !state?.user) return;
   if (v.length < 3 || !/^[a-zA-Z0-9_. -]+$/.test(v)) {
-    alert('El nombre debe tener al menos 3 caracteres y solo letras, números, espacios, guiones y puntos');
+    toast('El nombre debe tener 3+ caracteres (letras, números, espacios, guiones)', 'info');
     return;
   }
   const { error } = await db.from('profiles').update({ username: v }).eq('id', state.user.id);
   if (error) {
-    alert(error.code === '23505' ? 'Ese nombre ya está en uso' : 'No se pudo guardar el nombre');
+    toast(error.code === '23505' ? 'Ese nombre ya está en uso' : 'No se pudo guardar el nombre', 'error');
     return;
   }
   if (state.profile) state.profile.username = v;
@@ -123,7 +123,7 @@ async function openMentionProfile(username) {
   if (!state?.user || !username) return;
   const { data: profile } = await db.from('profiles')
     .select('id, username, avatar_url').ilike('username', username).single();
-  if (!profile) { alert('@' + username + ' no encontrado'); return; }
+  if (!profile) { toast('@' + username + ' no encontrado', 'error'); return; }
   if (profile.id === state.user.id) return;
   const { data: fs } = await db.from('friendships').select('estado')
     .or('and(follower_id.eq.' + state.user.id + ',following_id.eq.' + profile.id + '),' +
@@ -131,10 +131,10 @@ async function openMentionProfile(username) {
     .limit(1);
   const rel = fs?.[0];
   if (rel?.estado === 'aceptado') openFriendProfile(profile.id, profile.username);
-  else if (rel?.estado === 'pendiente') alert('Ya tienes una solicitud pendiente con @' + profile.username);
-  else if (confirm('¿Enviar solicitud de amistad a @' + profile.username + '?')) {
+  else if (rel?.estado === 'pendiente') toast('Ya tienes una solicitud pendiente con @' + profile.username, 'info');
+  else if (await confirmar('¿Enviar solicitud de amistad a @' + profile.username + '?', { titulo: 'Solicitud de amistad', ok: 'Enviar' })) {
     await db.from('friendships').insert({ follower_id: state.user.id, following_id: profile.id, estado: 'pendiente' });
-    alert('Solicitud enviada a @' + profile.username);
+    toast('Solicitud enviada a @' + profile.username, 'success');
   }
 }
 
@@ -440,8 +440,10 @@ async function loadUserData(e) {
         e.innerHTML = '<img src="' + t + '" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>'
     }
     state.visitedLocs = state.visitedLocs || {};
+    state.visitDates = state.visitDates || {};
     i.data && (i.data.forEach(e => {
         state.visited[e.municipio] = !0;
+        if (e.fecha) state.visitDates[e.municipio] = e.fecha;
         if (e.localidades) state.visitedLocs[e.municipio] = e.localidades;
     }), refreshMapVisited());
     if (n.data) {
@@ -802,7 +804,7 @@ async function confirmVisit() {
         t.textContent = "📍 Comprobando ubicación...", t.disabled = !0;
         const gps = await verifyGPSInMuni(e);
         if (gps === "ok") gpsVerificada = !0;
-        else if (gps === "fuera" && !confirm("📍 No parece que estés en " + e + " ahora mismo.\n\n¿Marcar igualmente como conquistado? (quedará sin verificar)")) {
+        else if (gps === "fuera" && !(await confirmar("No parece que estés en " + e + " ahora mismo. ¿Marcar igualmente como conquistado? Quedará sin verificar.", { titulo: "📍 Ubicación", ok: "Marcar igual", cancel: "Cancelar" }))) {
             t.textContent = "Marcar como conquistado";
             t.disabled = !1;
             return;
@@ -815,9 +817,10 @@ async function confirmVisit() {
             user_id: state.user.id,
             municipio: e,
             visibilidad: selectedVisibilidad,
-            coords: state.lastCoords || null,
-            fecha: (new Date).toISOString().split("T")[0]
+            coords: state.lastCoords || null
         };
+        // La fecha solo se fija en la 1ª conquista (no se pisa al añadir más fotos)
+        if (!state.visited[e]) _visitPayload.fecha = (new Date).toISOString().split("T")[0];
         // Solo tocamos gps_verificada en la 1ª conquista o si ahora sí verifica,
         // para no "desverificar" una visita ya verificada al añadir más fotos.
         if (!state.visited[e] || gpsVerificada) _visitPayload.gps_verificada = gpsVerificada;
@@ -907,9 +910,13 @@ async function confirmVisit() {
         const s = document.getElementById("evidencia-desc");
         s && (s.value = ""), document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
-        }), updateProgress(), launchConfetti(), console.log("Visita guardada OK:", e, selectedVisibilidad), setTimeout(() => {
-            confirm("¿Quieres recomendar algún sitio o restaurante en " + e + "?") && openRecModal(e)
-        }, 1500)
+        }), updateProgress(), launchConfetti(), console.log("Visita guardada OK:", e, selectedVisibilidad);
+        (state.visitDates = state.visitDates || {})[e] = (state.visitDates[e] || (new Date).toISOString().slice(0, 10));
+        toast(_photos.length ? ("¡" + e + " conquistado! " + _photos.length + (_photos.length === 1 ? " foto subida" : " fotos subidas")) : ("¡" + e + " conquistado!"), "success");
+        refreshBadgesAndLevel(true);
+        setTimeout(async () => {
+            if (await confirmar("¿Quieres recomendar algún sitio o restaurante en " + e + "?", { titulo: "Recomendar un sitio", ok: "Sí, recomendar", cancel: "Ahora no" })) openRecModal(e);
+        }, 1200)
     } catch (t) {
         if (console.error("confirmVisit error:", t), t.message && t.message.includes("foto")) try {
             await db.from("visits").upsert({
@@ -931,15 +938,15 @@ async function confirmVisit() {
 async function desmarcarVisit() {
     const e = state.selectedMuni;
     if (!e || !state.user) return;
-    if (!confirm("¿Seguro que quieres desmarcar " + e + " como conquistado?")) return;
+    if (!await confirmar("¿Seguro que quieres desmarcar " + e + " como conquistado?", { titulo: "Desmarcar municipio", ok: "Desmarcar", peligro: !0 })) return;
     const t = document.getElementById("btn-desmarcar");
     t.textContent = "Desmarcando...", t.disabled = !0;
     try {
-        await db.from("visits").delete().eq("user_id", state.user.id).eq("municipio", e), delete state.visited[e], document.querySelectorAll(".muni-path").forEach(t => {
+        await db.from("visits").delete().eq("user_id", state.user.id).eq("municipio", e), delete state.visited[e], delete (state.visitDates || {})[e], document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && (t.classList.remove("visited"), t.classList.remove("selected"))
-        }), document.getElementById("muni-bar").style.display = "none", closeUploadSheet(), updateProgress()
+        }), document.getElementById("muni-bar").style.display = "none", closeUploadSheet(), updateProgress(), toast(e + " desmarcado", "info")
     } catch (e) {
-        alert("Error al desmarcar: " + e.message)
+        toast("Error al desmarcar: " + e.message, "error")
     } finally {
         t.textContent = "Desmarcar como conquistado", t.disabled = !1
     }
@@ -979,7 +986,7 @@ async function handleFilesSelected(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
     const room = 8 - state.pendingPhotos.length;
-    if (room <= 0) { alert("Máximo 8 fotos por visita."); return; }
+    if (room <= 0) { toast("Máximo 8 fotos por visita.", "info"); return; }
     for (const f of list.slice(0, room)) {
         try {
             const { base64, mime } = await compressImage(f);
@@ -1143,7 +1150,7 @@ async function confirmEventPhoto() {
                 });
             n || (t = i)
         }
-        if (!t) return alert("Añade una foto antes de publicar"), e.textContent = "Publicar foto", void(e.disabled = !1);
+        if (!t) return toast("Añade una foto antes de publicar", "info"), e.textContent = "Publicar foto", void(e.disabled = !1);
         try { await db.from("event_photos").insert({
             user_id: state.user.id,
             event_id: pendingEventId,
@@ -1161,9 +1168,9 @@ async function confirmEventPhoto() {
                 hour: "2-digit",
                 minute: "2-digit"
             })
-        }), state.feedCache = null, closeUploadSheet(), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos(), alert("¡Foto del evento publicada! 🎉")
+        }), state.feedCache = null, closeUploadSheet(), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos(), toast("¡Foto del evento publicada! 🎉", "success")
     } catch (e) {
-        alert("Error: " + e.message)
+        toast("Error: " + e.message, "error")
     } finally {
         e.textContent = "Publicar foto", e.disabled = !1
     }
@@ -2006,7 +2013,7 @@ async function searchAndOpenProfile(e) {
     t ? openFriendProfile(t.id, t.username) : alert("Usuario @" + e + " no encontrado")
 }
 async function deleteComment(e, t) {
-    state.user && confirm("¿Borrar este comentario?") && (await db.from("photo_comments").delete().eq("id", e).eq("user_id", state.user.id), await loadVisitComments(t, null))
+    if (state.user && await confirmar("¿Borrar este comentario?", { titulo: "Borrar comentario", ok: "Borrar", peligro: !0 })) { await db.from("photo_comments").delete().eq("id", e).eq("user_id", state.user.id); await loadVisitComments(t, null); }
 }
 async function postComment(e, t, i) {
     const n = document.getElementById("comment-input-" + e);
@@ -2054,14 +2061,15 @@ async function postComment(e, t, i) {
                     })
                 }
         } catch (e) {
-            alert("Error al comentar: " + e.message)
+            toast("Error al comentar: " + e.message, "error")
         } finally {
             n.disabled = !1
         }
     }
 }
 async function deleteFeedPost(e, t, i) {
-    if (!state.user || !confirm("¿Borrar esta publicación?")) return;
+    if (!state.user) return;
+    if (!await confirmar("¿Borrar esta publicación?", { titulo: "Borrar publicación", ok: "Borrar", peligro: !0 })) return;
     // Post de evento (sintético): borrar foto del feed + event_photos
     if (String(e).startsWith("ep_")) {
         try {
@@ -2072,13 +2080,14 @@ async function deleteFeedPost(e, t, i) {
             if (t) await db.from("photos").delete().eq("id", t).eq("user_id", state.user.id);
             state.feedCache = null;
             loadFeed(!0);
-        } catch (err) { alert("Error al borrar: " + err.message); }
+            toast("Publicación borrada", "info");
+        } catch (err) { toast("Error al borrar: " + err.message, "error"); }
         return;
     }
     try {
-        i && "text_only" !== i && "" !== i && await db.storage.from("evidencias").remove([i]), t && await db.from("photos").delete().eq("id", t).eq("user_id", state.user.id), await db.from("visits").delete().eq("id", e).eq("user_id", state.user.id), delete state.visited[state.feedCache?.visibleVisits?.find(t => t.id === e)?.municipio], state.feedCache = null, state.photos = state.photos.filter(e => e.id !== t), updateProgress(), loadFeed(!0)
+        i && "text_only" !== i && "" !== i && await db.storage.from("evidencias").remove([i]), t && await db.from("photos").delete().eq("id", t).eq("user_id", state.user.id), await db.from("visits").delete().eq("id", e).eq("user_id", state.user.id), delete state.visited[state.feedCache?.visibleVisits?.find(t => t.id === e)?.municipio], state.feedCache = null, state.photos = state.photos.filter(e => e.id !== t), updateProgress(), loadFeed(!0), toast("Publicación borrada", "info")
     } catch (e) {
-        alert("Error al borrar: " + e.message)
+        toast("Error al borrar: " + e.message, "error")
     }
 }
 
@@ -2225,7 +2234,10 @@ async function sendFriendRequest(e, t, i) {
 }
 async function renderProfile() {
     const e = Object.keys(state.visited).length;
-    document.getElementById("sv").textContent = e, document.getElementById("sp").textContent = Math.round(e / state.totalMuni * 100) + "%", document.getElementById("sph").textContent = state.photos.length, renderGallery(), await Promise.all([loadSolicitudes(), loadFriendCount()])
+    document.getElementById("sv").textContent = e, document.getElementById("sp").textContent = Math.round(e / state.totalMuni * 100) + "%", document.getElementById("sph").textContent = state.photos.length, renderGallery();
+    refreshBadgesAndLevel(false);
+    loadLikesRecibidos().then(() => refreshBadgesAndLevel(false));
+    await Promise.all([loadSolicitudes(), loadFriendCount()])
 }
 async function loadFriendCount() {
     if (!state.user) return;
@@ -2286,10 +2298,10 @@ async function aceptarSolicitud(e, t) {
     }), await loadSolicitudes()
 }
 async function rechazarSolicitud(e, t) {
-    confirm("Rechazar la solicitud de " + t + "?") && (await db.from("friendships").delete().eq("follower_id", e).eq("following_id", state.user.id), await loadSolicitudes())
+    if (await confirmar("¿Rechazar la solicitud de " + t + "?", { titulo: "Rechazar solicitud", ok: "Rechazar", peligro: !0 })) { await db.from("friendships").delete().eq("follower_id", e).eq("following_id", state.user.id); await loadSolicitudes(); loadNotifBadge(); }
 }
 async function cancelarSolicitud(e, t) {
-    confirm("Cancelar la solicitud enviada a " + t + "?") && (await db.from("friendships").delete().eq("follower_id", state.user.id).eq("following_id", e), await loadSolicitudes())
+    if (await confirmar("¿Cancelar la solicitud enviada a " + t + "?", { titulo: "Cancelar solicitud", ok: "Cancelar solicitud", cancel: "Volver" })) { await db.from("friendships").delete().eq("follower_id", state.user.id).eq("following_id", e); await loadSolicitudes(); }
 }
 
 async function renderGallery() {
@@ -2364,7 +2376,7 @@ function openPMobj(e) {
 async function borrarFotoGaleria() {
     const p = state.currentPM;
     if (!p || !state.user) return;
-    if (!confirm("¿Borrar esta foto definitivamente?")) return;
+    if (!await confirmar("¿Borrar esta foto definitivamente?", { titulo: "Borrar foto", ok: "Borrar", peligro: !0 })) return;
     try {
         if (p.id) await db.from("photos").delete().eq("id", p.id).eq("user_id", state.user.id);
         if (p.path && p.path !== "text_only") await db.storage.from("evidencias").remove([p.path]);
@@ -2373,8 +2385,9 @@ async function borrarFotoGaleria() {
         renderGallery();
         closePM();
         state.feedCache = null; // que el feed se refresque
+        toast("Foto borrada", "info");
     } catch (err) {
-        alert("Error al borrar: " + err.message);
+        toast("Error al borrar: " + err.message, "error");
     }
 }
 
@@ -2428,12 +2441,14 @@ async function editPhoto(e) {
 }
 async function deletePhoto(e) {
     const t = state.photos[e];
-    if (t && state.user && confirm("¿Borrar esta foto de " + t.muni + "? Esta acción no se puede deshacer.")) try {
+    if (!t || !state.user) return;
+    if (!await confirmar("¿Borrar esta foto de " + t.muni + "? Esta acción no se puede deshacer.", { titulo: "Borrar foto", ok: "Borrar", peligro: !0 })) return;
+    try {
         t.path && "text_only" !== t.path && await db.storage.from("evidencias").remove([t.path]), t.id && await db.from("photos").delete().eq("id", t.id).eq("user_id", state.user.id), state.photos.splice(e, 1), state.feedCache = null, closePM(), renderGallery();
-        Object.keys(state.visited).length;
-        document.getElementById("sph").textContent = state.photos.length
+        document.getElementById("sph").textContent = state.photos.length;
+        toast("Foto borrada", "info")
     } catch (e) {
-        alert("Error al borrar: " + e.message)
+        toast("Error al borrar: " + e.message, "error")
     }
 }
 
@@ -2796,7 +2811,8 @@ function clearFeedBadge() {
 }
 
 function checkInsignia(e, t) {
-    e === t && showInsignia()
+    // El sistema de insignias/niveles (refreshBadgesAndLevel) gestiona ahora
+    // todos los logros, incluido "El Cántabru". Se deja como no-op por compat.
 }
 
 function showInsignia() {
@@ -3021,10 +3037,10 @@ async function guardarRecomendacion() {
     const nombre = document.getElementById("rec-nombre").value.trim();
     const coment = document.getElementById("rec-comentario").value.trim();
     let link = (document.getElementById("rec-link")?.value || "").trim();
-    if (!nombre) return void alert("Ponle un nombre al sitio");
+    if (!nombre) return void toast("Ponle un nombre al sitio", "info");
     if (!state.user) return;
     if (link && !/^https?:\/\//i.test(link)) link = "https://" + link;
-    if (link && link.length > 300) return void alert("El enlace es demasiado largo");
+    if (link && link.length > 300) return void toast("El enlace es demasiado largo", "info");
     const btn = document.getElementById("rec-save-btn");
     btn.textContent = "Guardando...", btn.disabled = !0;
     try {
@@ -3172,7 +3188,7 @@ async function enviarRecReply(rid, muni, btn) {
     if (!state.user) return;
     const texto = (document.getElementById("rec-reply-text-" + rid)?.value || "").trim();
     const foto  = recReplyFotos[rid];
-    if (!texto && !foto) return void alert("Añade un comentario o una foto");
+    if (!texto && !foto) return void toast("Añade un comentario o una foto", "info");
     btn.textContent = "..."; btn.disabled = !0;
     try {
         let fotoPath = null;
@@ -3197,13 +3213,13 @@ async function enviarRecReply(rid, muni, btn) {
     }
 }
 async function deleteRecReply(rpid, muni) {
-    if (!confirm("¿Borrar tu respuesta?")) return;
+    if (!await confirmar("¿Borrar tu respuesta?", { titulo: "Borrar respuesta", ok: "Borrar", peligro: !0 })) return;
     await db.from("recomendacion_replies").delete().eq("id", rpid).eq("user_id", state.user.id);
     loadRecomendaciones(muni);
 }
 
 async function deleteRecomendacion(e, t) {
-    confirm("¿Borrar esta recomendación?") && (await db.from("recomendaciones").delete().eq("id", e).eq("user_id", state.user.id), loadRecomendaciones(t))
+    if (await confirmar("¿Borrar esta recomendación?", { titulo: "Borrar recomendación", ok: "Borrar", peligro: !0 })) { await db.from("recomendaciones").delete().eq("id", e).eq("user_id", state.user.id); loadRecomendaciones(t); }
 }
 
 // ═══ AUTOCOMPLETADO DE @MENCIONES ═══════════════════════════
@@ -3327,15 +3343,15 @@ async function reportarContenido(tipo, contenidoId, usuarioId) {
             content_id: String(contenidoId || ""),
             motivo: (motivo.trim() || "sin motivo").slice(0, 300)
         });
-        alert("Gracias. Hemos recibido tu reporte y lo revisaremos.");
+        toast("Gracias, hemos recibido tu reporte", "success");
     } catch (err) {
-        alert("No se pudo enviar el reporte");
+        toast("No se pudo enviar el reporte", "error");
     }
 }
 
 async function bloquearUsuario(uid, uname) {
     if (!state.user || !uid || uid === state.user.id) return;
-    if (!confirm("¿Bloquear a " + (uname || "este usuario") + "?\n\nDejaréis de ser amigos y no verás su contenido ni sus comentarios.")) return;
+    if (!await confirmar("Dejaréis de ser amigos y no verás su contenido ni sus comentarios.", { titulo: "¿Bloquear a " + (uname || "este usuario") + "?", ok: "Bloquear", peligro: !0 })) return;
     try {
         await db.from("blocks").upsert({ blocker_id: state.user.id, blocked_id: uid });
         await db.from("friendships").delete()
@@ -3345,9 +3361,9 @@ async function bloquearUsuario(uid, uname) {
         state.feedCache = null;
         if (typeof closeFriendProfile === "function") closeFriendProfile();
         if (typeof loadFriendCount === "function") loadFriendCount();
-        alert("Usuario bloqueado");
+        toast("Usuario bloqueado", "info");
     } catch (err) {
-        alert("Error al bloquear: " + err.message);
+        toast("Error al bloquear: " + err.message, "error");
     }
 }
 
@@ -3793,4 +3809,212 @@ function closeNotifs() { const ov = document.getElementById("notif-ov"); if (ov)
 function markNotifsRead() {
     try { localStorage.setItem(_notifSeenKey(), String(Date.now())); } catch (_) {}
     loadNotifBadge(); // tras esto el badge solo refleja solicitudes pendientes
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TOASTS  +  MODAL DE CONFIRMACIÓN PROPIO
+//  toast(msg, tipo)  ·  tipo: 'success' | 'error' | 'info'
+//  confirmar(texto, {titulo, ok, cancel}) -> Promise<boolean>
+// ═══════════════════════════════════════════════════════════
+function toast(msg, tipo = "info", ms = 3200) {
+    const wrap = document.getElementById("toast-wrap");
+    if (!wrap) { console.log("toast:", msg); return; }
+    const colores = {
+        success: { bg: "#1a7a3e", ic: "✓" },
+        error:   { bg: "#a82828", ic: "⚠" },
+        info:    { bg: "#1e3a5f", ic: "ℹ" }
+    };
+    const c = colores[tipo] || colores.info;
+    const el = document.createElement("div");
+    el.style.cssText = "pointer-events:auto;max-width:420px;width:fit-content;display:flex;align-items:center;gap:9px;"
+        + "background:" + c.bg + ";color:#fff;padding:11px 16px;border-radius:12px;font-size:13px;font-weight:500;"
+        + "box-shadow:0 8px 28px rgba(0,0,0,0.4);font-family:Inter,sans-serif;line-height:1.35;"
+        + "opacity:0;transform:translateY(12px);transition:opacity .22s ease,transform .22s ease";
+    el.innerHTML = '<span style="font-size:15px;flex-shrink:0">' + c.ic + '</span><span>' + esc(String(msg)) + '</span>';
+    wrap.appendChild(el);
+    requestAnimationFrame(() => { el.style.opacity = "1"; el.style.transform = "translateY(0)"; });
+    setTimeout(() => {
+        el.style.opacity = "0"; el.style.transform = "translateY(12px)";
+        setTimeout(() => el.remove(), 260);
+    }, ms);
+}
+
+function confirmar(texto, opts = {}) {
+    return new Promise(resolve => {
+        const ov = document.getElementById("confirm-ov");
+        if (!ov) return resolve(window.confirm(texto)); // fallback
+        document.getElementById("confirm-title").textContent = opts.titulo || "¿Confirmar?";
+        document.getElementById("confirm-msg").textContent = texto;
+        const okB = document.getElementById("confirm-ok");
+        const caB = document.getElementById("confirm-cancel");
+        okB.textContent = opts.ok || "Confirmar";
+        caB.textContent = opts.cancel || "Cancelar";
+        okB.style.background = opts.peligro ? "#c43030" : "#22b050";
+        ov.style.display = "flex";
+        const cerrar = (val) => {
+            ov.style.display = "none";
+            okB.onclick = null; caB.onclick = null; ov.onclick = null;
+            resolve(val);
+        };
+        okB.onclick = () => cerrar(true);
+        caB.onclick = () => cerrar(false);
+        ov.onclick = (e) => { if (e.target === ov) cerrar(false); };
+    });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  NIVELES  +  INSIGNIAS
+// ═══════════════════════════════════════════════════════════
+const NIVELES = [
+    { min: 0,   nombre: "Forastero",              emoji: "🌱" },
+    { min: 5,   nombre: "Explorador novato",      emoji: "🧭" },
+    { min: 15,  nombre: "Caminante",              emoji: "🥾" },
+    { min: 30,  nombre: "Montañero",              emoji: "⛰️" },
+    { min: 50,  nombre: "Trotamundos cántabro",   emoji: "🗺️" },
+    { min: 75,  nombre: "Veterano de Cantabria",  emoji: "🌟" },
+    { min: 96,  nombre: "Maestro cántabro",       emoji: "👑" },
+    { min: 103, nombre: "El Cántabru de pura cepa", emoji: "🏔️" }
+];
+function nivelPara(n) {
+    let idx = 0;
+    for (let i = 0; i < NIVELES.length; i++) if (n >= NIVELES[i].min) idx = i;
+    const actual = NIVELES[idx], siguiente = NIVELES[idx + 1] || null;
+    return { idx, actual, siguiente, n };
+}
+
+// Catálogo de insignias. `check(ctx)` devuelve true si está conseguida.
+const INSIGNIAS = [
+    { id: "primeros_pasos", emoji: "🌱", nombre: "Primeros pasos",  desc: "Conquista tu primer municipio",           check: c => c.muni >= 1 },
+    { id: "explorador",     emoji: "🧭", nombre: "Explorador",       desc: "10 municipios conquistados",               check: c => c.muni >= 10 },
+    { id: "mitad",          emoji: "🗺️", nombre: "A mitad de camino", desc: "52 municipios",                          check: c => c.muni >= 52 },
+    { id: "costa",          emoji: "🌅", nombre: "Toda la costa",    desc: "Todos los municipios costeros",            check: c => c.costaTotal },
+    { id: "comarca",        emoji: "🏔️", nombre: "Comarca completa", desc: "Todos los municipios de una comarca",      check: c => c.comarcaCompleta },
+    { id: "senderista",     emoji: "🥾", nombre: "Senderista",       desc: "Visita 5 municipios que tienen ruta",      check: c => c.muniConRuta >= 5 },
+    { id: "reportero",      emoji: "📸", nombre: "Reportero",        desc: "Sube 25 fotos",                            check: c => c.fotos >= 25 },
+    { id: "sprint",         emoji: "⚡", nombre: "Sprint conquistador", desc: "10 municipios en un mismo mes",         check: c => c.maxMes >= 10 },
+    { id: "social",         emoji: "💬", nombre: "Alma del grupo",   desc: "Recibe 50 reacciones",                     check: c => c.likes >= 50 },
+    { id: "cantabru",       emoji: "🏆", nombre: "El Cántabru",      desc: "Los 103 municipios",                       check: c => c.muni >= (state.totalMuni || 103) }
+];
+
+function _badgeContext() {
+    const visitedNames = Object.keys(state.visited || {});
+    const muni = visitedNames.length;
+    // Toda la costa
+    const costa = (state.coast && state.coast.length) ? state.coast : null;
+    const costaTotal = !!(costa && costa.length && costa.every(m => state.visited[m]));
+    // Comarca completa (si tenemos municipiosData con comarca)
+    let comarcaCompleta = false;
+    const md = state.municipiosData;
+    if (md) {
+        const porComarca = {};
+        Object.values(md).forEach(m => {
+            if (!m.comarca) return;
+            (porComarca[m.comarca] = porComarca[m.comarca] || []).push(m.nombre);
+        });
+        comarcaCompleta = Object.values(porComarca).some(arr => arr.length >= 2 && arr.every(n => state.visited[n]));
+    }
+    // Municipios con ruta visitados
+    let muniConRuta = 0;
+    if (md) visitedNames.forEach(n => { if (md[n] && String(md[n].ruta || "").trim()) muniConRuta++; });
+    // Máximo de conquistas en un mismo mes (si guardamos fechas)
+    let maxMes = 0;
+    if (state.visitDates) {
+        const cnt = {};
+        Object.values(state.visitDates).forEach(f => { if (!f) return; const k = String(f).slice(0, 7); cnt[k] = (cnt[k] || 0) + 1; });
+        maxMes = Object.values(cnt).reduce((a, b) => Math.max(a, b), 0);
+    }
+    return { muni, fotos: state.photos.length, costaTotal, comarcaCompleta, muniConRuta, maxMes, likes: state._likesRecibidos || 0 };
+}
+
+async function refreshBadgesAndLevel(celebrate = false) {
+    const box = document.getElementById("profile-progress");
+    const ctx = _badgeContext();
+    const lvl = nivelPara(ctx.muni);
+
+    // Insignias conseguidas ahora mismo
+    const earned = INSIGNIAS.filter(b => { try { return b.check(ctx); } catch (_) { return false; } });
+    const earnedIds = new Set(earned.map(b => b.id));
+
+    // Persistencia + detección de nuevas (degrada con elegancia si no hay tabla)
+    let prev = state._badgesPrev;
+    if (!prev) {
+        prev = new Set();
+        let tablaOk = false;
+        try {
+            const { data, error } = await db.from("user_badges").select("badge_id").eq("user_id", state.user.id);
+            if (error) throw error;
+            (data || []).forEach(r => prev.add(r.badge_id));
+            tablaOk = true;
+        } catch (_) {
+            // Sin tabla user_badges: sembramos con lo ya conseguido para no
+            // disparar celebraciones falsas. (Ejecuta supabase_setup_3.sql)
+            earnedIds.forEach(id => prev.add(id));
+        }
+        state._badgesPrev = prev;
+        state._badgesTablaOk = tablaOk;
+    }
+    const nuevas = earned.filter(b => !prev.has(b.id));
+    if (nuevas.length) {
+        if (state._badgesTablaOk) {
+            try {
+                await db.from("user_badges").upsert(
+                    nuevas.map(b => ({ user_id: state.user.id, badge_id: b.id })),
+                    { onConflict: "user_id,badge_id" }
+                );
+            } catch (_) {}
+        }
+        nuevas.forEach(b => prev.add(b.id));
+        if (celebrate) nuevas.forEach((b, i) => setTimeout(() => celebrarInsignia(b), i * 600));
+    }
+
+    if (!box) return;
+    // Render: barra de nivel + rejilla de insignias
+    const restante = lvl.siguiente ? (lvl.siguiente.min - ctx.muni) : 0;
+    const span = lvl.siguiente ? (lvl.siguiente.min - lvl.actual.min) : 1;
+    const dentro = ctx.muni - lvl.actual.min;
+    const pct = lvl.siguiente ? Math.min(100, Math.round(dentro / span * 100)) : 100;
+    box.innerHTML =
+        '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:14px;margin:14px 0">'
+        + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+        + '<div style="font-size:26px;line-height:1">' + lvl.actual.emoji + '</div>'
+        + '<div style="flex:1"><div style="font-family:\'Playfair Display\',serif;font-size:15px;font-weight:700;color:#fff">' + lvl.actual.nombre + '</div>'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.45)">Nivel ' + (lvl.idx + 1) + ' · ' + ctx.muni + ' municipios</div></div></div>'
+        + '<div style="height:8px;background:rgba(255,255,255,0.08);border-radius:999px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#22b050,#5DCAA5);border-radius:999px;transition:width .5s ease"></div></div>'
+        + '<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-top:6px">' + (lvl.siguiente ? ('Te faltan ' + restante + ' para ' + lvl.siguiente.emoji + ' ' + lvl.siguiente.nombre) : '¡Nivel máximo alcanzado! 🎉') + '</div>'
+        + '</div>'
+        + '<div style="margin-bottom:6px"><h2 style="font-size:11px;font-weight:500;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase">Insignias <span style="color:rgba(255,255,255,0.3)">' + earned.length + '/' + INSIGNIAS.length + '</span></h2></div>'
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:10px;margin-bottom:14px">'
+        + INSIGNIAS.map(b => {
+            const on = earnedIds.has(b.id);
+            return '<div data-bn="' + esc(b.nombre) + '" data-bd="' + esc(b.desc) + '" onclick="toast(this.dataset.bn + \' — \' + this.dataset.bd, \'info\')" '
+                + 'style="text-align:center;cursor:pointer;opacity:' + (on ? '1' : '0.32') + '">'
+                + '<div style="font-size:28px;filter:' + (on ? 'none' : 'grayscale(1)') + ';line-height:1.2">' + b.emoji + '</div>'
+                + '<div style="font-size:9px;color:rgba(255,255,255,' + (on ? '0.6' : '0.3') + ');margin-top:3px;line-height:1.1">' + esc(b.nombre) + '</div>'
+                + '</div>';
+        }).join("")
+        + '</div>';
+}
+
+function celebrarInsignia(b) {
+    if (document.getElementById("insignia-modal")) { setTimeout(() => celebrarInsignia(b), 700); return; }
+    const e = document.createElement("div");
+    e.id = "insignia-modal";
+    e.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px;text-align:center";
+    e.innerHTML = '<div style="font-size:72px;margin-bottom:16px">' + b.emoji + '</div>'
+        + '<div style="font-family:Playfair Display,serif;font-size:26px;font-weight:700;color:#fff;margin-bottom:8px">¡Insignia desbloqueada!</div>'
+        + '<div style="background:linear-gradient(135deg,#e8b820,#e86820);border-radius:16px;padding:14px 22px;margin-bottom:22px"><div style="font-size:18px;font-weight:700;color:#fff">' + b.emoji + ' ' + esc(b.nombre) + '</div><div style="font-size:12px;color:rgba(255,255,255,0.85);margin-top:3px">' + esc(b.desc) + '</div></div>'
+        + '<button onclick="document.getElementById(\'insignia-modal\').remove()" style="padding:12px 28px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">¡Genial!</button>';
+    document.getElementById("app").appendChild(e);
+    launchConfetti(); launchConfetti();
+}
+
+// Cuenta de reacciones recibidas (para la insignia "Alma del grupo")
+async function loadLikesRecibidos() {
+    try {
+        const ids = state.photos.map(p => p.id).filter(Boolean).slice(0, 200);
+        if (!ids.length) { state._likesRecibidos = 0; return; }
+        const likeIds = ids.flatMap(id => [id, id + "_fire", id + "_love"]);
+        const { count } = await db.from("photo_likes").select("*", { count: "exact", head: true }).in("photo_id", likeIds);
+        state._likesRecibidos = count || 0;
+    } catch (_) { state._likesRecibidos = state._likesRecibidos || 0; }
 }
