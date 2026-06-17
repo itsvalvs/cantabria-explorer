@@ -94,7 +94,10 @@ async function renderRutasFeed() {
 
   // Agrupar por lote de subida
   const groups = {}, order = [];
-  ph.forEach(p => { const k = p.batch_id ? 'b:' + p.batch_id : 'i:' + p.id; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
+  const keyOf = p => p.batch_id
+    ? 'b:' + p.batch_id
+    : 't:' + p.user_id + ':' + normalizeMuni(p.municipio) + ':' + String(p.created_at || '').slice(0, 16);
+  ph.forEach(p => { const k = keyOf(p); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
   const posts = order.map(k => {
     const g = groups[k].slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     const rep = g[0];
@@ -1723,7 +1726,11 @@ async function fetchFeedPage() {
         fc._seenPhotoIds = fc._seenPhotoIds || new Set();
         fc._seenBatch = fc._seenBatch || new Set();
 
-        const keyOf = p => p.batch_id ? ("b:" + p.batch_id) : ("i:" + p.id);
+        // Clave de lote: batch_id si existe; si no (subidas antiguas), agrupamos
+        // por usuario+municipio+minuto (las fotos de una misma subida comparten ~minuto).
+        const keyOf = p => p.batch_id
+            ? ("b:" + p.batch_id)
+            : ("t:" + p.user_id + ":" + normalizeMuni(p.municipio) + ":" + String(p.created_at || "").slice(0, 16));
         const ph = (rp.data || []).filter(visible)
             .filter(p => !state.blockedIds?.has(p.user_id))
             .filter(p => !fc._seenPhotoIds.has(p.id) && !fc._seenBatch.has(keyOf(p)));
@@ -1957,8 +1964,8 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
         <div class="post-location" style="z-index:2"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
       </div>` : `<div class="post-img-multi" style="position:relative;width:100%;background:${coast ? "#0d2535" : "#0d2a1e"}">
-        <div class="post-carousel" data-n="${carruselFotos.length}" style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none;min-height:200px">
-          ${carruselFotos.map(f => `<div class="cslide" style="min-width:100%;flex-shrink:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center">
+        <div class="post-carousel" data-n="${carruselFotos.length}" style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;min-height:200px">
+          ${carruselFotos.map(f => `<div class="cslide" style="min-width:100%;flex-shrink:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden">
             <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;height:auto;display:block" alt="${muniSafe}" onerror="this.style.display='none'"/>
             <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
           </div>`).join("")}
