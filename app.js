@@ -2032,9 +2032,12 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         allFotos(v).forEach(f => fotosConStorage.push(f));
     });
     const fotoIds = [...new Set(commentIds.filter(Boolean))];
-    // Preferimos la miniatura (thumb_path) si existe; si no, la foto completa.
-    const feedKey = f => f.thumb_path || f.storage_path;
-    const paths   = [...new Set(fotosConStorage.map(feedKey))];
+    // Firmamos miniatura Y foto completa: mostramos la miniatura y, si falla
+    // (p.ej. la política aún no cubre el thumb), caemos a la foto completa.
+    const paths = [...new Set([
+        ...fotosConStorage.map(f => f.thumb_path).filter(Boolean),
+        ...fotosConStorage.map(f => f.storage_path).filter(p => p && p !== "text_only")
+    ])];
     const likeIds = fotoIds.flatMap(id => [id, id + "_fire", id + "_love"]);
 
     const [urlByPath, likesRes, commentsRes] = await Promise.all([
@@ -2045,12 +2048,18 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
             .in("photo_id", commentIds).order("created_at", { ascending: true }) : Promise.resolve({ data: [] }),
     ]);
 
-    // 1) Imágenes (todas las del carrusel)
+    // 1) Imágenes (todas las del carrusel): miniatura con respaldo a foto completa
     fotosConStorage.forEach(f => {
-        const url = urlByPath[feedKey(f)];
+        const turl = f.thumb_path ? urlByPath[f.thumb_path] : null;
+        const furl = (f.storage_path && f.storage_path !== "text_only") ? urlByPath[f.storage_path] : null;
+        const url = turl || furl;
         if (!url) return;
         const img = document.querySelector('img[data-foto-id="' + f.id + '"]');
         if (img) {
+            // Si mostramos la miniatura y falla, reintenta con la foto completa
+            if (turl && furl && turl !== furl) {
+                img.onerror = function() { this.onerror = null; this.src = furl; this.style.display = "block"; };
+            }
             img.src = url;
             img.style.display = "block";
             img.closest(".cslide, .post-img-single, .post-img-multi, .post-img")?.querySelector(".post-img-placeholder")?.remove();
