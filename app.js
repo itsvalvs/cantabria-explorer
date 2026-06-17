@@ -103,27 +103,12 @@ async function renderRutasFeed() {
 
   if (feedFilter !== 'rutas') return;
 
-  // Cabecera + lista de rutas (siempre visible debajo de las fotos)
-  const listaRutas = rutas.length ? ('<div style="padding:14px 4px 6px;font-size:11px;font-weight:500;color:rgba(255,255,255,0.4);letter-spacing:.06em;text-transform:uppercase">Rutas disponibles</div>'
-    + rutas.map(r => {
-      const v = state.visited?.[r.muni];
-      return '<div class="feed-post" style="padding:13px"><div style="display:flex;align-items:flex-start;gap:11px"><div style="font-size:20px;line-height:1">🥾</div><div style="flex:1">'
-        + '<div style="font-family:\'Playfair Display\',serif;font-size:14px;font-weight:700;color:#fff;line-height:1.2">' + esc(r.nombre) + '</div>'
-        + '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:3px">📏 ' + esc(String(r.km)) + ' km · 📍 ' + esc(r.muni || '—') + (v ? ' · <span style="color:#5DCAA5">✓ conquistado</span>' : '') + '</div>'
-        + '<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'
-        + (r.muni ? '<button data-m="' + esc(r.muni) + '" onclick="goToMuniOnMap(this.dataset.m)" style="padding:6px 12px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.3);border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📍 Ver en el mapa</button>' : '')
-        + (r.url ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" style="padding:6px 12px;background:rgba(34,114,232,0.15);color:#7ab3e8;border:1px solid rgba(34,114,232,0.3);border-radius:999px;font-size:11px;font-weight:600;text-decoration:none;font-family:Inter,sans-serif">🔗 Wikiloc ↗</a>' : '')
-        + '</div></div></div></div>';
-    }).join('')) : '';
-
   if (!posts.length) {
-    fp.innerHTML = '<div style="text-align:center;padding:26px 16px 8px;color:rgba(255,255,255,0.3);font-size:12px;line-height:1.6">🥾 Aún no hay fotos de rutas.<br>Sube una foto al conquistar un municipio con ruta y aparecerá aquí.</div>' + listaRutas;
+    fp.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:12px;line-height:1.6">🥾 Aún no hay fotos de rutas.<br>Sube una foto al conquistar un municipio con ruta y aparecerá aquí.</div>';
     return;
   }
-  // Renderiza las fotos con el mismo formato del feed (carrusel, likes, comentarios)
+  // Solo fotos, con el mismo formato del feed (carrusel, likes, comentarios)
   await renderFeedPosts(posts, {}, {}, profiles, !1);
-  if (feedFilter !== 'rutas') return;
-  document.getElementById('feed-posts')?.insertAdjacentHTML('beforeend', listaRutas);
 }
 
 function applyFeedFilter() {
@@ -569,21 +554,27 @@ function deselectMuni() {
     if (bar) bar.style.display = "none";
 }
 
-// Tocar fuera del municipio seleccionado → se desmarca
+// Tocar el fondo del mapa → desmarca municipio y quita el coloreado del filtro
 document.addEventListener("click", function(e) {
-    if (!state.selectedMuni) return;
     if (!document.getElementById("screen-map")?.classList.contains("active")) return;
     const t = e.target;
-    // No desmarcar si el toque es sobre otro municipio o sobre UI relevante
-    if (t.closest(".muni-path")) return;           // otro municipio (lo gestiona el handler de D3)
-    if (t.closest("#muni-bar")) return;            // barra de acción del municipio
-    if (t.closest(".bsheet")) return;              // hoja "subir evidencia" abierta
+    if (t.closest(".muni-path")) return;           // otro municipio (lo gestiona D3)
+    if (t.closest("#muni-bar")) return;            // barra de acción
+    if (t.closest(".bsheet")) return;              // hoja de subir evidencia
     if (t.closest("#muni-modal")) return;          // ficha del municipio
     if (t.closest("#recomendacion-modal")) return; // modal de recomendar
     if (t.closest("#map-search-input") || t.closest("#map-search-results")) return;
-    if (t.closest(".map-filter-btn") || t.closest(".area-dd-btn") || t.closest(".ruta-dd-btn")) return;
+    if (t.closest(".map-filter-btn") || t.closest(".area-dd-btn") || t.closest(".ruta-dd-btn") || t.closest(".dd-list-btn") || t.closest("#map-areas-dd")) return;
     if (t.closest("#map-reset-zoom") || t.closest("#ruta-card")) return;
-    deselectMuni();
+    // Fondo del mapa:
+    if (state.selectedMuni) deselectMuni();
+    if (mapFilter !== "todos") {
+        mapFilter = "todos";
+        const dd = document.getElementById("map-areas-dd"); if (dd) dd.style.display = "none";
+        const rc = document.getElementById("ruta-card"); if (rc) rc.remove();
+        document.querySelectorAll(".map-filter-btn").forEach(b => { b.style.backgroundColor = "rgba(255,255,255,0.08)"; b.style.color = "rgba(255,255,255,0.5)"; });
+        applyMapFilter();
+    }
 });
 let mapFilter = "todos";
 
@@ -619,40 +610,38 @@ function getRutas() {
 function setMapFilter(e) {
     const dd = document.getElementById("map-areas-dd");
     const removeRutaCard = () => { const c = document.getElementById("ruta-card"); if (c) c.remove(); };
-    if (e === "amigos" && !state.friendVisitsLoaded) {
-        loadFriendVisits().then(() => { if (mapFilter === "amigos") applyMapFilter(); });
-    }
+
     if (e === "areas") {
-        // Toggle del desplegable de comarcas
-        if (dd) {
-            if (dd.style.display === "none" || !dd.style.display) {
-                const comarcas = [...new Set(Object.values(state.municipiosData || {})
-                    .map(m => m.comarca).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
-                dd.innerHTML = comarcas.length
-                    ? comarcas.map(co => '<button class="area-dd-btn" data-area="' + esc(co) + '" onclick="selectArea(this.dataset.area)" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">' + esc(co) + '</button>').join("")
-                    : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Sin comarcas en la BD todavía</span>';
-                dd.style.display = "flex";
-            } else {
-                dd.style.display = "none";
-            }
+        mapFilter = "areas";
+        const comarcas = [...new Set(Object.values(state.municipiosData || {}).map(m => m.comarca).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+        dd.innerHTML = comarcas.length
+            ? comarcas.map(co => '<button class="area-dd-btn" data-area="' + esc(co) + '" onclick="selectArea(this.dataset.area)" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">' + esc(co) + '</button>').join("")
+            : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Sin comarcas en la BD todavía</span>';
+        dd.style.display = "flex"; removeRutaCard();
+    } else if (e === "rutas") {
+        mapFilter = "rutas";
+        if (!state.rutas) loadRutasState();
+        renderRutasDD();
+        dd.style.display = "flex"; removeRutaCard();
+    } else if (e === "wishlist") {
+        mapFilter = "wishlist";
+        const ws = [...(state.wishlist || [])].sort((a, b) => a.localeCompare(b, "es"));
+        dd.innerHTML = ws.length
+            ? '<div style="flex:1 1 100%;font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:2px">💖 Tu wishlist (' + ws.length + ')</div>'
+              + ws.map(m => '<button class="dd-list-btn" data-m="' + esc(m) + '" onclick="highlightMuniOnMap(this.dataset.m)" style="flex:1 1 100%;text-align:left;padding:6px 11px;border:1px solid rgba(232,90,160,0.25);border-radius:8px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(232,90,160,0.08);color:#f0a8cf">💖 ' + esc(m) + '</button>').join("")
+            : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Tu wishlist está vacía. Marca municipios con el corazón.</span>';
+        dd.style.display = "flex"; removeRutaCard();
+    } else if (e === "amigos") {
+        mapFilter = "amigos";
+        if (!state.friendVisitsLoaded) {
+            dd.innerHTML = '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Cargando...</span>';
+            dd.style.display = "flex";
+            loadFriendVisits().then(() => { if (mapFilter === "amigos") { renderAmigosDD(); applyMapFilter(); } });
+        } else {
+            renderAmigosDD();
+            dd.style.display = "flex";
         }
         removeRutaCard();
-        mapFilter = "areas";
-    } else if (e === "rutas") {
-        // Toggle del desplegable de rutas (desde la BD)
-        if (dd) {
-            if (dd.style.display === "none" || !dd.style.display) {
-                const rutas = getRutas();
-                dd.innerHTML = rutas.length
-                    ? rutas.map((r, idx) => '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km</button>').join("")
-                    : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Aún no hay rutas en la base de datos</span>';
-                dd.style.display = "flex";
-            } else {
-                dd.style.display = "none";
-                removeRutaCard();
-            }
-        }
-        mapFilter = "rutas";
     } else {
         if (dd) dd.style.display = "none";
         removeRutaCard();
@@ -667,6 +656,34 @@ function setMapFilter(e) {
         t.style.color = isActive ? "#fff" : "rgba(255,255,255,0.5)";
     });
     applyMapFilter();
+}
+
+function renderRutasDD() {
+    const dd = document.getElementById("map-areas-dd"); if (!dd) return;
+    const rutas = getRutas();
+    dd.innerHTML = rutas.length
+        ? rutas.map((r, idx) => '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km</button>').join("")
+        : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Aún no hay rutas en la base de datos</span>';
+}
+
+function renderAmigosDD() {
+    const dd = document.getElementById("map-areas-dd"); if (!dd) return;
+    const fv = state.friendVisits || {};
+    const munis = Object.keys(fv).filter(m => fv[m]?.length)
+        .sort((a, b) => fv[b].length - fv[a].length || a.localeCompare(b, "es"));
+    if (!munis.length) { dd.innerHTML = '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Ningún amigo ha conquistado nada todavía</span>'; return; }
+    dd.innerHTML = '<div style="flex:1 1 100%;font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:2px">👥 Dónde han estado tus amigos</div>'
+        + munis.map(m => {
+            const names = [...new Set(fv[m].map(x => x.username).filter(Boolean))];
+            const label = esc(m) + ': ' + fv[m].length + (names.length ? ' (' + esc(names.join(", ")) + ')' : '');
+            return '<button class="dd-list-btn" data-m="' + esc(m) + '" onclick="highlightMuniOnMap(this.dataset.m)" style="flex:1 1 100%;text-align:left;padding:6px 11px;border:1px solid rgba(34,114,232,0.28);border-radius:8px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(34,114,232,0.08);color:#9cc4f0">👥 ' + label + '</button>';
+        }).join("");
+}
+
+function loadRutasState() {
+    db.from("rutas").select("nombre,km,muni,url").order("km", { ascending: !1 })
+        .then(({ data, error }) => { if (!error && data && data.length) { state.rutas = data; if (mapFilter === "rutas") renderRutasDD(); } })
+        .catch(() => {});
 }
 
 function selectArea(comarca) {
@@ -1935,17 +1952,21 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
           ${coast ? "Costa" : "Montaña"}
         </div>`}
       </div>
-      ${hasImg ? `<div class="post-img" style="background:${coast ? "#0d2535" : "#0d2a1e"}">
-        <div class="post-carousel" data-n="${carruselFotos.length}" style="position:absolute;inset:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none">
-          ${carruselFotos.map(f => `<div class="cslide" style="min-width:100%;height:100%;flex-shrink:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center;background:${coast ? "#0d2535" : "#0d2a1e"}">
-            <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:contain;display:none" alt="${muniSafe}" onerror="this.style.display='none'"/>
+      ${hasImg ? (carruselFotos.length === 1 ? `<div class="post-img-single" style="position:relative;width:100%;min-height:140px;background:${coast ? "#0d2535" : "#0d2a1e"};display:flex;align-items:center;justify-content:center;overflow:hidden">
+        <img src="" data-foto-id="${esc(carruselFotos[0].id)}" loading="lazy" decoding="async" style="width:100%;height:auto;display:block" alt="${muniSafe}" onerror="this.style.display='none'"/>
+        <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
+        <div class="post-location" style="z-index:2"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
+      </div>` : `<div class="post-img-multi" style="position:relative;width:100%;background:${coast ? "#0d2535" : "#0d2a1e"}">
+        <div class="post-carousel" data-n="${carruselFotos.length}" style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none;min-height:200px">
+          ${carruselFotos.map(f => `<div class="cslide" style="min-width:100%;flex-shrink:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center">
+            <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;height:auto;display:block" alt="${muniSafe}" onerror="this.style.display='none'"/>
             <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
           </div>`).join("")}
         </div>
         <div class="post-location" style="z-index:2"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
-        ${carruselFotos.length > 1 ? `<div class="cs-counter" style="position:absolute;top:8px;right:8px;z-index:2;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;backdrop-filter:blur(4px)">1/${carruselFotos.length}</div>
-        <div class="cs-dots" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:2;display:flex;gap:5px">${carruselFotos.map((_, di) => `<span style="width:6px;height:6px;border-radius:50%;transition:background .2s;background:${di === 0 ? "#fff" : "rgba(255,255,255,0.4)"}"></span>`).join("")}</div>` : ""}
-      </div>` : ""}
+        <div class="cs-counter" style="position:absolute;top:8px;right:8px;z-index:2;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;backdrop-filter:blur(4px)">1/${carruselFotos.length}</div>
+        <div class="cs-dots" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);z-index:2;display:flex;gap:5px">${carruselFotos.map((_, di) => `<span style="width:6px;height:6px;border-radius:50%;transition:background .2s;background:${di === 0 ? "#fff" : "rgba(255,255,255,0.4)"}"></span>`).join("")}</div>
+      </div>`) : ""}
       <div class="post-body">
         <div class="post-muni">${muniSafe}</div>
         ${descFoto ? `<div class="post-desc">${renderMentions(esc(descFoto))}</div>` : ""}
@@ -2032,7 +2053,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         if (img) {
             img.src = url;
             img.style.display = "block";
-            (img.closest(".cslide") || img.closest(".post-img"))?.querySelector(".post-img-placeholder")?.remove();
+            img.closest(".cslide, .post-img-single, .post-img-multi, .post-img")?.querySelector(".post-img-placeholder")?.remove();
         }
     });
 
@@ -2339,7 +2360,7 @@ async function toggleLike(e, t) {
         e.classList.toggle("liked", wasLiked);
         span.textContent = before;
         console.error("toggleLike:", err);
-        toast("No se pudo guardar el like. Revisa los permisos (SQL).", "error");
+        toast("No se pudo guardar el like: " + (err?.message || err?.code || "permisos (revisa el SQL)"), "error");
     }
 }
 async function searchUser() {
