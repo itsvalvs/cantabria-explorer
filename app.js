@@ -1237,6 +1237,7 @@ function openRutaUpload(nombre) {
     const rt = document.getElementById("sheet-rating");
     if (rt) rt.style.display = "block";
     resetRating();
+    if (typeof setVis === "function") setVis("amigos");
     const sh = document.getElementById("upload-sheet");
     sh.style.position = "fixed";
     sh.style.zIndex = "400";
@@ -1256,15 +1257,15 @@ async function confirmRutaPhoto() {
     try {
         const now = new Date();
         const baseExtra = () => ({
-            user_id: state.user.id, municipio: muni, visibilidad: "amigos",
+            user_id: state.user.id, municipio: muni, visibilidad: selectedVisibilidad || "amigos",
             fecha: now.toISOString().split("T")[0],
             hora: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
         });
         // Inserta una fila de photos por cada foto; si no hay fotos, una fila text_only
         const insertRow = async (extra) => {
             let r = await db.from("photos").insert({ ...baseExtra(), ...extra });
-            if (r.error && /rating|batch_id|column|schema cache/i.test(r.error.message || "")) {
-                const { rating: _r, batch_id: _b, ...noExtra } = extra;
+            if (r.error && /rating|batch_id|thumb_path|column|schema cache/i.test(r.error.message || "")) {
+                const { rating: _r, batch_id: _b, thumb_path: _t, ...noExtra } = extra;
                 r = await db.from("photos").insert({ ...baseExtra(), ...noExtra });
             }
             return r;
@@ -1283,12 +1284,18 @@ async function confirmRutaPhoto() {
                     const path = `${uid}/rutas/${Date.now()}_${idx}.${mime.includes("png") ? "png" : "jpg"}`;
                     const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: mime, cacheControl: "3600", upsert: !1 });
                     if (upErr) { toast("No se pudo subir una foto: " + (upErr.message || ""), "error"); continue; }
-                    await insertRow({ storage_path: path, descripcion: idx === 0 ? desc : null, rating: idx === 0 ? rating : null, batch_id: batchId });
-                    // Miniatura
+                    // Miniatura ANTES de insertar, para guardar thumb_path (feed ligero)
+                    let thumbPath = null;
                     try {
                         const td = await dataUrlToThumb(ph.base64, 480, 0.7);
-                        if (td) { const tb = await (await fetch(td)).blob(); const tp = path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg"; await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 }); }
+                        if (td) {
+                            const tb = await (await fetch(td)).blob();
+                            const tp = path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
+                            const { error: te } = await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 });
+                            if (!te) thumbPath = tp;
+                        }
                     } catch (_) {}
+                    await insertRow({ storage_path: path, thumb_path: thumbPath, descripcion: idx === 0 ? desc : null, rating: idx === 0 ? rating : null, batch_id: batchId });
                 } catch (perr) { console.error("ruta foto idx " + idx + ":", perr); }
             }
         } else {
@@ -1781,47 +1788,55 @@ async function fetchFeedPage() {
     if (sent) sent.innerHTML = '<div class="spin" style="width:18px;height:18px;border-width:2px;margin:0 auto"></div>';
     try {
         if (fc.mode === "global") {
-            // ── Feed global: fotos públicas de cualquier usuario ──
-            const gcols = "id,user_id,municipio,storage_path,thumb_path,descripcion,visibilidad,created_at";
+            // ── Feed global: TODO lo público (descubrimiento + eventos + rutas), agrupado por lote ──
+            const gcols = "id,user_id,municipio,storage_path,thumb_path,descripcion,rating,visibilidad,created_at,batch_id";
             let qg = db.from("photos").select(gcols)
                 .eq("visibilidad", "publico")
-                .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+                .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE * 4);
             if (fc.cursor) qg = qg.lt("created_at", fc.cursor);
             let rg = await qg;
-            if (rg.error && /thumb_path|column|schema cache/i.test(rg.error.message || "")) {
+            if (rg.error && /rating|batch_id|thumb_path|column|schema cache/i.test(rg.error.message || "")) {
                 let qg2 = db.from("photos")
                     .select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
                     .eq("visibilidad", "publico")
-                    .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE);
+                    .order("created_at", { ascending: !1 }).limit(FEED_PAGE_SIZE * 4);
                 if (fc.cursor) qg2 = qg2.lt("created_at", fc.cursor);
                 rg = await qg2;
             }
-            const gp = rg.data;
-            if (!gp || !gp.length) {
+            fc._seenPhotoIds = fc._seenPhotoIds || new Set();
+            fc._seenBatch = fc._seenBatch || new Set();
+            const keyOf = p => p.batch_id ? ("b:" + p.batch_id) : ("t:" + p.user_id + ":" + normalizeMuni(p.municipio) + ":" + String(p.created_at || "").slice(0, 16));
+            const gpAll = (rg.data || []).filter(f => !state.blockedIds?.has(f.user_id));
+            const gp = gpAll.filter(p => !fc._seenPhotoIds.has(p.id) && !fc._seenBatch.has(keyOf(p)));
+            if (!gp.length) {
                 fc.done = !0;
                 if (sent) sent.textContent = fc.visibleVisits.length ? "🏔️ Has llegado al final" : "";
                 if (!fc.visibleVisits.length) document.getElementById("feed-posts").innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:13px">🌍 Aún no hay fotos públicas</div>';
                 return;
             }
-            fc.cursor = gp[gp.length - 1].created_at;
-            if (gp.length < FEED_PAGE_SIZE) fc.done = !0;
-            const list = gp.filter(f => !state.blockedIds?.has(f.user_id));
-            const uids = [...new Set(list.map(f => f.user_id))];
+            const uids = [...new Set(gp.map(f => f.user_id))];
             let profs = [];
-            if (uids.length) {
-                const { data: pp } = await db.from("profiles").select("id,username,avatar_url").in("id", uids);
-                profs = pp || [];
-            }
+            if (uids.length) { const { data: pp } = await db.from("profiles").select("id,username,avatar_url").in("id", uids); profs = pp || []; }
             const pById = {};
             profs.forEach(p => { pById[p.id] = p; });
             profs.forEach(p => { fc.friendProfiles.find(x => x.id === p.id) || fc.friendProfiles.push(p); });
-            const page = list.map(f => ({
-                id: "gp_" + f.id, user_id: f.user_id, municipio: f.municipio,
-                visibilidad: f.visibilidad, created_at: f.created_at,
-                profiles: pById[f.user_id] || null, _foto: f, _fotos: [f]
-            }));
-            fc.visibleVisits = [...fc.visibleVisits, ...page];
-            await renderFeedPosts(page, fc.fotasByMuniUser, fc.fotasByUser, fc.friendProfiles, !0);
+            const groups = {}, order = [];
+            gp.forEach(p => { const k = keyOf(p); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
+            let posts = order.map(k => {
+                const g = groups[k].slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                const imgs = g.filter(x => x.storage_path && x.storage_path !== "text_only");
+                const rep = imgs[0] || g[0];
+                const newest = g.reduce((m, x) => x.created_at > m ? x.created_at : m, g[0].created_at);
+                return { id: "gp_" + k, _batchKey: k, _batchId: rep.batch_id || null, user_id: rep.user_id, municipio: rep.municipio, visibilidad: rep.visibilidad, created_at: newest, profiles: pById[rep.user_id] || null, _fotos: imgs, _foto: rep };
+            });
+            const rawFull = (rg.data || []).length >= FEED_PAGE_SIZE * 4;
+            if (rawFull && posts.length > 1) { let oi = 0; for (let i = 1; i < posts.length; i++) if (posts[i].created_at < posts[oi].created_at) oi = i; posts.splice(oi, 1); }
+            posts = posts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, FEED_PAGE_SIZE);
+            posts.forEach(p => { if (p._batchKey) fc._seenBatch.add(p._batchKey); (p._fotos || []).forEach(f => fc._seenPhotoIds.add(f.id)); if (p._foto) fc._seenPhotoIds.add(p._foto.id); });
+            fc.cursor = posts.length ? posts[posts.length - 1].created_at : gpAll.reduce((m, x) => x.created_at < m ? x.created_at : m, gpAll[0].created_at);
+            if (gpAll.length < FEED_PAGE_SIZE) fc.done = !0;
+            fc.visibleVisits = [...fc.visibleVisits, ...posts];
+            await renderFeedPosts(posts, fc.fotasByMuniUser, fc.fotasByUser, fc.friendProfiles, !0);
             if (sent) sent.textContent = fc.done ? (fc.visibleVisits.length ? "🏔️ Has llegado al final" : "") : "";
             return;
         }
@@ -3477,7 +3492,7 @@ async function loadRecomendaciones(muni) {
             ? '<img src="' + esc(rec.profiles.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(u) + '"/>'
             : getInitials(u);
         const del = mine
-            ? '<button data-rid="' + esc(rec.id) + '" data-muni="' + esc(muni) + '" onclick="deleteRecomendacion(this.dataset.rid, this.dataset.muni)" style="background:none;border:none;color:rgba(255,255,255,0.2);cursor:pointer;font-size:11px;padding:0;flex-shrink:0"><i class="ti ti-trash" aria-hidden="true"></i></button>'
+            ? '<button data-rid="' + esc(rec.id) + '" data-muni="' + esc(muni) + '" onclick="deleteRecomendacion(this.dataset.rid, this.dataset.muni)" style="background:rgba(232,40,40,0.12);border:1px solid rgba(232,40,40,0.3);color:#ff6b6b;cursor:pointer;font-size:11px;padding:4px 9px;border-radius:8px;flex-shrink:0;display:inline-flex;align-items:center;gap:4px;font-family:Inter,sans-serif"><i class="ti ti-trash" aria-hidden="true"></i> Borrar</button>'
             : "";
         const foto = rec.foto_path && urls[rec.foto_path]
             ? '<img src="' + esc(urls[rec.foto_path]) + '" style="width:100%;max-height:150px;object-fit:cover;border-radius:10px;margin:6px 0;display:block" alt="' + esc(rec.nombre) + '"/>'
