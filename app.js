@@ -82,15 +82,14 @@ async function renderRutasFeed() {
   const profById = {}; profiles.forEach(p => profById[p.id] = p);
   if (state.profile) profById[state.user.id] = { id: state.user.id, username: state.profile.username, avatar_url: state.profile.avatar_url };
 
-  // Fotos de los autores; nos quedamos con las de municipios con ruta
-  const pcols = 'id,user_id,municipio,storage_path,thumb_path,descripcion,visibilidad,created_at,batch_id';
-  let rp = await db.from('photos').select(pcols).in('user_id', authors).order('created_at', { ascending: !1 }).limit(120);
-  if (rp.error && /batch_id|thumb_path|column|schema cache/i.test(rp.error.message || '')) {
-    rp = await db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at').in('user_id', authors).order('created_at', { ascending: !1 }).limit(120);
+  // Fotos/registros de RUTAS (municipio = "🥾 NombreRuta")
+  const pcols = 'id,user_id,municipio,storage_path,thumb_path,descripcion,rating,visibilidad,created_at,batch_id';
+  let rp = await db.from('photos').select(pcols).in('user_id', authors).like('municipio', '🥾%').order('created_at', { ascending: !1 }).limit(120);
+  if (rp.error && /rating|batch_id|thumb_path|column|schema cache/i.test(rp.error.message || '')) {
+    rp = await db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at').in('user_id', authors).like('municipio', '🥾%').order('created_at', { ascending: !1 }).limit(120);
   }
   const visible = e => e.user_id === state.user.id || ['amigos', 'publico'].includes(e.visibilidad);
-  const ph = (rp.data || []).filter(visible).filter(p => !state.blockedIds?.has(p.user_id))
-    .filter(p => p.storage_path && p.storage_path !== 'text_only' && rutaMunis.has(normalizeMuni(p.municipio)));
+  const ph = (rp.data || []).filter(visible).filter(p => !state.blockedIds?.has(p.user_id));
 
   // Agrupar por lote de subida
   const groups = {}, order = [];
@@ -226,11 +225,14 @@ async function signPaths(paths) {
     if (c && c.exp > now) out[p] = c.url;
     else need.push(p);
   }
-  if (need.length) {
+  // Firmamos en bloques de 100 (límite por llamada) para no perder fotos
+  for (let i = 0; i < need.length; i += 100) {
+    const chunk = need.slice(i, i + 100);
     try {
-      const { data } = await db.storage.from('evidencias').createSignedUrls(need, 3600);
+      const { data, error } = await db.storage.from('evidencias').createSignedUrls(chunk, 3600);
+      if (error) { console.warn('signPaths chunk:', error); continue; }
       (data || []).forEach(s => {
-        if (s.signedUrl) { out[s.path] = s.signedUrl; _signedCache.set(s.path, { url: s.signedUrl, exp: now + 3300e3 }); }
+        if (s.signedUrl && s.path) { out[s.path] = s.signedUrl; _signedCache.set(s.path, { url: s.signedUrl, exp: now + 3300e3 }); }
       });
     } catch (e) { console.warn('signPaths:', e); }
   }
@@ -624,6 +626,7 @@ function setMapFilter(e) {
     } else if (e === "rutas") {
         mapFilter = "rutas";
         if (!state.rutas) loadRutasState();
+        if (!state.rutaRatings) loadRutaRatings().then(() => { if (mapFilter === "rutas") renderRutasDD(); });
         renderRutasDD();
         dd.style.display = "flex"; removeRutaCard();
     } else if (e === "wishlist") {
@@ -663,10 +666,31 @@ function setMapFilter(e) {
 
 function renderRutasDD() {
     const dd = document.getElementById("map-areas-dd"); if (!dd) return;
-    const rutas = getRutas();
+    const rr = state.rutaRatings || {};
+    const rutas = getRutas().slice().sort((a, b) => {
+        const ma = rr[a.nombre]?.media || 0, mb = rr[b.nombre]?.media || 0;
+        return mb - ma || a.nombre.localeCompare(b.nombre, "es");
+    });
     dd.innerHTML = rutas.length
-        ? rutas.map((r, idx) => '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km</button>').join("")
+        ? '<div style="flex:1 1 100%;font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:2px">⭐ Mejor valoradas primero</div>'
+          + rutas.map((r) => {
+            const idx = getRutas().indexOf(r);
+            const rt = rr[r.nombre];
+            const stars = rt ? ' · ' + rt.media.toFixed(1) + '★ (' + rt.n + ')' : '';
+            return '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km' + stars + '</button>';
+          }).join("")
         : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Aún no hay rutas en la base de datos</span>';
+}
+
+// Media de valoración por ruta (RPC ruta_ratings). Degrada si no existe.
+async function loadRutaRatings() {
+    try {
+        const { data, error } = await db.rpc("ruta_ratings");
+        if (error || !Array.isArray(data)) return;
+        const map = {};
+        data.forEach(r => { if (r.ruta) map[r.ruta] = { media: Number(r.media) || 0, n: Number(r.n) || 0 }; });
+        state.rutaRatings = map;
+    } catch (_) {}
 }
 
 function renderAmigosDD() {
@@ -778,8 +802,9 @@ async function loadFriendVisits() {
 }
 
 function openSheet() {
-    pendingEventId = null, pendingEventName = null; // por si venimos de un evento
+    pendingEventId = null, pendingEventName = null, pendingRutaName = null; // por si venimos de un evento/ruta
     if (!state.selectedMuni) return;
+    const _rt = document.getElementById("sheet-rating"); if (_rt) _rt.style.display = "none";
     const e = state.selectedMuni,
         t = state.visited[e];
     document.getElementById("sht-title").textContent = e, document.getElementById("sht-sub").textContent = t ? "Ya conquistado — añade foto o descripción" : "Foto, descripción o ambas (todo opcional)";
@@ -837,6 +862,8 @@ function closeUploadSheet() {
     document.getElementById("upload-sheet").classList.remove("open");
     pendingEventId = null;
     pendingEventName = null;
+    pendingRutaName = null;
+    const _rt = document.getElementById("sheet-rating"); if (_rt) _rt.style.display = "none";
 }
 
 function clearPhoto() {
@@ -856,6 +883,7 @@ function setVis(e) {
     selectedVisibilidad = e, document.querySelectorAll(".vis-btn").forEach(e => e.classList.remove("vis-active")), document.getElementById("vis-" + e).classList.add("vis-active")
 }
 async function confirmVisit() {
+    if (pendingRutaName) return void await confirmRutaPhoto();
     if (pendingEventId) return void await confirmEventPhoto();
     const e = state.selectedMuni;
     if (!e || !state.user) return;
@@ -1181,10 +1209,112 @@ async function toggleInscripcion(e) {
 }
 let pendingEventId = null,
     pendingEventName = null;
+let pendingRutaName = null,
+    pendingRating = 0;
+
+// Estrellas de valoración (en la hoja de subida, solo rutas)
+function setRating(v) {
+    pendingRating = (pendingRating === v) ? 0 : v; // volver a tocar la misma quita
+    document.querySelectorAll("#rating-stars .rstar").forEach(s => {
+        s.style.color = (+s.dataset.v <= pendingRating) ? "#e8c93a" : "rgba(255,255,255,0.25)";
+    });
+}
+function resetRating() { pendingRating = 0; setRating(0); }
+
+// Abrir la hoja para registrar que has hecho una RUTA (foto/s + valoración + comentario)
+function openRutaUpload(nombre) {
+    pendingEventId = null; pendingEventName = null;
+    pendingRutaName = nombre;
+    document.getElementById("sht-title").textContent = "🥾 " + nombre;
+    document.getElementById("sht-sub").textContent = "Valórala, comenta y sube tus fotos 📸";
+    const bd = document.getElementById("btn-desmarcar"); if (bd) bd.style.display = "none";
+    document.getElementById("btn-conf").textContent = "Publicar";
+    clearPhoto();
+    const desc = document.getElementById("evidencia-desc");
+    if (desc) { desc.value = ""; desc.placeholder = "Cuenta qué tal la ruta... (opcional)"; }
+    const locs = document.getElementById("sheet-locs");
+    if (locs) { locs.style.display = "none"; locs.innerHTML = ""; }
+    const rt = document.getElementById("sheet-rating");
+    if (rt) rt.style.display = "block";
+    resetRating();
+    const sh = document.getElementById("upload-sheet");
+    sh.style.position = "fixed";
+    sh.style.zIndex = "400";
+    sh.classList.add("open");
+}
+
+async function confirmRutaPhoto() {
+    if (!pendingRutaName || !state.user) return;
+    const btn = document.getElementById("btn-conf");
+    const muni = "🥾 " + pendingRutaName;
+    const desc = (document.getElementById("evidencia-desc")?.value || "").trim() || null;
+    const rating = pendingRating || null;
+    if (!state.pendingPhotos.length && !desc && !rating) {
+        return void toast("Añade una foto, una valoración o un comentario", "info");
+    }
+    btn.textContent = "Publicando..."; btn.disabled = !0;
+    try {
+        const now = new Date();
+        const baseExtra = () => ({
+            user_id: state.user.id, municipio: muni, visibilidad: "amigos",
+            fecha: now.toISOString().split("T")[0],
+            hora: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+        });
+        // Inserta una fila de photos por cada foto; si no hay fotos, una fila text_only
+        const insertRow = async (extra) => {
+            let r = await db.from("photos").insert({ ...baseExtra(), ...extra });
+            if (r.error && /rating|batch_id|column|schema cache/i.test(r.error.message || "")) {
+                const { rating: _r, batch_id: _b, ...noExtra } = extra;
+                r = await db.from("photos").insert({ ...baseExtra(), ...noExtra });
+            }
+            return r;
+        };
+        if (state.pendingPhotos.length) {
+            const sess = (await db.auth.getSession()).data?.session?.user;
+            const uid = (sess?.id) || state.user.id;
+            const batchId = (self.crypto?.randomUUID?.() || (Date.now() + "-" + Math.random().toString(16).slice(2)));
+            for (let idx = 0; idx < state.pendingPhotos.length; idx++) {
+                const ph = state.pendingPhotos[idx];
+                try {
+                    const b64 = ph.base64.split(",")[1], mime = ph.mime || "image/jpeg";
+                    const bin = atob(b64), chunks = [];
+                    for (let j = 0; j < bin.length; j += 512) { const sl = bin.slice(j, j + 512), u8 = new Uint8Array(sl.length); for (let k = 0; k < sl.length; k++) u8[k] = sl.charCodeAt(k); chunks.push(u8); }
+                    const blob = new Blob(chunks, { type: mime });
+                    const path = `${uid}/rutas/${Date.now()}_${idx}.${mime.includes("png") ? "png" : "jpg"}`;
+                    const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: mime, cacheControl: "3600", upsert: !1 });
+                    if (upErr) { toast("No se pudo subir una foto: " + (upErr.message || ""), "error"); continue; }
+                    await insertRow({ storage_path: path, descripcion: idx === 0 ? desc : null, rating: idx === 0 ? rating : null, batch_id: batchId });
+                    // Miniatura
+                    try {
+                        const td = await dataUrlToThumb(ph.base64, 480, 0.7);
+                        if (td) { const tb = await (await fetch(td)).blob(); const tp = path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg"; await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 }); }
+                    } catch (_) {}
+                } catch (perr) { console.error("ruta foto idx " + idx + ":", perr); }
+            }
+        } else {
+            // Solo valoración / comentario (sin foto): fila text_only
+            await insertRow({ storage_path: "text_only", descripcion: desc, rating: rating });
+        }
+        state.feedCache = null;
+        closeUploadSheet();
+        clearPhoto();
+        resetRating();
+        toast("¡Ruta publicada! 🥾", "success");
+        switchScreen("feed");
+        setTimeout(() => setFeedFilter("rutas"), 60);
+    } catch (e) {
+        toast("Error: " + e.message, "error");
+    } finally {
+        btn.textContent = "Publicar"; btn.disabled = !1;
+        pendingRutaName = null;
+    }
+}
 
 function openEventFotoSheet(e, t) {
+    pendingRutaName = null;
     pendingEventId = e;
     pendingEventName = t;
+    const _rt = document.getElementById("sheet-rating"); if (_rt) _rt.style.display = "none";
     document.getElementById("sht-title").textContent = t;
     document.getElementById("sht-sub").textContent = "Sube una foto de la fiesta 📸";
     document.getElementById("btn-desmarcar").style.display = "none";
@@ -1733,6 +1863,7 @@ async function fetchFeedPage() {
             : ("t:" + p.user_id + ":" + normalizeMuni(p.municipio) + ":" + String(p.created_at || "").slice(0, 16));
         const ph = (rp.data || []).filter(visible)
             .filter(p => !state.blockedIds?.has(p.user_id))
+            .filter(p => !(p.municipio || "").startsWith("🥾"))  // las rutas van en su pestaña
             .filter(p => !fc._seenPhotoIds.has(p.id) && !fc._seenBatch.has(keyOf(p)));
         const recs = (rr_.error ? [] : (rr_.data || []))
             .filter(r => !state.blockedIds?.has(r.user_id))
@@ -1773,6 +1904,16 @@ async function fetchFeedPage() {
                 visibilidad: "amigos", created_at: r.created_at
             }
         }));
+
+        // Si la tanda de fotos vino llena, el lote más antiguo podría estar
+        // partido (le faltan fotos en la siguiente página). Lo aplazamos: no lo
+        // renderizamos ahora y se reconstruirá completo en la página siguiente.
+        const rawFull = (rp.data || []).length >= FEED_PAGE_SIZE * 4;
+        if (rawFull && photoPosts.length > 1) {
+            let oldestIdx = 0;
+            for (let i = 1; i < photoPosts.length; i++) if (photoPosts[i].created_at < photoPosts[oldestIdx].created_at) oldestIdx = i;
+            photoPosts.splice(oldestIdx, 1);
+        }
 
         let page = [...photoPosts, ...recPosts]
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
@@ -1872,6 +2013,48 @@ async function getPhotoUrl(e) {
     } = await db.storage.from("evidencias").createSignedUrl(e, 3600);
     return t?.signedUrl || db.storage.from("evidencias").getPublicUrl(e).data?.publicUrl || null
 }
+// ─── Pull-to-refresh del feed ───
+function refreshFeedByFilter() {
+    if (typeof feedFilter !== "undefined" && feedFilter === "global") return loadGlobalFeed();
+    if (typeof feedFilter !== "undefined" && feedFilter === "rutas") return renderRutasFeed();
+    return loadFeed(!0);
+}
+(function setupPullToRefresh() {
+    const sc = document.getElementById("feed-sc");
+    const ptr = document.getElementById("feed-ptr");
+    const txt = document.getElementById("feed-ptr-txt");
+    if (!sc || !ptr) return;
+    let startY = 0, pulling = !1, dist = 0, refreshing = !1;
+    const MAX = 70, TRIGGER = 56;
+    sc.addEventListener("touchstart", e => {
+        if (refreshing) return;
+        if (sc.scrollTop <= 0) { startY = e.touches[0].clientY; pulling = !0; dist = 0; }
+        else pulling = !1;
+    }, { passive: !0 });
+    sc.addEventListener("touchmove", e => {
+        if (!pulling || refreshing) return;
+        dist = e.touches[0].clientY - startY;
+        if (dist <= 0) { ptr.style.height = "0"; return; }
+        const h = Math.min(MAX, dist * 0.5);
+        ptr.style.height = h + "px";
+        if (txt) txt.textContent = h >= TRIGGER * 0.5 ? "↑ Suelta para actualizar" : "↓ Desliza para actualizar";
+    }, { passive: !0 });
+    sc.addEventListener("touchend", async () => {
+        if (!pulling || refreshing) return;
+        pulling = !1;
+        const trigger = parseFloat(ptr.style.height) >= TRIGGER * 0.5;
+        if (trigger) {
+            refreshing = !0;
+            ptr.style.height = "40px";
+            if (txt) txt.textContent = "Actualizando...";
+            try { await refreshFeedByFilter(); } catch (_) {}
+            refreshing = !1;
+        }
+        ptr.style.height = "0";
+        if (txt) txt.textContent = "↓ Desliza para actualizar";
+    });
+})();
+
 // Actualiza el contador (1/N) y los puntitos al deslizar el carrusel del feed
 function wireCarousels(scope) {
     (scope || document).querySelectorAll(".post-carousel").forEach(c => {
@@ -1976,6 +2159,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
       </div>`) : ""}
       <div class="post-body">
         <div class="post-muni">${muniSafe}</div>
+        ${foto?.rating ? `<div style="margin:1px 0 3px;color:#e8c93a;font-size:14px;letter-spacing:2px">${"★".repeat(foto.rating)}<span style="color:rgba(255,255,255,0.18)">${"★".repeat(Math.max(0,5-foto.rating))}</span></div>` : ""}
         ${descFoto ? `<div class="post-desc">${renderMentions(esc(descFoto))}</div>` : ""}
         <div class="post-actions">
           ${foto ? `
@@ -3880,13 +4064,43 @@ function mostrarTarjetaRuta(r) {
         ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:5px;margin-top:8px;font-size:12px;color:#7ab3e8;text-decoration:none">🔗 Ver ruta en Wikiloc ↗</a>'
         : '<div style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.35)">Sin enlace disponible</div>';
     card.style.cssText = "margin:0 12px 10px;padding:13px 15px;background:rgba(93,202,165,0.08);border:1px solid rgba(93,202,165,0.3);border-radius:14px";
+    const rt = state.rutaRatings?.[r.nombre];
+    const ratingLine = rt
+        ? '<div style="font-size:12px;color:#e8c93a;margin-top:4px">' + '★'.repeat(Math.round(rt.media)) + '<span style="color:rgba(255,255,255,0.18)">' + '★'.repeat(Math.max(0, 5 - Math.round(rt.media))) + '</span> <span style="color:rgba(255,255,255,0.55)">' + rt.media.toFixed(1) + ' · ' + rt.n + ' valoración' + (rt.n === 1 ? '' : 'es') + '</span></div>'
+        : '<div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:4px">Aún sin valoraciones</div>';
     card.innerHTML = '<div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:3px">🥾 ' + esc(r.nombre) + '</div>'
         + '<div style="font-size:12px;color:rgba(255,255,255,0.6)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
-        + link;
+        + ratingLine
+        + '<div id="ruta-card-friends" style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:4px"></div>'
+        + link
+        + '<button data-rn="' + esc(r.nombre) + '" onclick="openRutaUpload(this.dataset.rn)" style="display:block;width:100%;margin-top:11px;padding:11px;background:#22b050;color:#fff;border:none;border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✅ La he hecho — valorar y subir fotos</button>';
+    loadRutaFriends(r.nombre);
 }
 
-// ═══════════════════════════════════════════════════════════
-//  CENTRO DE NOTIFICACIONES  (derivado de los datos existentes,
+// Qué amigos han hecho esta ruta (han publicado en "🥾 nombre")
+async function loadRutaFriends(nombre) {
+    const el = document.getElementById("ruta-card-friends");
+    if (!el || !state.user) return;
+    try {
+        const friends = await getFriendsCache();
+        const ids = friends.map(f => f.id);
+        const nameById = {}; friends.forEach(f => nameById[f.id] = f.username);
+        const all = [...ids, state.user.id];
+        const { data } = await db.from("photos")
+            .select("user_id").eq("municipio", "🥾 " + nombre).in("user_id", all);
+        const users = [...new Set((data || []).map(d => d.user_id))];
+        const otros = users.filter(u => u !== state.user.id).map(u => nameById[u]).filter(Boolean);
+        const yo = users.includes(state.user.id);
+        if (!users.length) { el.textContent = ""; return; }
+        let txt = "👥 La han hecho: ";
+        const partes = [];
+        if (yo) partes.push("tú");
+        partes.push(...otros);
+        el.textContent = txt + partes.join(", ");
+    } catch (_) { el.textContent = ""; }
+}
+
+
 //  sin tabla nueva: solicitudes de amistad + comentarios + likes
 //  sobre tus fotos. El "visto" se guarda en localStorage.)
 // ═══════════════════════════════════════════════════════════
@@ -4202,3 +4416,21 @@ async function loadLikesRecibidos() {
         state._likesRecibidos = count || 0;
     } catch (_) { state._likesRecibidos = state._likesRecibidos || 0; }
 }
+
+// Deep-link de los accesos directos de Android (?go=dado|map|feed|perfil)
+try {
+    const _go = new URLSearchParams(location.search).get("go");
+    if (_go) {
+        const _map = { dado: "dado", map: "map", mapa: "map", feed: "feed", perfil: "profile", profile: "profile", eventos: "eventos" };
+        const _target = _map[_go];
+        if (_target) {
+            let _tries = 0;
+            const _t = setInterval(() => {
+                _tries++;
+                if (typeof switchScreen === "function" && state.user && document.getElementById("screen-" + _target)) {
+                    switchScreen(_target); clearInterval(_t);
+                } else if (_tries > 40) clearInterval(_t);
+            }, 150);
+        }
+    }
+} catch (_) {}
