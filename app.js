@@ -463,6 +463,28 @@ async function doLogout() {
 }
 async function loadUserData(e) {
     state.user = e;
+    const _offKey = () => "ylp_offline_" + (state.user?.id || "anon");
+    const persistOffline = () => {
+        try {
+            localStorage.setItem(_offKey(), JSON.stringify({
+                visited: state.visited || {}, visitDates: state.visitDates || {},
+                visitedLocs: state.visitedLocs || {}, ts: Date.now()
+            }));
+        } catch (_) {}
+    };
+    const hydrateOffline = () => {
+        try {
+            const raw = localStorage.getItem(_offKey());
+            if (!raw) return;
+            const s = JSON.parse(raw);
+            if (s.visited && !Object.keys(state.visited || {}).length) {
+                state.visited = s.visited; state.visitDates = s.visitDates || {};
+                state.visitedLocs = s.visitedLocs || {};
+                refreshMapVisited(); updateProgress();
+                toast("Sin conexión: mostrando tus datos guardados", "info");
+            }
+        } catch (_) {}
+    };
     try {
     const [t, i, n, o] = await Promise.all([db.from("profiles").select("*").eq("id", e.id).single(), db.from("visits").select("*").eq("user_id", e.id), db.from("photos").select("*").eq("user_id", e.id).order("created_at", {
         ascending: !1
@@ -496,10 +518,12 @@ async function loadUserData(e) {
     o.data && o.data.forEach(e => {
         state.inscripciones[e.event_id] = !0
     }), updateProgress(), subscribeToFriendActivity(), loadNotifBadge();
+    persistOffline();
     } catch (err) {
         console.error("loadUserData no bloqueante:", err);
         state.wishlist = state.wishlist || new Set();
         state.blockedIds = state.blockedIds || new Set();
+        hydrateOffline();
     }
 }
 
@@ -648,6 +672,10 @@ function setMapFilter(e) {
             dd.style.display = "flex";
         }
         removeRutaCard();
+    } else if (e === "cerca") {
+        mapFilter = "cerca";
+        dd.style.display = "flex"; removeRutaCard();
+        renderCercaDD();
     } else {
         if (dd) dd.style.display = "none";
         removeRutaCard();
@@ -711,6 +739,51 @@ function loadRutasState() {
     db.from("rutas").select("nombre,km,muni,url").order("km", { ascending: !1 })
         .then(({ data, error }) => { if (!error && data && data.length) { state.rutas = data; if (mapFilter === "rutas") renderRutasDD(); } })
         .catch(() => {});
+}
+
+// ── "Cerca de ti": municipios sin conquistar más cercanos por GPS ──
+function _haversineKm(a, b) {
+    const R = 6371, toR = d => d * Math.PI / 180;
+    const dLat = toR(b[1] - a[1]), dLng = toR(b[0] - a[0]);
+    const la1 = toR(a[1]), la2 = toR(b[1]);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function nearestUnvisited(limit = 6) {
+    if (!state.lastLngLat || !state.muniFeatures) return null;
+    const me = state.lastLngLat; // [lng, lat]
+    const out = [];
+    for (const nombre in state.muniFeatures) {
+        if (state.visited?.[nombre]) continue;
+        try {
+            const c = d3.geoCentroid(state.muniFeatures[nombre]); // [lng, lat]
+            if (!c || isNaN(c[0])) continue;
+            const km = _haversineKm(me, c);
+            out.push({ nombre, km, min: Math.max(2, Math.round(km * 1.3 / 50 * 60)) }); // ~50 km/h por carretera
+        } catch (_) {}
+    }
+    out.sort((a, b) => a.km - b.km);
+    return out.slice(0, limit);
+}
+function renderCercaDD() {
+    const dd = document.getElementById("map-areas-dd"); if (!dd) return;
+    const draw = list => {
+        if (!list) { dd.innerHTML = '<span style="flex:1 1 100%;font-size:11px;color:rgba(255,255,255,0.4)">Activa la ubicación para ver los municipios más cercanos.</span>'; return; }
+        if (!list.length) { dd.innerHTML = '<span style="flex:1 1 100%;font-size:11px;color:#5DCAA5">🎉 ¡No te queda ninguno cerca! Crack.</span>'; return; }
+        const top = list[0];
+        dd.innerHTML = '<div style="flex:1 1 100%;font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:2px">📍 Más cercanos sin conquistar · sugerido: <b style="color:#5DCAA5">' + esc(top.nombre) + '</b></div>'
+            + list.map(r => '<button class="dd-list-btn" data-m="' + esc(r.nombre) + '" onclick="highlightMuniOnMap(this.dataset.m)" style="flex:1 1 100%;text-align:left;padding:6px 11px;border:1px solid rgba(34,176,80,0.28);border-radius:8px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(34,176,80,0.08);color:#9fe0bf">📍 ' + esc(r.nombre) + ' · ' + r.km.toFixed(1) + ' km · ~' + r.min + ' min</button>').join("");
+    };
+    if (state.lastLngLat) { draw(nearestUnvisited()); return; }
+    // Pedir ubicación
+    dd.innerHTML = '<span style="flex:1 1 100%;font-size:11px;color:rgba(255,255,255,0.4)">Obteniendo tu ubicación...</span>';
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            pos => { state.lastLngLat = [pos.coords.longitude, pos.coords.latitude]; if (mapFilter === "cerca") draw(nearestUnvisited()); },
+            () => { if (mapFilter === "cerca") dd.innerHTML = '<span style="flex:1 1 100%;font-size:11px;color:#ff6b6b">No se pudo obtener la ubicación. Revisa los permisos.</span>'; },
+            { enableHighAccuracy: !0, timeout: 8000, maximumAge: 60000 }
+        );
+    } else { dd.innerHTML = '<span style="flex:1 1 100%;font-size:11px;color:#ff6b6b">Tu dispositivo no permite geolocalización.</span>'; }
 }
 
 function selectArea(comarca) {
@@ -1600,9 +1673,74 @@ function openMuniModal(e) {
                 t.getAttribute("data-name") === e && (t.classList.add("selected"), showMuniBar(e))
             })
         }, 250)
-    }, loadMuniFriendEvidence(e), loadRecomendaciones(e);
+    }, loadMuniGallery(e), loadMuniFriendEvidence(e), loadRecomendaciones(e);
     document.getElementById("muni-modal").style.display = "flex"
 }
+// Galería del municipio: todas las fotos (tuyas + de amigos) en cuadrícula
+async function loadMuniGallery(muni) {
+    let cont = document.getElementById("mm-galeria");
+    if (!cont) {
+        const fe = document.getElementById("mm-friend-evidence");
+        if (!fe) return;
+        cont = document.createElement("div");
+        cont.id = "mm-galeria";
+        cont.style.marginBottom = "16px";
+        fe.parentNode.insertBefore(cont, fe);
+    }
+    if (!state.user) { cont.innerHTML = ""; return; }
+    cont.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Cargando fotos...</div>';
+    try {
+        const friends = await getFriendsCache().catch(() => []);
+        const nameById = {}; (friends || []).forEach(f => nameById[f.id] = f);
+        const ids = [...new Set([...(friends || []).map(f => f.id), state.user.id])];
+        let pcols = "id,user_id,municipio,storage_path,thumb_path,descripcion,visibilidad,created_at";
+        let { data, error } = await db.from("photos").select(pcols)
+            .in("user_id", ids).eq("municipio", muni).neq("storage_path", "text_only")
+            .order("created_at", { ascending: !1 }).limit(60);
+        if (error && /thumb_path|column|schema cache/i.test(error.message || "")) {
+            ({ data } = await db.from("photos").select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at")
+                .in("user_id", ids).eq("municipio", muni).neq("storage_path", "text_only")
+                .order("created_at", { ascending: !1 }).limit(60));
+        }
+        const fotos = (data || []).filter(f => f.user_id === state.user.id || ["amigos", "publico"].includes(f.visibilidad))
+            .filter(f => !state.blockedIds?.has(f.user_id));
+        if (!fotos.length) { cont.innerHTML = ""; return; }
+        const paths = [...new Set([...fotos.map(f => f.thumb_path).filter(Boolean), ...fotos.map(f => f.storage_path).filter(Boolean)])];
+        const urls = await signPaths(paths);
+        const cells = fotos.map(f => {
+            const turl = f.thumb_path ? urls[f.thumb_path] : null;
+            const furl = urls[f.storage_path] || null;
+            const u = f.user_id === state.user.id ? (state.profile?.username || "Tú") : (nameById[f.user_id]?.username || "Amigo");
+            const av = f.user_id === state.user.id ? state.profile?.avatar_url : nameById[f.user_id]?.avatar_url;
+            const badge = av
+                ? '<img src="' + esc(av) + '" style="width:20px;height:20px;border-radius:50%;object-fit:cover;border:1.5px solid #0f1923" alt="' + esc(u) + '"/>'
+                : '<div style="width:20px;height:20px;border-radius:50%;background:#1a2535;border:1.5px solid #0f1923;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9cc4f0">' + esc(getInitials(u)) + '</div>';
+            return '<div onclick="openPhotoLightbox(this.dataset.full, this.dataset.u)" data-full="' + esc(furl || turl || "") + '" data-u="' + esc(u) + '" style="position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;cursor:pointer;background:#0d2030">'
+                + '<img src="' + esc(turl || furl || "") + '" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"' + (turl && furl ? ' onerror="this.onerror=null;this.src=\'' + esc(furl) + '\'"' : '') + ' alt="' + esc(u) + '"/>'
+                + '<div title="' + esc(u) + '" style="position:absolute;bottom:4px;right:4px">' + badge + '</div></div>';
+        }).join("");
+        cont.innerHTML = '<div style="margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.4);font-weight:600;letter-spacing:.05em;text-transform:uppercase">📸 Fotos del municipio (' + fotos.length + ')</div>'
+            + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">' + cells + '</div>';
+    } catch (err) { console.error("loadMuniGallery:", err); cont.innerHTML = ""; }
+}
+
+// Visor de foto a pantalla completa
+function openPhotoLightbox(url, who) {
+    if (!url) return;
+    let ov = document.getElementById("photo-lightbox");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "photo-lightbox";
+        ov.style.cssText = "position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:20px";
+        ov.onclick = () => { ov.style.display = "none"; };
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<img src="' + esc(url) + '" style="max-width:100%;max-height:82vh;border-radius:12px;object-fit:contain"/>'
+        + (who ? '<div style="color:rgba(255,255,255,0.7);font-size:13px">' + esc(who) + '</div>' : '')
+        + '<div style="color:rgba(255,255,255,0.35);font-size:11px">Toca para cerrar</div>';
+    ov.style.display = "flex";
+}
+
 async function loadMuniFriendEvidence(e) {
     const t = document.getElementById("mm-friend-evidence");
     if (!t) return;
