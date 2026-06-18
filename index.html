@@ -11,7 +11,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <meta name="app-version" content="202606161800"/>
+  <meta name="app-version" content="202606161900"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png"/>
@@ -507,7 +507,8 @@
   <!-- FEED -->
   <div class="screen" id="screen-feed">
     <div class="sbar"><span style="width:24px"></span><span class="sbar-title">Ya lo pisé</span><button class="notif-bell" onclick="openNotifs()" aria-label="Notificaciones" style="background:none;border:none;color:rgba(255,255,255,0.55);cursor:pointer;position:relative;padding:2px 4px;font-size:16px;line-height:1"><i class="ti ti-bell" aria-hidden="true"></i><span class="notif-badge" style="display:none;position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 3px;background:#e8288a;color:#fff;border-radius:999px;font-size:9px;font-weight:700;display:none;align-items:center;justify-content:center"></span></button></div>
-    <div class="sc">
+    <div class="sc" id="feed-sc">
+      <div id="feed-ptr" style="height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:12px;transition:height .15s ease"><span id="feed-ptr-txt">↓ Desliza para actualizar</span></div>
       <div class="feed-header"><h1>Amigos</h1></div>
       <!-- Filtros del feed -->
       <div style="display:flex;gap:6px;padding:0 14px 10px">
@@ -822,6 +823,17 @@
         <input type="file" id="file-in" accept="image/*" multiple
           style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:10;">
       </div>
+      <!-- Valoración (solo rutas) -->
+      <div id="sheet-rating" style="display:none;margin-top:12px;padding:11px 12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px">
+        <div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">⭐ ¿Qué te ha parecido la ruta?</div>
+        <div id="rating-stars" style="display:flex;gap:6px;font-size:28px;line-height:1;user-select:none">
+          <span class="rstar" data-v="1" onclick="setRating(1)" style="cursor:pointer;color:rgba(255,255,255,0.25)">★</span>
+          <span class="rstar" data-v="2" onclick="setRating(2)" style="cursor:pointer;color:rgba(255,255,255,0.25)">★</span>
+          <span class="rstar" data-v="3" onclick="setRating(3)" style="cursor:pointer;color:rgba(255,255,255,0.25)">★</span>
+          <span class="rstar" data-v="4" onclick="setRating(4)" style="cursor:pointer;color:rgba(255,255,255,0.25)">★</span>
+          <span class="rstar" data-v="5" onclick="setRating(5)" style="cursor:pointer;color:rgba(255,255,255,0.25)">★</span>
+        </div>
+      </div>
       <!-- Descripción -->
       <textarea id="evidencia-desc" placeholder="Añade una descripción de tu visita... (opcional)"
         style="display:block;width:100%;margin-top:10px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;resize:none;min-height:72px;line-height:1.5;"></textarea>
@@ -872,6 +884,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
-<script src="app.js?v=202606161800"></script>
+<script src="app.js?v=202606161900"></script>
 </body>
 </html>
