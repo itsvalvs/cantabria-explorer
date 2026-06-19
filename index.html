@@ -11,7 +11,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <meta name="app-version" content="202606170900"/>
+  <meta name="app-version" content="202606171000"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png"/>
@@ -512,21 +512,25 @@
       <div id="feed-ptr" style="height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:12px;transition:height .15s ease"><span id="feed-ptr-txt">↓ Desliza para actualizar</span></div>
       <div class="feed-header"><h1>Amigos</h1></div>
       <!-- Filtros del feed -->
-      <div style="display:flex;gap:6px;padding:0 14px 10px">
+      <div style="display:flex;gap:6px;padding:0 14px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none">
         <button class="feed-filter-btn" data-filter="descubriendo" onclick="setFeedFilter('descubriendo')"
-          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:#2272e8;color:#fff">
+          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:#2272e8;color:#fff;white-space:nowrap;flex-shrink:0">
           🗺️ Descubriendo
         </button>
         <button class="feed-filter-btn" data-filter="eventos" onclick="setFeedFilter('eventos')"
-          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">
+          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);white-space:nowrap;flex-shrink:0">
           🎉 Eventos
         </button>
         <button class="feed-filter-btn" data-filter="rutas" onclick="setFeedFilter('rutas')"
-          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">
+          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);white-space:nowrap;flex-shrink:0">
           🥾 Rutas
         </button>
+        <button class="feed-filter-btn" data-filter="privado" onclick="setFeedFilter('privado')"
+          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);white-space:nowrap;flex-shrink:0">
+          🔒 Privado
+        </button>
         <button class="feed-filter-btn" data-filter="global" onclick="setFeedFilter('global')"
-          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5)">
+          style="padding:6px 12px;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;background-color:rgba(255,255,255,0.08);color:rgba(255,255,255,0.5);white-space:nowrap;flex-shrink:0">
           🌍 Global
         </button>
       </div>
@@ -885,6 +889,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
-<script src="app.js?v=202606170900"></script>
+<script src="app.js?v=202606171000"></script>
 </body>
 </html>
