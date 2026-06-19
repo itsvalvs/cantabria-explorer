@@ -11,7 +11,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <meta name="app-version" content="202606171100"/>
+  <meta name="app-version" content="202606171200"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png"/>
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png"/>
@@ -408,14 +408,22 @@
       <div class="ev-header"><h1>Eventos</h1><span style="font-size:11px;color:rgba(255,255,255,0.35)">Próximas fiestas</span></div>
       <div class="ev-tabs">
         <button class="ev-tab active" onclick="filterEvs(this,'todos')">Todos</button>
+        <button class="ev-tab" onclick="filterEvs(this,'cerca')">📍 Cerca</button>
         <button class="ev-tab" onclick="filterEvs(this,'inscritos')" id="tab-inscritos">Mis eventos</button>
         <button class="ev-tab" onclick="filterEvs(this,'pasados')" id="tab-pasados">Pasados</button>
         <button class="ev-tab" onclick="filterEvs(this,'fiesta')">Fiestas</button>
+        <button class="ev-tab" onclick="filterEvs(this,'romeria')">Romerías</button>
+        <button class="ev-tab" onclick="filterEvs(this,'gastronomica')">Gastronómicas</button>
+        <button class="ev-tab" onclick="filterEvs(this,'concierto')">Conciertos</button>
         <button class="ev-tab" onclick="filterEvs(this,'mercado')">Mercados</button>
         <button class="ev-tab" onclick="filterEvs(this,'deporte')">Deporte</button>
+        <button class="ev-tab" onclick="filterEvs(this,'infantil')">Infantil</button>
         <button class="ev-tab" onclick="filterEvs(this,'cultura')">Cultura</button>
       </div>
       <div id="eventos-list"></div>
+      <div style="padding:18px 14px 8px">
+        <button onclick="openSugerirEvento()" style="width:100%;padding:12px;background:rgba(255,255,255,0.05);border:1px dashed rgba(255,255,255,0.2);border-radius:12px;color:rgba(255,255,255,0.6);font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">➕ ¿Falta una fiesta de tu pueblo? Sugiérela</button>
+      </div>
     </div>
     <div class="nav" id="nav-eventos"></div>
   </div>
@@ -889,6 +897,6 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
-<script src="app.js?v=202606171100"></script>
+<script src="app.js?v=202606171200"></script>
 </body>
 </html>
