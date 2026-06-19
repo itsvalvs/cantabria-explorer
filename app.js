@@ -90,6 +90,42 @@ async function renderPrivadoFeed() {
   await renderFeedPosts(posts, {}, {}, Object.values(profById), !1);
 }
 
+// Regenera miniaturas de las fotos de ruta antiguas (subidas sin thumb_path),
+// para que se vean ligeras e iguales que en descubriendo.
+async function backfillRutaThumbs(btn) {
+  if (!state.user) return;
+  if (btn) { btn.disabled = !0; btn.textContent = "Optimizando..."; }
+  try {
+    const { data } = await db.from("photos").select("id,storage_path,thumb_path,municipio")
+      .eq("user_id", state.user.id).like("municipio", "🥾%").neq("storage_path", "text_only");
+    const pend = (data || []).filter(p => !p.thumb_path && p.storage_path);
+    if (!pend.length) { toast("Tus fotos de ruta ya están optimizadas ✅", "info"); return; }
+    let done = 0;
+    for (const p of pend) {
+      try {
+        const { data: sg } = await db.storage.from("evidencias").createSignedUrl(p.storage_path, 600);
+        if (!sg?.signedUrl) continue;
+        const blob = await (await fetch(sg.signedUrl)).blob();
+        const dataUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+        const td = await dataUrlToThumb(dataUrl, 480, 0.7);
+        if (!td) continue;
+        const tb = await (await fetch(td)).blob();
+        const tp = p.storage_path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
+        const { error: te } = await db.storage.from("evidencias").upload(tp, tb, { contentType: "image/jpeg", cacheControl: "3600", upsert: !0 });
+        if (te) continue;
+        await db.from("photos").update({ thumb_path: tp }).eq("id", p.id);
+        done++;
+        if (btn) btn.textContent = "Optimizando... " + done + "/" + pend.length;
+      } catch (e) { console.error("backfill thumb:", e); }
+    }
+    try { _signedCache.clear(); } catch (_) {}
+    state.feedCache = null;
+    toast("Optimizadas " + done + " foto(s) de ruta 📸", "success");
+    if (feedFilter === "rutas") renderRutasFeed();
+  } catch (e) { toast("Error: " + (e.message || e), "error"); }
+  finally { if (btn) { btn.disabled = !1; btn.textContent = "⚙️ Optimizar mis fotos de ruta antiguas"; } }
+}
+
 // Pestaña "🥾 Rutas" del feed: solo fotos de rutas (municipio "🥾 ...")
 async function renderRutasFeed() {
   state._feedMode = 'rutas';
@@ -154,6 +190,12 @@ async function renderRutasFeed() {
   }
   // Solo fotos, con el mismo formato del feed (carrusel, likes, comentarios)
   await renderFeedPosts(posts, {}, {}, profiles, !1);
+  // Si tienes fotos de ruta antiguas sin miniatura, ofrece optimizarlas
+  const myNoThumb = ph.some(p => p.user_id === state.user.id && !p.thumb_path && p.storage_path && p.storage_path !== 'text_only');
+  if (myNoThumb && feedFilter === 'rutas') {
+    document.getElementById('feed-posts')?.insertAdjacentHTML('afterbegin',
+      '<div style="margin:0 12px 12px;padding:11px 13px;background:rgba(232,184,32,0.1);border:1px solid rgba(232,184,32,0.3);border-radius:12px;font-size:12px;color:#e8c98a">Algunas fotos de ruta antiguas no están optimizadas y pueden verse más pesadas.<br><button onclick="backfillRutaThumbs(this)" style="margin-top:8px;padding:8px 14px;background:#e8b820;color:#1a1a1a;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">⚙️ Optimizar mis fotos de ruta antiguas</button></div>');
+  }
 }
 
 function applyFeedFilter() {
@@ -1269,7 +1311,7 @@ async function loadEventos() {
     const {
         data: e
     } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
-    e && (state.eventos = e), renderEventos()
+    e && (state.eventos = e), renderEventos(), checkEventReminders()
 }
 
 function filterEvs(e, t) {
@@ -1366,9 +1408,10 @@ function renderEventos() {
     const upcoming = state.eventos.filter(isUpcoming);
     const past = state.eventos.filter(ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d < today && state.inscripciones[ev.id]; });
     let list = "todos" === currentFilter ? upcoming
-        : "inscritos" === currentFilter ? upcoming.filter(e => state.inscripciones[e.id])
-            : "pasados" === currentFilter ? past
-                : upcoming.filter(e => e.tipo === currentFilter);
+        : "cerca" === currentFilter ? upcoming
+            : "inscritos" === currentFilter ? upcoming.filter(e => state.inscripciones[e.id])
+                : "pasados" === currentFilter ? past
+                    : upcoming.filter(e => e.tipo === currentFilter);
 
     const tabIns = document.getElementById("tab-inscritos");
     if (tabIns) { const c = upcoming.filter(e => state.inscripciones[e.id]).length; tabIns.textContent = c > 0 ? "Mis eventos (" + c + ")" : "Mis eventos"; }
@@ -1382,9 +1425,31 @@ function renderEventos() {
         return { key: k, nombre: first.festival || first.nombre, rows, fecha: first.fecha, periodo: first.periodo || _evMonthLabel(first.fecha), tipo: first.tipo, tipo_badge: first.tipo_badge, color_bg: first.color_bg, icon: first.icon };
     }).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
-    // Agrupar festivales por periodo
+    // Filtro "Cerca": ordenar por distancia (requiere GPS)
+    let cercaMode = currentFilter === "cerca";
+    if (cercaMode) {
+        if (!state.lastLngLat) {
+            const cont0 = document.getElementById("eventos-list");
+            if (cont0) cont0.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.4);font-size:13px"><div class="spin" style="margin:0 auto 8px"></div>Obteniendo tu ubicación...</div>';
+            if (navigator.geolocation) navigator.geolocation.getCurrentPosition(
+                p => { state.lastLngLat = [p.coords.longitude, p.coords.latitude]; if (currentFilter === "cerca") renderEventos(); },
+                () => { const c = document.getElementById("eventos-list"); if (c) c.innerHTML = '<div style="text-align:center;padding:30px 16px;color:#ff6b6b;font-size:13px">No se pudo obtener tu ubicación. Revisa los permisos.</div>'; },
+                { enableHighAccuracy: !0, timeout: 8000, maximumAge: 60000 });
+            return;
+        }
+        const distOf = f => {
+            let best = Infinity;
+            f.rows.forEach(r => { const m = state.muniFeatures?.[r.municipio] || state.muniFeatures?.[r.lugar]; if (m) { try { const c = d3.geoCentroid(m); const km = _haversineKm(state.lastLngLat, c); if (km < best) best = km; } catch (_) {} } });
+            return best;
+        };
+        festObjs.forEach(f => f._dist = distOf(f));
+        festObjs.sort((a, b) => a._dist - b._dist);
+    }
+
+    // Agrupar festivales por periodo (o un único bloque "Cerca de ti")
     const periodos = {}, perOrder = [];
-    festObjs.forEach(f => { if (!periodos[f.periodo]) { periodos[f.periodo] = []; perOrder.push(f.periodo); } periodos[f.periodo].push(f); });
+    if (cercaMode) { periodos["📍 Cerca de ti"] = festObjs; perOrder.push("📍 Cerca de ti"); }
+    else festObjs.forEach(f => { if (!periodos[f.periodo]) { periodos[f.periodo] = []; perOrder.push(f.periodo); } periodos[f.periodo].push(f); });
 
     const cont = document.getElementById("eventos-list");
     if (!festObjs.length) { cont.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:13px">No hay eventos en este filtro.</div>'; return; }
@@ -4040,6 +4105,133 @@ async function bloquearUsuario(uid, uname) {
 
 
 // ═══ FICHA DE EVENTO ════════════════════════════════════════
+
+// — Programa por horas (ev.programa = [{hora, acto}] o JSON string) —
+function _parsePrograma(p) {
+  if (!p) return [];
+  try { const a = typeof p === "string" ? JSON.parse(p) : p; return Array.isArray(a) ? a : []; } catch (_) { return []; }
+}
+function _evIntKey(eid) { return "ylp_evint_" + eid; }
+function _evInterests(eid) { try { return JSON.parse(localStorage.getItem(_evIntKey(eid)) || "[]"); } catch (_) { return []; } }
+function toggleEventInterest(eid, idx, el) {
+  let arr = _evInterests(eid); idx = +idx;
+  if (arr.includes(idx)) arr = arr.filter(x => x !== idx); else arr.push(idx);
+  localStorage.setItem(_evIntKey(eid), JSON.stringify(arr));
+  if (el) { const on = arr.includes(idx); el.textContent = on ? "★" : "☆"; el.style.background = on ? "rgba(34,176,80,0.2)" : "transparent"; el.style.color = on ? "#5DCAA5" : "rgba(255,255,255,0.4)"; }
+}
+function renderProgramaHtml(ev) {
+  const prog = _parsePrograma(ev.programa);
+  if (!prog.length) return "";
+  const ints = _evInterests(ev.id);
+  return '<div style="margin-top:16px"><div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">🕐 Programa · marca a qué quieres ir</div>'
+    + prog.map((p, i) => {
+      const on = ints.includes(i);
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06)">'
+        + '<div style="font-size:12px;font-weight:700;color:#e8b820;min-width:48px">' + esc(p.hora || "") + '</div>'
+        + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.82)">' + esc(p.acto || "") + '</div>'
+        + '<button onclick="toggleEventInterest(\'' + esc(ev.id) + '\',' + i + ',this)" title="Me interesa" style="width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:' + (on ? "rgba(34,176,80,0.2)" : "transparent") + ';color:' + (on ? "#5DCAA5" : "rgba(255,255,255,0.4)") + ';cursor:pointer;font-size:15px;flex-shrink:0">' + (on ? "★" : "☆") + '</button>'
+        + '</div>';
+    }).join("") + '</div>';
+}
+
+// — Quién va (con caras) —
+async function loadEventGoing(eid) {
+  const cont = document.getElementById("evm-going"); if (!cont) return;
+  try {
+    const { data } = await db.from("event_signups").select("user_id").eq("event_id", eid);
+    const uids = [...new Set((data || []).map(d => d.user_id))].filter(u => !state.blockedIds?.has(u));
+    if (!uids.length) { cont.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.35)">Nadie se ha apuntado aún. ¡Sé el primero! 🎉</div>'; return; }
+    const { data: profs } = await db.from("profiles").select("id,username,avatar_url").in("id", uids);
+    const friends = await getFriendsCache().catch(() => []);
+    const friendIds = new Set((friends || []).map(f => f.id));
+    const ordered = (profs || []).sort((a, b) => ((friendIds.has(b.id) || b.id === state.user.id) ? 1 : 0) - ((friendIds.has(a.id) || a.id === state.user.id) ? 1 : 0));
+    const shown = ordered.slice(0, 12);
+    const avatars = shown.map(p => {
+      const isF = friendIds.has(p.id) || p.id === state.user.id;
+      const ring = "border:2px solid " + (isF ? "#5DCAA5" : "#22324a");
+      return p.avatar_url
+        ? '<img src="' + esc(p.avatar_url) + '" title="' + esc(p.username || "") + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;' + ring + ';margin-left:-9px"/>'
+        : '<div title="' + esc(p.username || "") + '" style="width:34px;height:34px;border-radius:50%;background:#22324a;' + ring + ';margin-left:-9px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#9cc4f0">' + esc(getInitials(p.username || "?")) + '</div>';
+    }).join("");
+    const friendsGoing = ordered.filter(p => friendIds.has(p.id)).map(p => p.username).filter(Boolean);
+    const extra = uids.length > 12 ? '<div style="margin-left:4px;font-size:12px;color:rgba(255,255,255,0.5)">+' + (uids.length - 12) + '</div>' : '';
+    cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">👥 Quién va</div>'
+      + '<div style="display:flex;align-items:center;padding-left:9px">' + avatars + extra + '</div>'
+      + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:7px"><strong style="color:#fff">' + uids.length + '</strong> apuntados'
+      + (friendsGoing.length ? ' · 👥 van ' + esc(friendsGoing.slice(0, 3).join(", ")) + (friendsGoing.length > 3 ? " y " + (friendsGoing.length - 3) + " más" : "") : "") + '</div>';
+  } catch (e) { console.error("loadEventGoing", e); cont.innerHTML = ""; }
+}
+
+// — Recordatorio local (sin servidor: avisa al abrir la app cerca de la fecha) —
+function _remindList() { try { return JSON.parse(localStorage.getItem("ylp_evremind") || "[]"); } catch (_) { return []; } }
+function toggleEventRemind(eid, el) {
+  let arr = _remindList(); eid = String(eid);
+  const on = arr.includes(eid);
+  if (on) arr = arr.filter(x => x !== eid); else arr.push(eid);
+  localStorage.setItem("ylp_evremind", JSON.stringify(arr));
+  const nowOn = !on;
+  if (el) { el.innerHTML = nowOn ? '🔔 Te avisaré' : '🔔 Recuérdame'; el.style.background = nowOn ? "rgba(34,176,80,0.18)" : "rgba(255,255,255,0.06)"; el.style.color = nowOn ? "#5DCAA5" : "rgba(255,255,255,0.75)"; }
+  toast(nowOn ? "Te lo recordaré al abrir la app cerca de la fecha" : "Recordatorio quitado", nowOn ? "success" : "info");
+}
+function checkEventReminders() {
+  try {
+    const arr = _remindList(); if (!arr.length || !state.eventos) return;
+    const now = new Date(), soon = [];
+    arr.forEach(eid => {
+      const ev = state.eventos.find(x => String(x.id) === String(eid));
+      if (!ev || !ev.fecha) return;
+      const diff = (new Date(ev.fecha) - now) / 3600e3;
+      if (diff > -18 && diff < 40) soon.push(ev);
+    });
+    if (soon.length) {
+      const names = soon.map(e => e.nombre + (e.lugar ? " (" + e.lugar + ")" : "")).slice(0, 3).join(", ");
+      setTimeout(() => toast("🔔 Pronto: " + names, "info"), 1600);
+    }
+  } catch (_) {}
+}
+
+// — Compartir la fiesta (imagen) —
+function _wrapTextEv(ctx, text, x, y, maxW, lh) {
+  const words = String(text).split(" "); let line = "", yy = y;
+  for (const w of words) { const t = line + w + " "; if (ctx.measureText(t).width > maxW && line) { ctx.fillText(line.trim(), x, yy); line = w + " "; yy += lh; } else line = t; }
+  ctx.fillText(line.trim(), x, yy); return yy;
+}
+async function shareEvento(eid) {
+  const ev = (state.eventos || []).find(x => String(x.id) === String(eid)); if (!ev) return;
+  try {
+    const W = 1080, H = 1080, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
+    const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, "#2a1f3d"); g.addColorStop(1, "#3d1f33"); x.fillStyle = g; x.fillRect(0, 0, W, H);
+    x.textAlign = "center"; x.fillStyle = "#f08fc4"; x.font = "bold 46px Inter, sans-serif"; x.fillText("🎉 ¡Nos vemos en la fiesta!", W / 2, 210);
+    x.fillStyle = "#fff"; x.font = "bold 82px Georgia, serif"; const yy = _wrapTextEv(x, ev.nombre, W / 2, 400, 920, 96);
+    x.fillStyle = "rgba(255,255,255,0.85)"; x.font = "42px Inter, sans-serif";
+    const fch = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
+    x.fillText("📅 " + fch, W / 2, yy + 140);
+    if (ev.lugar) x.fillText("📍 " + ev.lugar, W / 2, yy + 210);
+    x.fillStyle = "rgba(255,255,255,0.5)"; x.font = "30px Inter, sans-serif"; x.fillText("Ya lo pisé · app.yalopise.com", W / 2, 1010);
+    const blob = await new Promise(r => c.toBlob(r, "image/png"));
+    const file = new File([blob], "fiesta.png", { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: ev.nombre, text: "¡Vente a " + ev.nombre + "!" });
+    } else {
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "fiesta.png"; a.click(); URL.revokeObjectURL(url);
+      toast("Imagen descargada para compartir", "success");
+    }
+  } catch (e) { toast("No se pudo compartir", "error"); }
+}
+
+// — Distancia a la fiesta (si hay GPS y conocemos el municipio) —
+function _eventDistanceHtml(ev) {
+  try {
+    if (!state.lastLngLat || !state.muniFeatures) return "";
+    const muni = state.muniFeatures[ev.municipio] || state.muniFeatures[ev.lugar];
+    if (!muni) return "";
+    const c = d3.geoCentroid(muni); if (!c || isNaN(c[0])) return "";
+    const km = _haversineKm(state.lastLngLat, c);
+    return '<span style="color:#9fe0bf"> · 📍 a ' + km.toFixed(0) + ' km (~' + Math.max(2, Math.round(km * 1.3 / 50 * 60)) + ' min)</span>';
+  } catch (_) { return ""; }
+}
+
+
 function openEventModal(eid) {
     const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
     if (!ev) return;
@@ -4081,20 +4273,71 @@ function openEventModal(eid) {
         + cartel
         + '<div style="padding:16px 18px 26px">'
         + '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:700;color:#fff;line-height:1.25">' + esc(ev.nombre) + '</div>'
-        + '<div style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.55)">📅 ' + esc(fecha) + (ev.lugar ? ' · 📍 ' + esc(ev.lugar) : '') + '</div>'
+        + '<div style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.55)">📅 ' + esc(fecha) + (ev.lugar ? ' · 📍 ' + esc(ev.lugar) : '') + _eventDistanceHtml(ev) + '</div>'
         + (ev.descripcion ? '<div style="margin-top:10px;font-size:13px;color:rgba(255,255,255,0.65);line-height:1.55">' + esc(ev.descripcion) + '</div>' : '')
         + contactoHtml + recoHtml
+        + renderProgramaHtml(ev)
+        + '<div id="evm-going" style="margin-top:16px"></div>'
         + '<div id="evm-fotos" style="margin-top:14px"></div>'
-        + '<div style="display:flex;gap:8px;margin-top:16px">'
+        + '<div style="display:flex;gap:8px;margin-top:10px">'
+        + '<button data-eid="' + esc(ev.id) + '" onclick="toggleEventRemind(this.dataset.eid,this)" style="flex:1;padding:11px;background:' + (_remindList().includes(String(ev.id)) ? 'rgba(34,176,80,0.18);color:#5DCAA5' : 'rgba(255,255,255,0.06);color:rgba(255,255,255,0.75)') + ';border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (_remindList().includes(String(ev.id)) ? '🔔 Te avisaré' : '🔔 Recuérdame') + '</button>'
+        + '<button data-eid="' + esc(ev.id) + '" onclick="shareEvento(this.dataset.eid)" style="flex:1;padding:11px;background:rgba(232,90,160,0.14);color:#f08fc4;border:1px solid rgba(232,90,160,0.35);border-radius:12px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📤 Compartir</button>'
+        + '</div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px">'
         + '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();setTimeout(()=>openEventFotoSheet(this.dataset.eid, this.dataset.ename),60)" style="flex:1;padding:13px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto del evento</button>'
         + '<button data-eid="' + esc(ev.id) + '" onclick="toggleInscripcion(this.dataset.eid);closeEventModal()" style="flex:1;padding:13px;background:' + (state.inscripciones[ev.id] ? 'rgba(34,176,80,0.18);color:#5DCAA5;border:1px solid rgba(34,176,80,0.4)' : '#22b050;color:#fff;border:none') + ';border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (state.inscripciones[ev.id] ? '✓ Apuntado' : 'Apuntarme') + '</button>'
         + '</div></div>';
     ov.style.display = "flex";
     loadEventPhotos(ev.id, "evm-fotos");
+    loadEventGoing(ev.id);
 }
 function closeEventModal() {
     const ov = document.getElementById("event-modal");
     if (ov) ov.style.display = "none";
+}
+
+// — Sugerir una fiesta (la revisa el equipo antes de publicarla) —
+function openSugerirEvento() {
+    if (!state.user) { toast("Inicia sesión para sugerir una fiesta", "info"); return; }
+    let ov = document.getElementById("sug-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "sug-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:340;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    const inp = "width:100%;margin-top:8px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;box-sizing:border-box";
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">➕ Sugerir una fiesta</div><button onclick="document.getElementById(\'sug-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:6px">La revisaremos antes de publicarla. ¡Gracias por ayudar a completar la agenda!</div>'
+        + '<input id="sug-nombre" placeholder="Nombre de la fiesta (ej. San Pelayo)" style="' + inp + '"/>'
+        + '<input id="sug-lugar" placeholder="Pueblo / municipio" style="' + inp + '"/>'
+        + '<input id="sug-fecha" type="date" style="' + inp + '"/>'
+        + '<select id="sug-tipo" style="' + inp + '"><option value="fiesta">Fiesta</option><option value="romeria">Romería</option><option value="gastronomica">Gastronómica</option><option value="concierto">Concierto</option><option value="mercado">Mercado</option><option value="deporte">Deporte</option><option value="infantil">Infantil</option><option value="cultura">Cultura</option></select>'
+        + '<textarea id="sug-desc" placeholder="Programa / detalles (opcional)" style="' + inp + ';min-height:70px;resize:none"></textarea>'
+        + '<button onclick="enviarSugerencia(this)" style="width:100%;margin-top:12px;padding:13px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Enviar sugerencia</button>'
+        + '</div>';
+    ov.style.display = "flex";
+}
+async function enviarSugerencia(btn) {
+    const nombre = document.getElementById("sug-nombre")?.value.trim();
+    const lugar = document.getElementById("sug-lugar")?.value.trim();
+    const fecha = document.getElementById("sug-fecha")?.value || null;
+    const tipo = document.getElementById("sug-tipo")?.value || "fiesta";
+    const desc = document.getElementById("sug-desc")?.value.trim() || null;
+    if (!nombre || !lugar) { toast("Pon al menos el nombre y el pueblo", "info"); return; }
+    btn.disabled = !0; btn.textContent = "Enviando...";
+    try {
+        const { error } = await db.from("event_suggestions").insert({
+            user_id: state.user.id, nombre, lugar, fecha, tipo, descripcion: desc, estado: "pendiente"
+        });
+        if (error) throw error;
+        document.getElementById("sug-modal").style.display = "none";
+        toast("¡Sugerencia enviada! La revisaremos pronto 🙌", "success");
+    } catch (e) {
+        toast("No se pudo enviar: " + (e.message || e), "error");
+    } finally { btn.disabled = !1; btn.textContent = "Enviar sugerencia"; }
 }
 
 
