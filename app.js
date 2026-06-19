@@ -42,14 +42,55 @@ function setFeedFilter(filter) {
     b.style.color = active ? '#fff' : 'rgba(255,255,255,0.5)';
   });
   if (filter === 'rutas') return void renderRutasFeed();
+  if (filter === 'privado') return void renderPrivadoFeed();
   if (filter === 'global' && !isGlobalCache) return void loadGlobalFeed();
   if (filter !== 'global' && isGlobalCache) return void loadFeed(!0);
-  if ((filter === 'descubriendo' || filter === 'eventos') && state._feedMode === 'rutas') { return void loadFeed(); }
+  if ((filter === 'descubriendo' || filter === 'eventos') && (state._feedMode === 'rutas' || state._feedMode === 'privado')) { return void loadFeed(); }
   applyFeedFilter();
 }
 
-// Pestaña "🥾 Rutas" del feed: fotos subidas en municipios que tienen ruta
-// (como el feed de Descubriendo), y debajo, la lista de rutas disponibles.
+// Pestaña "🔒 Privado": SOLO tus cosas guardadas en privado (nadie más las ve)
+async function renderPrivadoFeed() {
+  state._feedMode = 'privado';
+  clearGlobalRanking();
+  const sr = document.getElementById('stories-row');
+  if (sr) { sr.innerHTML = ''; sr.style.display = 'none'; }
+  const sent = document.getElementById('feed-sentinel');
+  if (sent) sent.textContent = '';
+  const fp = document.getElementById('feed-posts');
+  if (!fp || !state.user) return;
+  fp.innerHTML = '<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 8px"></div>Cargando privados...</div>';
+
+  const pcols = 'id,user_id,municipio,storage_path,thumb_path,descripcion,rating,visibilidad,created_at,batch_id';
+  let rp = await db.from('photos').select(pcols).eq('user_id', state.user.id).order('created_at', { ascending: !1 }).limit(200);
+  if (rp.error && /rating|batch_id|thumb_path|column|schema cache/i.test(rp.error.message || '')) {
+    rp = await db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at').eq('user_id', state.user.id).order('created_at', { ascending: !1 }).limit(200);
+  }
+  if (feedFilter !== 'privado') return;
+  const ph = (rp.data || []).filter(p => !['amigos', 'publico'].includes(p.visibilidad));
+
+  const groups = {}, order = [];
+  const keyOf = p => p.batch_id ? 'b:' + p.batch_id : 't:' + p.user_id + ':' + normalizeMuni(p.municipio) + ':' + String(p.created_at || '').slice(0, 16);
+  ph.forEach(p => { const k = keyOf(p); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
+  const profById = {};
+  if (state.profile) profById[state.user.id] = { id: state.user.id, username: state.profile.username, avatar_url: state.profile.avatar_url };
+  const posts = order.map(k => {
+    const g = groups[k].slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const imgs = g.filter(x => x.storage_path && x.storage_path !== 'text_only');
+    const rep = imgs[0] || g[0];
+    const newest = g.reduce((m, x) => x.created_at > m ? x.created_at : m, g[0].created_at);
+    return { id: 'pv_' + k, _batchKey: k, _batchId: rep.batch_id || null, user_id: rep.user_id, municipio: rep.municipio, visibilidad: rep.visibilidad, created_at: newest, profiles: profById[rep.user_id] || null, _fotos: imgs, _foto: rep };
+  }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  if (feedFilter !== 'privado') return;
+  if (!posts.length) {
+    fp.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:12px;line-height:1.6">🔒 No tienes nada en privado.<br>Al subir una foto, elige <b>🔒 Privado</b> y solo tú la verás (aquí).</div>';
+    return;
+  }
+  await renderFeedPosts(posts, {}, {}, Object.values(profById), !1);
+}
+
+// Pestaña "🥾 Rutas" del feed: solo fotos de rutas (municipio "🥾 ...")
 async function renderRutasFeed() {
   state._feedMode = 'rutas';
   clearGlobalRanking();
@@ -88,7 +129,7 @@ async function renderRutasFeed() {
   if (rp.error && /rating|batch_id|thumb_path|column|schema cache/i.test(rp.error.message || '')) {
     rp = await db.from('photos').select('id,user_id,municipio,storage_path,descripcion,visibilidad,created_at').in('user_id', authors).like('municipio', '🥾%').order('created_at', { ascending: !1 }).limit(120);
   }
-  const visible = e => e.user_id === state.user.id || ['amigos', 'publico'].includes(e.visibilidad);
+  const visible = e => ['amigos', 'publico'].includes(e.visibilidad);
   const ph = (rp.data || []).filter(visible).filter(p => !state.blockedIds?.has(p.user_id));
 
   // Agrupar por lote de subida
@@ -99,8 +140,10 @@ async function renderRutasFeed() {
   ph.forEach(p => { const k = keyOf(p); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
   const posts = order.map(k => {
     const g = groups[k].slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const rep = g[0];
-    return { id: 'pb_' + k, _batchKey: k, _batchId: rep.batch_id || null, user_id: rep.user_id, municipio: rep.municipio, visibilidad: rep.visibilidad, created_at: g[g.length - 1].created_at, profiles: profById[rep.user_id] || null, _fotos: g, _foto: rep };
+    const imgs = g.filter(x => x.storage_path && x.storage_path !== 'text_only');
+    const rep = imgs[0] || g[0];
+    const newest = g.reduce((m, x) => x.created_at > m ? x.created_at : m, g[0].created_at);
+    return { id: 'pb_' + k, _batchKey: k, _batchId: rep.batch_id || null, user_id: rep.user_id, municipio: rep.municipio, visibilidad: rep.visibilidad, created_at: newest, profiles: profById[rep.user_id] || null, _fotos: imgs, _foto: rep };
   }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   if (feedFilter !== 'rutas') return;
@@ -2017,6 +2060,7 @@ async function fetchFeedPage() {
         const ph = (rp.data || []).filter(visible)
             .filter(p => !state.blockedIds?.has(p.user_id))
             .filter(p => !(p.municipio || "").startsWith("🥾"))  // las rutas van en su pestaña
+            .filter(p => ["amigos", "publico"].includes(p.visibilidad))  // lo privado solo en su pestaña
             .filter(p => !fc._seenPhotoIds.has(p.id) && !fc._seenBatch.has(keyOf(p)));
         const recs = (rr_.error ? [] : (rr_.data || []))
             .filter(r => !state.blockedIds?.has(r.user_id))
