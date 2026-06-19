@@ -574,18 +574,38 @@ function switchScreen(e) {
     document.querySelectorAll(".screen").forEach(e => e.classList.remove("active")), document.getElementById("screen-" + e).classList.add("active"), updateNavColors(e), "profile" === e && renderProfile(), "feed" === e && (clearFeedBadge(), loadFeed()), "eventos" === e && loadEventos(), "dado" === e && renderMuniList()
 }
 
+function _normSearch(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
 function searchMuniOnMap(e) {
     const t = document.getElementById("map-search-results");
-    if (!e || e.length < 2) return t.style.display = "none", void d3.selectAll(".muni-path").classed("selected", !1);
-    const i = [];
-    d3.selectAll(".muni-path").each(function() {
-        i.push(d3.select(this).attr("data-name"))
+    if (!e || e.length < 2) { t.style.display = "none"; d3.selectAll(".muni-path").classed("selected", !1); return; }
+    const q = _normSearch(e);
+    const munis = [];
+    d3.selectAll(".muni-path").each(function() { const n = d3.select(this).attr("data-name"); if (n) munis.push(n); });
+    const results = [], seenMuni = new Set();
+    // 1) Municipios por nombre
+    munis.forEach(m => { if (_normSearch(m).includes(q)) { results.push({ label: m, muni: m, loc: null }); seenMuni.add(m); } });
+    // 2) Localidades → llevan a su municipio
+    munis.forEach(m => {
+        const raw = state.municipiosData?.[m]?.localidades;
+        if (!raw) return;
+        const locs = Array.isArray(raw) ? raw : String(raw).split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
+        locs.forEach(loc => {
+            if (_normSearch(loc).includes(q) && _normSearch(loc) !== _normSearch(m)) {
+                results.push({ label: loc, muni: m, loc });
+            }
+        });
     });
-    const n = i.filter(t => t && t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(e.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""))).slice(0, 8);
-    n.length ? (t.style.display = "block", t.innerHTML = n.map(e => {
-        const t = state.visited[e];
-        return '<div data-muni="' + esc(e) + '" onclick="selectMuniFromSearch(this.dataset.muni)" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#fff"><span>' + esc(e) + "</span>" + (t ? '<span style="font-size:10px;color:#22b050;background:rgba(34,176,80,0.15);padding:2px 8px;border-radius:999px">✓ Conquistado</span>' : '<span style="font-size:10px;color:rgba(255,255,255,0.3)">Sin visitar</span>') + "</div>"
-    }).join("")) : t.style.display = "none"
+    const list = results.slice(0, 12);
+    if (!list.length) { t.style.display = "none"; return; }
+    t.style.display = "block";
+    t.innerHTML = list.map(r => {
+        const visited = state.visited[r.muni];
+        const sub = r.loc ? '<span style="font-size:10px;color:rgba(255,255,255,0.4)"> · en ' + esc(r.muni) + '</span>' : '';
+        const badge = visited
+            ? '<span style="font-size:10px;color:#22b050;background:rgba(34,176,80,0.15);padding:2px 8px;border-radius:999px;flex-shrink:0">✓ Conquistado</span>'
+            : '<span style="font-size:10px;color:rgba(255,255,255,0.3);flex-shrink:0">Sin visitar</span>';
+        return '<div data-muni="' + esc(r.muni) + '" onclick="selectMuniFromSearch(this.dataset.muni)" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:#fff"><span>' + (r.loc ? '📍 ' : '') + esc(r.label) + sub + '</span>' + badge + '</div>';
+    }).join("");
 }
 
 function selectMuniFromSearch(e) {
@@ -1256,37 +1276,124 @@ function filterEvs(e, t) {
     currentFilter = t, document.querySelectorAll(".ev-tab").forEach(e => e.classList.remove("active")), e.classList.add("active"), renderEventos()
 }
 
+function _evMonthLabel(fechaStr) {
+    const d = new Date(fechaStr);
+    const meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    return meses[d.getMonth()] + " " + d.getFullYear();
+}
+function _evDateShort(fechaStr) {
+    return new Date(fechaStr).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+}
+
+// Tarjeta de un evento de un solo sitio (formato clásico)
+function _evSingleCard(e) {
+    const inscrito = state.inscripciones[e.id];
+    const bg = inscrito ? "#1a7a3e" : "#aa1060";
+    const txt = inscrito ? "Apuntado" : "Apuntarme";
+    const ic = inscrito ? "ti-check" : "ti-plus";
+    const a = _evDateShort(e.fecha);
+    const past = (new Date - new Date(e.fecha)) / 864e5;
+    const fotosBtn = (inscrito || past >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos</button>` : "";
+    return `
+    <div class="ev-card" data-eid="${esc(e.id)}" onclick="openEventModal(this.dataset.eid)" style="cursor:pointer">
+      <div class="ev-img" style="background-color:${e.color_bg || "#1a3a5a"}">
+        <i class="ti ${e.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>
+        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana || ""} ${a}</div>
+        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge || e.tipo}</div>
+      </div>
+      <div class="ev-body">
+        <div class="ev-name">${esc(e.nombre)}</div>
+        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>
+        <div class="ev-desc">${esc(e.descripcion || "")}</div>
+        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>
+        <div class="ev-footer">
+          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            ${fotosBtn}
+            <button onclick="event.stopPropagation();toggleInscripcion('${e.id}')" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${bg};color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ${ic}" aria-hidden="true"></i>${txt}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Tarjeta de un festival que se celebra en varios pueblos
+function _evFestivalCard(f) {
+    const fechas = [...new Set(f.rows.map(r => r.fecha))].sort();
+    const dateLabel = fechas.length === 1 ? _evDateShort(fechas[0]) : (_evDateShort(fechas[0]) + " – " + _evDateShort(fechas[fechas.length - 1]));
+    const pueblos = f.rows.map(ev => {
+        const inscrito = state.inscripciones[ev.id];
+        const bg = inscrito ? "#1a7a3e" : "#aa1060";
+        const txt = inscrito ? "Apuntado" : "Apuntarme";
+        const ic = inscrito ? "ti-check" : "ti-plus";
+        const past = (new Date - new Date(ev.fecha)) / 864e5;
+        const fotosBtn = (inscrito || past >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(ev.id)}" data-ename="${esc((f.nombre + ' · ' + (ev.lugar || ev.municipio)))}" style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ti-camera" aria-hidden="true"></i>Fotos</button>` : "";
+        return `<div style="padding:11px 0;border-top:1px solid rgba(255,255,255,0.07)">
+          <div data-eid="${esc(ev.id)}" onclick="openEventModal(this.dataset.eid)" style="cursor:pointer">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <div style="font-size:13px;font-weight:700;color:#fff"><i class="ti ti-map-pin" aria-hidden="true" style="font-size:11px;color:#f08fc4"></i> ${esc(ev.lugar || ev.municipio)}</div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.45);flex-shrink:0">${ev.fecha && fechas.length > 1 ? _evDateShort(ev.fecha) : ""}</div>
+            </div>
+            ${ev.descripcion ? `<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:3px;line-height:1.4">${esc(ev.descripcion)}</div>` : `<div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:3px">Toca para ver la programación</div>`}
+            <div id="ev-fotos-${ev.id}" style="margin:7px 0 0"></div>
+            <div id="ev-count-${ev.id}" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:5px"><strong>...</strong> van</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            ${fotosBtn}
+            <button onclick="event.stopPropagation();toggleInscripcion('${ev.id}')" style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;background-color:${bg};color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ${ic}" aria-hidden="true"></i>${txt}</button>
+          </div>
+        </div>`;
+    }).join("");
+    return `
+    <div class="ev-card" style="cursor:default">
+      <div class="ev-img" style="background-color:${f.color_bg || "#3a1a3a"}">
+        <i class="ti ${f.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>
+        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i> ${dateLabel}</div>
+        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${f.tipo_badge || f.tipo}</div>
+      </div>
+      <div class="ev-body">
+        <div class="ev-name">${esc(f.nombre)}</div>
+        <div class="ev-loc" style="color:rgba(255,255,255,0.45)"><i class="ti ti-map-pin" aria-hidden="true"></i>Se celebra en ${f.rows.length} sitios — apúntate y sube fotos en cada uno</div>
+        ${pueblos}
+      </div>
+    </div>`;
+}
+
 function renderEventos() {
-    const e = new Date;
-    e.setHours(0, 0, 0, 0);
-    const t = state.eventos.filter(t => {
-            const i = new Date(t.fecha);
-            return i.setHours(0, 0, 0, 0), i >= e
-        }),
-        i = state.eventos.filter(t => {
-            const i = new Date(t.fecha);
-            return i.setHours(0, 0, 0, 0), i < e && state.inscripciones[t.id]
-        }),
-        n = "todos" === currentFilter ? t : "inscritos" === currentFilter ? t.filter(e => state.inscripciones[e.id]) : "pasados" === currentFilter ? i : t.filter(e => e.tipo === currentFilter),
-        o = document.getElementById("tab-inscritos");
-    if (o) {
-        const e = t.filter(e => state.inscripciones[e.id]).length;
-        o.textContent = e > 0 ? "Mis eventos (" + e + ")" : "Mis eventos"
-    }
-    document.getElementById("eventos-list").innerHTML = n.map(e => {
-        const t = state.inscripciones[e.id],
-            i = t ? "#1a7a3e" : "#aa1060",
-            n = t ? "Apuntado" : "Apuntarme",
-            o = t ? "ti-check" : "ti-plus",
-            a = new Date(e.fecha).toLocaleDateString("es-ES", {
-                day: "numeric",
-                month: "short"
-            }),
-            s = new Date(e.fecha),
-            r = (new Date - s) / 864e5,
-            d = (t || r >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}"\n          style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0">\n          <i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos\n        </button>` : "";
-        return `\n    <div class="ev-card" data-eid="${esc(e.id)}" onclick="openEventModal(this.dataset.eid)" style="cursor:pointer">\n      <div class="ev-img" style="background-color:${e.color_bg||"#1a3a5a"}">\n        <i class="ti ${e.icon||"ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>\n        <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana||""} ${a}</div>\n        <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge||e.tipo}</div>\n      </div>\n      <div class="ev-body">\n        <div class="ev-name">${esc(e.nombre)}</div>\n        <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>\n        <div class="ev-desc">${esc(e.descripcion||"")}</div>\n        \x3c!-- Fotos del evento si ya hay --\x3e\n        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>\n        <div class="ev-footer">\n          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>\n          <div style="display:flex;gap:6px;align-items:center">\n            ${d}\n            <button onclick="event.stopPropagation();toggleInscripcion('${e.id}')"\n              style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${i};color:#ffffff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0;">\n              <i class="ti ${o}" aria-hidden="true"></i>${n}\n            </button>\n          </div>\n        </div>\n      </div>\n    </div>`
-    }).join(""), n.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); })
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const isUpcoming = ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d >= today; };
+    const upcoming = state.eventos.filter(isUpcoming);
+    const past = state.eventos.filter(ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d < today && state.inscripciones[ev.id]; });
+    let list = "todos" === currentFilter ? upcoming
+        : "inscritos" === currentFilter ? upcoming.filter(e => state.inscripciones[e.id])
+            : "pasados" === currentFilter ? past
+                : upcoming.filter(e => e.tipo === currentFilter);
+
+    const tabIns = document.getElementById("tab-inscritos");
+    if (tabIns) { const c = upcoming.filter(e => state.inscripciones[e.id]).length; tabIns.textContent = c > 0 ? "Mis eventos (" + c + ")" : "Mis eventos"; }
+
+    // Agrupar por festival (festival || nombre)
+    const fests = {}, festOrder = [];
+    list.forEach(ev => { const k = ev.festival || ev.nombre; if (!fests[k]) { fests[k] = []; festOrder.push(k); } fests[k].push(ev); });
+    const festObjs = festOrder.map(k => {
+        const rows = fests[k].slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+        const first = rows[0];
+        return { key: k, nombre: first.festival || first.nombre, rows, fecha: first.fecha, periodo: first.periodo || _evMonthLabel(first.fecha), tipo: first.tipo, tipo_badge: first.tipo_badge, color_bg: first.color_bg, icon: first.icon };
+    }).sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+    // Agrupar festivales por periodo
+    const periodos = {}, perOrder = [];
+    festObjs.forEach(f => { if (!periodos[f.periodo]) { periodos[f.periodo] = []; perOrder.push(f.periodo); } periodos[f.periodo].push(f); });
+
+    const cont = document.getElementById("eventos-list");
+    if (!festObjs.length) { cont.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:13px">No hay eventos en este filtro.</div>'; return; }
+    cont.innerHTML = perOrder.map(per => {
+        const header = '<div style="padding:14px 4px 8px;font-size:12px;font-weight:700;color:#f08fc4;letter-spacing:.05em;text-transform:uppercase">📅 ' + esc(per) + '</div>';
+        const cards = periodos[per].map(f => f.rows.length === 1 ? _evSingleCard(f.rows[0]) : _evFestivalCard(f)).join("");
+        return header + cards;
+    }).join("");
+    list.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); });
 }
 async function loadEventPhotos(eventId, targetId) {
     const cont = document.getElementById(targetId || "ev-fotos-" + eventId);
