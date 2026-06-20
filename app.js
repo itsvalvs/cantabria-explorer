@@ -1419,7 +1419,7 @@ function renderEventos() {
     // Agrupar por festival (festival || nombre)
     const fests = {}, festOrder = [];
     list.forEach(ev => { const k = ev.festival || ev.nombre; if (!fests[k]) { fests[k] = []; festOrder.push(k); } fests[k].push(ev); });
-    const festObjs = festOrder.map(k => {
+    let festObjs = festOrder.map(k => {
         const rows = fests[k].slice().sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
         const first = rows[0];
         return { key: k, nombre: first.festival || first.nombre, rows, fecha: first.fecha, periodo: first.periodo || _evMonthLabel(first.fecha), tipo: first.tipo, tipo_badge: first.tipo_badge, color_bg: first.color_bg, icon: first.icon };
@@ -1443,7 +1443,14 @@ function renderEventos() {
             return best;
         };
         festObjs.forEach(f => f._dist = distOf(f));
+        const limite = new Date(Date.now() + 21 * 864e5);
+        festObjs = festObjs.filter(f => f._dist <= 15 && new Date(f.fecha) <= limite);
         festObjs.sort((a, b) => a._dist - b._dist);
+        if (!festObjs.length) {
+            const c = document.getElementById("eventos-list");
+            if (c) c.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.4);font-size:13px">📍 No hay fiestas a menos de 15 km en las próximas 3 semanas.<br>Prueba el filtro "Todos".</div>';
+            return;
+        }
     }
 
     // Agrupar festivales por periodo (o un único bloque "Cerca de ti")
@@ -1453,11 +1460,15 @@ function renderEventos() {
 
     const cont = document.getElementById("eventos-list");
     if (!festObjs.length) { cont.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:13px">No hay eventos en este filtro.</div>'; return; }
-    cont.innerHTML = perOrder.map(per => {
+    const adminBanner = isAdmin()
+        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
+        : "";
+    cont.innerHTML = adminBanner + perOrder.map(per => {
         const header = '<div style="padding:14px 4px 8px;font-size:12px;font-weight:700;color:#f08fc4;letter-spacing:.05em;text-transform:uppercase">📅 ' + esc(per) + '</div>';
         const cards = periodos[per].map(f => f.rows.length === 1 ? _evSingleCard(f.rows[0]) : _evFestivalCard(f)).join("");
         return header + cards;
     }).join("");
+    if (isAdmin()) loadPendingSuggestionsBadge();
     list.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); });
 }
 async function loadEventPhotos(eventId, targetId) {
@@ -4199,24 +4210,56 @@ function _wrapTextEv(ctx, text, x, y, maxW, lh) {
 async function shareEvento(eid) {
   const ev = (state.eventos || []).find(x => String(x.id) === String(eid)); if (!ev) return;
   try {
-    const W = 1080, H = 1080, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
-    const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, "#2a1f3d"); g.addColorStop(1, "#3d1f33"); x.fillStyle = g; x.fillRect(0, 0, W, H);
-    x.textAlign = "center"; x.fillStyle = "#f08fc4"; x.font = "bold 46px Inter, sans-serif"; x.fillText("🎉 ¡Nos vemos en la fiesta!", W / 2, 210);
-    x.fillStyle = "#fff"; x.font = "bold 82px Georgia, serif"; const yy = _wrapTextEv(x, ev.nombre, W / 2, 400, 920, 96);
-    x.fillStyle = "rgba(255,255,255,0.85)"; x.font = "42px Inter, sans-serif";
+    const W = 1080, H = 1350, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
+    // Fondo degradado festivo
+    const g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#1b1030"); g.addColorStop(0.55, "#3a1338"); g.addColorStop(1, "#5a1840");
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    // Confeti
+    const cols = ["#e8288a", "#e8c93a", "#5DCAA5", "#7ab3e8", "#f08fc4", "#ffffff"];
+    for (let i = 0; i < 90; i++) {
+      x.save(); x.translate(Math.random() * W, Math.random() * H); x.rotate(Math.random() * Math.PI);
+      x.globalAlpha = 0.5 + Math.random() * 0.4; x.fillStyle = cols[i % cols.length];
+      const s = 7 + Math.random() * 14; x.fillRect(-s / 2, -s / 2, s, s * 0.5); x.restore();
+    }
+    x.globalAlpha = 1;
+    // Tarjeta central tipo "entrada"
+    const cardX = 90, cardY = 250, cardW = W - 180, cardH = H - 520, r = 36;
+    x.fillStyle = "rgba(10,8,20,0.55)"; roundRect(x, cardX, cardY, cardW, cardH, r); x.fill();
+    x.strokeStyle = "rgba(255,255,255,0.18)"; x.lineWidth = 2; roundRect(x, cardX, cardY, cardW, cardH, r); x.stroke();
+    // Contenido tarjeta
+    x.textAlign = "center";
+    x.fillStyle = "#e8c93a"; x.font = "bold 40px Inter, Arial, sans-serif"; x.fillText("· F I E S T A ·", W / 2, cardY + 90);
+    x.fillStyle = "#fff"; x.font = "bold 92px Georgia, serif";
+    const yEnd = _wrapTextEv(x, ev.nombre, W / 2, cardY + 220, cardW - 120, 100);
+    // Línea separadora punteada
+    x.strokeStyle = "rgba(255,255,255,0.2)"; x.setLineDash([10, 12]); x.beginPath(); x.moveTo(cardX + 60, yEnd + 60); x.lineTo(cardX + cardW - 60, yEnd + 60); x.stroke(); x.setLineDash([]);
+    x.fillStyle = "rgba(255,255,255,0.92)"; x.font = "46px Inter, Arial, sans-serif";
     const fch = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
-    x.fillText("📅 " + fch, W / 2, yy + 140);
-    if (ev.lugar) x.fillText("📍 " + ev.lugar, W / 2, yy + 210);
-    x.fillStyle = "rgba(255,255,255,0.5)"; x.font = "30px Inter, sans-serif"; x.fillText("Ya lo pisé · app.yalopise.com", W / 2, 1010);
-    const blob = await new Promise(r => c.toBlob(r, "image/png"));
+    x.fillText("📅  " + fch, W / 2, yEnd + 150);
+    if (ev.lugar) { x.font = "44px Inter, Arial, sans-serif"; x.fillStyle = "rgba(255,255,255,0.8)"; x.fillText("📍  " + ev.lugar, W / 2, yEnd + 225); }
+    // Otros pueblos del festival
+    const sibs = (state.eventos || []).filter(e => (e.festival || e.nombre) === (ev.festival || ev.nombre) && (e.lugar || e.municipio) !== ev.lugar);
+    if (sibs.length) {
+      x.font = "32px Inter, Arial, sans-serif"; x.fillStyle = "rgba(255,255,255,0.55)";
+      _wrapTextEv(x, "También en: " + sibs.map(s => s.lugar || s.municipio).join(", "), W / 2, yEnd + 300, cardW - 140, 42);
+    }
+    // Pie con marca
+    x.fillStyle = "rgba(255,255,255,0.85)"; x.font = "bold 44px Georgia, serif"; x.fillText("Ya lo pisé", W / 2, H - 150);
+    x.fillStyle = "rgba(255,255,255,0.45)"; x.font = "30px Inter, Arial, sans-serif"; x.fillText("Conquista Cantabria · app.yalopise.com", W / 2, H - 95);
+    const blob = await new Promise(rz => c.toBlob(rz, "image/png"));
     const file = new File([blob], "fiesta.png", { type: "image/png" });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: ev.nombre, text: "¡Vente a " + ev.nombre + "!" });
+      await navigator.share({ files: [file], title: ev.nombre, text: "¡Vente a " + ev.nombre + "! 🎉" });
     } else {
       const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "fiesta.png"; a.click(); URL.revokeObjectURL(url);
-      toast("Imagen descargada para compartir", "success");
+      toast("Imagen descargada para compartir 📤", "success");
     }
   } catch (e) { toast("No se pudo compartir", "error"); }
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
 
 // — Distancia a la fiesta (si hay GPS y conocemos el municipio) —
@@ -4244,6 +4287,10 @@ function openEventModal(eid) {
         document.body.appendChild(ov);
     }
     const coast = !1;
+    const isPast = ev.fecha && new Date(ev.fecha) < new Date(new Date().toDateString());
+    const recapBanner = isPast
+        ? '<div style="margin-top:14px;padding:11px 13px;background:rgba(232,90,160,0.1);border:1px solid rgba(232,90,160,0.3);border-radius:12px;font-size:12px;color:#f0a8cf">📸 <b>Recap del evento</b> — mira las fotos que subió la gente y quién fue.</div>'
+        : "";
     const fecha = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
     // Contacto: @usuario de IG, URL o texto plano
     let contactoHtml = "";
@@ -4276,6 +4323,8 @@ function openEventModal(eid) {
         + '<div style="margin-top:6px;font-size:13px;color:rgba(255,255,255,0.55)">📅 ' + esc(fecha) + (ev.lugar ? ' · 📍 ' + esc(ev.lugar) : '') + _eventDistanceHtml(ev) + '</div>'
         + (ev.descripcion ? '<div style="margin-top:10px;font-size:13px;color:rgba(255,255,255,0.65);line-height:1.55">' + esc(ev.descripcion) + '</div>' : '')
         + contactoHtml + recoHtml
+        + recapBanner
+        + '<div id="evm-map"></div>'
         + renderProgramaHtml(ev)
         + '<div id="evm-going" style="margin-top:16px"></div>'
         + '<div id="evm-fotos" style="margin-top:14px"></div>'
@@ -4290,7 +4339,115 @@ function openEventModal(eid) {
     ov.style.display = "flex";
     loadEventPhotos(ev.id, "evm-fotos");
     loadEventGoing(ev.id);
+    renderFestMiniMap(ev);
 }
+async function loadPendingSuggestionsBadge() {
+    try {
+        const { count } = await db.from("event_suggestions").select("id", { count: "exact", head: !0 }).eq("estado", "pendiente");
+        const b = document.getElementById("sug-pend-badge");
+        if (b && count) { b.textContent = count; b.style.display = "inline-block"; }
+    } catch (_) {}
+}
+
+// — Mini-mapa con los pueblos donde se celebra el festival —
+function renderFestMiniMap(ev) {
+    const cont = document.getElementById("evm-map");
+    if (!cont || !state.muniFeatures || typeof d3 === "undefined") { if (cont) cont.innerHTML = ""; return; }
+    const entries = Object.entries(state.muniFeatures).filter(([n, f]) => f);
+    if (!entries.length) { cont.innerHTML = ""; return; }
+    const sibs = (state.eventos || []).filter(e => (e.festival || e.nombre) === (ev.festival || ev.nombre));
+    const targets = new Set();
+    sibs.forEach(s => [s.municipio, s.lugar].forEach(n => { if (n && state.muniFeatures[n]) targets.add(n); }));
+    if (!targets.size && ev.lugar && state.muniFeatures[ev.lugar]) targets.add(ev.lugar);
+    if (!targets.size && ev.municipio && state.muniFeatures[ev.municipio]) targets.add(ev.municipio);
+    if (!targets.size) { cont.innerHTML = ""; return; }
+    const W = 460, H = 230;
+    try {
+        const fc = { type: "FeatureCollection", features: entries.map(([n, f]) => f) };
+        const proj = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], fc);
+        const path = d3.geoPath(proj);
+        let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">';
+        entries.forEach(([name, f]) => {
+            const hit = targets.has(name);
+            svg += '<path d="' + path(f) + '" fill="' + (hit ? "#e8288a" : "rgba(255,255,255,0.06)") + '" stroke="' + (hit ? "#fff" : "rgba(255,255,255,0.1)") + '" stroke-width="' + (hit ? 1.1 : 0.4) + '"/>';
+        });
+        const labels = [...targets].map(n => { const c = path.centroid(state.muniFeatures[n]); return '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="3.2" fill="#fff" stroke="#e8288a" stroke-width="1"/>'; }).join("");
+        svg += labels + '</svg>';
+        cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin:16px 0 6px;letter-spacing:.05em;text-transform:uppercase">🗺️ Dónde se celebra</div>'
+            + '<div style="background:#0d1622;border-radius:12px;padding:8px;border:1px solid rgba(255,255,255,0.08)">' + svg + '</div>'
+            + '<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:5px">' + [...targets].map(esc).join(" · ") + '</div>';
+    } catch (e) { cont.innerHTML = ""; }
+}
+
+// — Moderación de sugerencias (solo el admin: Itsvalvs) —
+function isAdmin() { return (state.profile?.username || "").toLowerCase() === "itsvalvs"; }
+
+async function openSuggestionsReview() {
+    if (!isAdmin()) return;
+    let ov = document.getElementById("sugrev-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "sugrev-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:345;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">🛡️ Sugerencias pendientes</div><button onclick="document.getElementById(\'sugrev-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div id="sugrev-list"><div style="color:rgba(255,255,255,0.4);font-size:13px">Cargando...</div></div></div>';
+    ov.style.display = "flex";
+    try {
+        const { data, error } = await db.from("event_suggestions").select("*, profiles(username)").eq("estado", "pendiente").order("created_at", { ascending: !1 });
+        if (error) throw error;
+        const list = document.getElementById("sugrev-list");
+        if (!data || !data.length) { list.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;text-align:center;padding:20px">No hay sugerencias pendientes ✅</div>'; return; }
+        list.innerHTML = data.map(s => {
+            const who = s.profiles?.username ? "@" + esc(s.profiles.username) : "";
+            const f = s.fecha ? new Date(s.fecha).toLocaleDateString("es-ES", { day: "numeric", month: "short" }) : "sin fecha";
+            return '<div style="padding:13px;border:1px solid rgba(255,255,255,0.1);border-radius:14px;margin-bottom:10px">'
+                + '<div style="font-size:14px;font-weight:700;color:#fff">' + esc(s.nombre) + '</div>'
+                + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:2px">📍 ' + esc(s.lugar) + ' · 📅 ' + f + ' · ' + esc(s.tipo || "fiesta") + (who ? ' · ' + who : '') + '</div>'
+                + (s.descripcion ? '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:5px;line-height:1.4">' + esc(s.descripcion) + '</div>' : '')
+                + '<div style="display:flex;gap:8px;margin-top:10px">'
+                + '<button data-sid="' + s.id + '" onclick="approveSuggestion(this.dataset.sid,this)" style="flex:1;padding:9px;background:#22b050;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">✓ Aprobar y publicar</button>'
+                + '<button data-sid="' + s.id + '" onclick="rejectSuggestion(this.dataset.sid,this)" style="padding:9px 14px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Rechazar</button>'
+                + '</div></div>';
+        }).join("");
+    } catch (e) {
+        document.getElementById("sugrev-list").innerHTML = '<div style="color:#ff6b6b;font-size:12px">Error: ' + esc(e.message || "") + '. ¿Ejecutaste el SQL de admin?</div>';
+    }
+}
+
+async function approveSuggestion(sid, btn) {
+    if (!isAdmin()) return;
+    btn.disabled = !0; btn.textContent = "Publicando...";
+    try {
+        const { data: s, error: e1 } = await db.from("event_suggestions").select("*").eq("id", sid).single();
+        if (e1) throw e1;
+        const { error: e2 } = await db.from("eventos").insert({
+            nombre: s.nombre, lugar: s.lugar, municipio: s.lugar, fecha: s.fecha,
+            tipo: s.tipo || "fiesta", tipo_badge: "Fiesta", descripcion: s.descripcion || null,
+            activo: !0, color_bg: "#3a1a3a", icon: "ti-confetti"
+        });
+        if (e2) throw e2;
+        await db.from("event_suggestions").update({ estado: "aprobada" }).eq("id", sid);
+        toast("Fiesta publicada 🎉", "success");
+        btn.closest("div[style*='border-radius:14px']")?.remove();
+        loadEventos();
+    } catch (e) {
+        toast("No se pudo: " + (e.message || e), "error");
+        btn.disabled = !1; btn.textContent = "✓ Aprobar y publicar";
+    }
+}
+async function rejectSuggestion(sid, btn) {
+    if (!isAdmin()) return;
+    try {
+        await db.from("event_suggestions").update({ estado: "rechazada" }).eq("id", sid);
+        btn.closest("div[style*='border-radius:14px']")?.remove();
+        toast("Sugerencia rechazada", "info");
+    } catch (e) { toast("Error: " + (e.message || e), "error"); }
+}
+
 function closeEventModal() {
     const ov = document.getElementById("event-modal");
     if (ov) ov.style.display = "none";
