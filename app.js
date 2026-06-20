@@ -797,22 +797,38 @@ function setMapFilter(e) {
     applyMapFilter();
 }
 
+let rutaSort = "rating";
+function setRutaSort(s) { rutaSort = s; renderRutasDD(); }
 function renderRutasDD() {
     const dd = document.getElementById("map-areas-dd"); if (!dd) return;
     const rr = state.rutaRatings || {};
-    const rutas = getRutas().slice().sort((a, b) => {
+    const distOf = r => {
+        if (!state.lastLngLat || !state.muniFeatures?.[r.muni]) return Infinity;
+        try { return _haversineKm(state.lastLngLat, d3.geoCentroid(state.muniFeatures[r.muni])); } catch (_) { return Infinity; }
+    };
+    let rutas = getRutas().slice();
+    if (rutaSort === "facil") rutas = rutas.filter(r => (r.dificultad || "").toLowerCase().includes("fác") || (r.dificultad || "").toLowerCase().includes("fac"));
+    rutas.sort((a, b) => {
+        if (rutaSort === "cerca") return distOf(a) - distOf(b);
+        if (rutaSort === "corta") return a.km - b.km;
         const ma = rr[a.nombre]?.media || 0, mb = rr[b.nombre]?.media || 0;
         return mb - ma || a.nombre.localeCompare(b.nombre, "es");
     });
-    dd.innerHTML = rutas.length
-        ? '<div style="flex:1 1 100%;font-size:10px;color:rgba(255,255,255,0.35);margin-bottom:2px">⭐ Mejor valoradas primero</div>'
-          + rutas.map((r) => {
+    const chip = (id, label) => '<button onclick="setRutaSort(\'' + id + '\')" style="padding:4px 10px;border-radius:999px;font-size:10px;cursor:pointer;font-family:Inter,sans-serif;border:1px solid ' + (rutaSort === id ? "#22b050;background:rgba(34,176,80,0.2);color:#5DCAA5" : "rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.5)") + '">' + label + '</button>';
+    const bar = '<div style="flex:1 1 100%;display:flex;gap:5px;flex-wrap:wrap;margin-bottom:4px">' + chip("rating", "⭐ Mejor valoradas") + chip("cerca", "📍 Cerca") + chip("corta", "📏 Más cortas") + chip("facil", "🟢 Fáciles") + '<button onclick="openSugerirRuta()" style="padding:4px 10px;border-radius:999px;font-size:10px;cursor:pointer;font-family:Inter,sans-serif;border:1px dashed rgba(255,255,255,0.25);background:transparent;color:rgba(255,255,255,0.5)">➕ Sugerir ruta</button></div>';
+    if (rutaSort === "cerca" && !state.lastLngLat && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(p => { state.lastLngLat = [p.coords.longitude, p.coords.latitude]; if (mapFilter === "rutas") renderRutasDD(); }, () => {}, { enableHighAccuracy: !0, timeout: 8000, maximumAge: 60000 });
+    }
+    dd.innerHTML = bar + (rutas.length
+        ? rutas.map((r) => {
             const idx = getRutas().indexOf(r);
             const rt = rr[r.nombre];
-            const stars = rt ? ' · ' + rt.media.toFixed(1) + '★ (' + rt.n + ')' : '';
-            return '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="padding:5px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:999px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km' + stars + '</button>';
-          }).join("")
-        : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">Aún no hay rutas en la base de datos</span>';
+            const stars = rt ? ' · ' + rt.media.toFixed(1) + '★' : '';
+            const dkm = rutaSort === "cerca" && distOf(r) !== Infinity ? ' · 📍' + distOf(r).toFixed(0) + 'km' : '';
+            const dif = r.dificultad ? ' · ' + esc(r.dificultad) : '';
+            return '<button class="ruta-dd-btn" data-ridx="' + idx + '" onclick="selectRuta(' + idx + ')" style="flex:1 1 100%;text-align:left;padding:6px 11px;border:1px solid rgba(255,255,255,0.12);border-radius:8px;font-size:11px;cursor:pointer;font-family:Inter,sans-serif;background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.7)">🥾 ' + esc(r.nombre) + ' · ' + r.km + 'km' + stars + dkm + dif + '</button>';
+        }).join("")
+        : '<span style="font-size:11px;color:rgba(255,255,255,0.35)">No hay rutas con ese filtro</span>');
 }
 
 // Media de valoración por ruta (RPC ruta_ratings). Degrada si no existe.
@@ -841,9 +857,10 @@ function renderAmigosDD() {
 }
 
 function loadRutasState() {
-    db.from("rutas").select("nombre,km,muni,url").order("km", { ascending: !1 })
+    db.from("rutas").select("*").order("km", { ascending: !1 })
         .then(({ data, error }) => { if (!error && data && data.length) { state.rutas = data; if (mapFilter === "rutas") renderRutasDD(); } })
         .catch(() => {});
+    if (!state.rutaWishlist) loadRutaWishlist();
 }
 
 // ── "Cerca de ti": municipios sin conquistar más cercanos por GPS ──
@@ -4397,12 +4414,18 @@ async function openSuggestionsReview() {
         + '<div id="sugrev-list"><div style="color:rgba(255,255,255,0.4);font-size:13px">Cargando...</div></div></div>';
     ov.style.display = "flex";
     try {
-        const { data, error } = await db.from("event_suggestions").select("*, profiles(username)").eq("estado", "pendiente").order("created_at", { ascending: !1 });
+        const { data, error } = await db.from("event_suggestions").select("*").eq("estado", "pendiente").order("created_at", { ascending: !1 });
         if (error) throw error;
-        const list = document.getElementById("sugrev-list");
-        if (!data || !data.length) { list.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;text-align:center;padding:20px">No hay sugerencias pendientes ✅</div>'; return; }
-        list.innerHTML = data.map(s => {
-            const who = s.profiles?.username ? "@" + esc(s.profiles.username) : "";
+        const uids = [...new Set(data.map(s => s.user_id).filter(Boolean))];
+        let nameById = {};
+        if (uids.length) {
+            const { data: profs } = await db.from("profiles").select("id,username").in("id", uids);
+            (profs || []).forEach(p => { nameById[p.id] = p.username; });
+        }
+        const evHtml = (!data || !data.length)
+            ? '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:6px 0 14px">Sin fiestas pendientes</div>'
+            : data.map(s => {
+            const who = nameById[s.user_id] ? "@" + esc(nameById[s.user_id]) : "";
             const f = s.fecha ? new Date(s.fecha).toLocaleDateString("es-ES", { day: "numeric", month: "short" }) : "sin fecha";
             return '<div style="padding:13px;border:1px solid rgba(255,255,255,0.1);border-radius:14px;margin-bottom:10px">'
                 + '<div style="font-size:14px;font-weight:700;color:#fff">' + esc(s.nombre) + '</div>'
@@ -4413,8 +4436,11 @@ async function openSuggestionsReview() {
                 + '<button data-sid="' + s.id + '" onclick="rejectSuggestion(this.dataset.sid,this)" style="padding:9px 14px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Rechazar</button>'
                 + '</div></div>';
         }).join("");
+        document.getElementById("sugrev-list").innerHTML = '<div style="font-size:11px;font-weight:700;color:#f08fc4;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">🎉 Fiestas</div>' + evHtml
+            + '<div style="font-size:11px;font-weight:700;color:#5DCAA5;margin:14px 0 8px;text-transform:uppercase;letter-spacing:.05em">🥾 Rutas</div><div id="sugrev-rutas"><div style="color:rgba(255,255,255,0.3);font-size:12px">Cargando...</div></div>';
+        loadRutaSuggestionsReview();
     } catch (e) {
-        document.getElementById("sugrev-list").innerHTML = '<div style="color:#ff6b6b;font-size:12px">Error: ' + esc(e.message || "") + '. ¿Ejecutaste el SQL de admin?</div>';
+        document.getElementById("sugrev-list").innerHTML = '<div style="color:#ff6b6b;font-size:12px">Error: ' + esc(e.message || "") + '. ¿Ejecutaste el SQL de admin (migración 9)?</div>';
     }
 }
 
@@ -4735,6 +4761,308 @@ async function guardarNuevaPassword() {
 
 
 // ═══ SELECCIÓN DE UNA RUTA CONCRETA ═════════════════════════
+// ═══ FICHA DE RUTA COMPLETA ═════════════════════════════════
+function _rutaChips(r) {
+  const chips = [];
+  const dif = (r.dificultad || "").toLowerCase();
+  if (dif) { const cdif = dif.includes("fác") || dif.includes("fac") ? "#5DCAA5" : dif.includes("dif") ? "#ff6b6b" : "#e8c93a"; chips.push('<span style="background:rgba(255,255,255,0.06);border:1px solid ' + cdif + '55;color:' + cdif + ';padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600">⛰️ ' + esc(r.dificultad) + '</span>'); }
+  if (r.desnivel) chips.push('<span style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);padding:4px 10px;border-radius:999px;font-size:11px">📈 ' + esc(String(r.desnivel)) + ' m</span>');
+  if (r.duracion) chips.push('<span style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);padding:4px 10px;border-radius:999px;font-size:11px">⏱️ ' + esc(r.duracion) + '</span>');
+  if (r.tipo) chips.push('<span style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);padding:4px 10px;border-radius:999px;font-size:11px">🔄 ' + esc(r.tipo) + '</span>');
+  if (r.comarca) chips.push('<span style="background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);padding:4px 10px;border-radius:999px;font-size:11px">🗺️ ' + esc(r.comarca) + '</span>');
+  if (r.apta_ninos) chips.push('<span style="background:rgba(34,176,80,0.12);color:#5DCAA5;padding:4px 10px;border-radius:999px;font-size:11px">👶 Apta niños</span>');
+  if (r.apta_perros) chips.push('<span style="background:rgba(34,114,232,0.12);color:#9cc4f0;padding:4px 10px;border-radius:999px;font-size:11px">🐕 Apta perros</span>');
+  return chips.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">' + chips.join("") + '</div>' : "";
+}
+
+function openRutaModal(idx) {
+  const r = getRutas()[+idx]; if (!r) return;
+  let ov = document.getElementById("ruta-modal");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "ruta-modal";
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:320;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+    ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+    document.body.appendChild(ov);
+  }
+  const rt = state.rutaRatings?.[r.nombre];
+  const stars = rt
+    ? '<div style="font-size:13px;color:#e8c93a;margin-top:6px">' + "★".repeat(Math.round(rt.media)) + '<span style="color:rgba(255,255,255,0.18)">' + "★".repeat(Math.max(0, 5 - Math.round(rt.media))) + '</span> <span style="color:rgba(255,255,255,0.6)">' + rt.media.toFixed(1) + ' · ' + rt.n + ' valoración' + (rt.n === 1 ? "" : "es") + '</span></div>'
+    : '<div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:6px">Aún sin valoraciones · ¡sé el primero!</div>';
+  const inWish = state.rutaWishlist?.has(r.nombre);
+  ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;position:relative" onclick="event.stopPropagation()">'
+    + '<button onclick="document.getElementById(\'ruta-modal\').style.display=\'none\'" style="position:absolute;top:12px;right:12px;z-index:2;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:15px;cursor:pointer">✕</button>'
+    + '<div style="width:100%;height:96px;background:linear-gradient(135deg,#13361f,#1f4d34);display:flex;align-items:center;justify-content:center;font-size:40px">🥾</div>'
+    + '<div style="padding:16px 18px 26px">'
+    + '<div style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:#fff;line-height:1.2">' + esc(r.nombre) + '</div>'
+    + '<div style="margin-top:5px;font-size:13px;color:rgba(255,255,255,0.55)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
+    + stars + _rutaChips(r)
+    + (r.descripcion ? '<div style="margin-top:12px;font-size:13px;color:rgba(255,255,255,0.7);line-height:1.55">' + esc(r.descripcion) + '</div>' : "")
+    + (r.mejor_epoca ? '<div style="margin-top:8px;font-size:12px;color:#9fe0bf">🌤️ Mejor época: ' + esc(r.mejor_epoca) + '</div>' : "")
+    + (r.consejos ? '<div style="margin-top:6px;padding:9px 11px;background:rgba(232,201,58,0.08);border:1px solid rgba(232,201,58,0.22);border-radius:10px;font-size:12px;color:#e8d98a">💡 ' + esc(r.consejos) + '</div>' : "")
+    + '<div id="rm-weather" style="margin-top:12px"></div>'
+    + '<div id="rm-map" style="margin-top:14px"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button data-ridx="' + idx + '" onclick="comoLlegarRuta(this.dataset.ridx)" style="flex:1;min-width:120px;padding:11px;background:rgba(34,114,232,0.14);color:#9cc4f0;border:1px solid rgba(34,114,232,0.35);border-radius:11px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">🧭 Cómo llegar</button>'
+    + (r.url ? '<a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer" style="flex:1;min-width:120px;padding:11px;background:rgba(255,255,255,0.06);color:#7ab3e8;border:1px solid rgba(255,255,255,0.12);border-radius:11px;font-size:12px;font-weight:600;text-align:center;text-decoration:none;font-family:Inter,sans-serif">🔗 Wikiloc ↗</a>' : "")
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:8px">'
+    + '<button data-rn="' + esc(r.nombre) + '" onclick="toggleRutaWishlist(this.dataset.rn,this)" style="flex:1;padding:11px;background:' + (inWish ? "rgba(232,90,160,0.15);color:#f08fc4;border:1px solid rgba(232,90,160,0.4)" : "rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.12)") + ';border-radius:11px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (inWish ? "💖 En tu lista" : "🤍 Quiero hacerla") + '</button>'
+    + '<button data-ridx="' + idx + '" onclick="shareRuta(this.dataset.ridx)" style="flex:1;padding:11px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.12);border-radius:11px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📤 Compartir</button>'
+    + '</div>'
+    + '<button data-rn="' + esc(r.nombre) + '" onclick="document.getElementById(\'ruta-modal\').style.display=\'none\';setTimeout(()=>openRutaUpload(this.dataset.rn),60)" style="display:block;width:100%;margin-top:8px;padding:13px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">✅ La he hecho — valorar y subir fotos</button>'
+    + '<div id="rm-friends" style="margin-top:14px;font-size:12px;color:rgba(255,255,255,0.5)"></div>'
+    + '<div id="rm-gallery" style="margin-top:14px"></div>'
+    + '<div id="rm-tips" style="margin-top:16px"></div>'
+    + '</div></div>';
+  ov.style.display = "flex";
+  renderRutaMiniMap(r);
+  loadRutaWeather(r);
+  loadRutaFriendsModal(r.nombre);
+  loadRutaGallery(r.nombre);
+  loadRutaTips(r.nombre);
+}
+
+// Mini-mapa con el municipio de inicio (y punto de parking si hay coords)
+function renderRutaMiniMap(r) {
+  const cont = document.getElementById("rm-map");
+  if (!cont || !state.muniFeatures || typeof d3 === "undefined") { if (cont) cont.innerHTML = ""; return; }
+  const entries = Object.entries(state.muniFeatures).filter(([n, f]) => f);
+  const target = r.muni;
+  if (!entries.length || !state.muniFeatures[target]) { cont.innerHTML = ""; return; }
+  const W = 460, H = 230;
+  try {
+    const fc = { type: "FeatureCollection", features: entries.map(([n, f]) => f) };
+    const proj = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], fc);
+    const path = d3.geoPath(proj);
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block">';
+    entries.forEach(([name, f]) => {
+      const hit = name === target;
+      svg += '<path d="' + path(f) + '" fill="' + (hit ? "#22b050" : "rgba(255,255,255,0.06)") + '" stroke="' + (hit ? "#fff" : "rgba(255,255,255,0.1)") + '" stroke-width="' + (hit ? 1.1 : 0.4) + '"/>';
+    });
+    if (r.parking_lat && r.parking_lng) { const p = proj([+r.parking_lng, +r.parking_lat]); if (p) svg += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="4.5" fill="#e8c93a" stroke="#fff" stroke-width="1.5"/>'; }
+    else { const c = path.centroid(state.muniFeatures[target]); svg += '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="3.5" fill="#fff" stroke="#22b050" stroke-width="1"/>'; }
+    svg += '</svg>';
+    cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:6px;letter-spacing:.05em;text-transform:uppercase">🗺️ Inicio de la ruta</div><div style="background:#0d1622;border-radius:12px;padding:8px;border:1px solid rgba(255,255,255,0.08)">' + svg + '</div>';
+  } catch (e) { cont.innerHTML = ""; }
+}
+
+function comoLlegarRuta(idx) {
+  const r = getRutas()[+idx]; if (!r) return;
+  let url;
+  if (r.parking_lat && r.parking_lng) url = "https://www.google.com/maps/dir/?api=1&destination=" + r.parking_lat + "," + r.parking_lng;
+  else url = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(r.muni + ", Cantabria");
+  window.open(url, "_blank", "noopener");
+}
+
+// Clima de la zona de la ruta (open-meteo, sin API key)
+async function loadRutaWeather(r) {
+  const cont = document.getElementById("rm-weather"); if (!cont) return;
+  let lat = r.parking_lat, lng = r.parking_lng;
+  if ((!lat || !lng) && state.muniFeatures?.[r.muni] && typeof d3 !== "undefined") {
+    try { const c = d3.geoCentroid(state.muniFeatures[r.muni]); lng = c[0]; lat = c[1]; } catch (_) {}
+  }
+  if (!lat || !lng) { cont.innerHTML = ""; return; }
+  try {
+    const u = "https://api.open-meteo.com/v1/forecast?latitude=" + (+lat).toFixed(3) + "&longitude=" + (+lng).toFixed(3) + "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=3&timezone=auto";
+    const res = await fetch(u); const j = await res.json();
+    if (!j.daily) { cont.innerHTML = ""; return; }
+    const ic = c => c === 0 ? "☀️" : c < 4 ? "🌤️" : c < 50 ? "☁️" : c < 70 ? "🌧️" : c < 80 ? "🌦️" : "⛈️";
+    const days = j.daily.time.map((t, i) => {
+      const d = new Date(t).toLocaleDateString("es-ES", { weekday: "short" });
+      return '<div style="flex:1;text-align:center;background:rgba(255,255,255,0.04);border-radius:10px;padding:8px 4px">'
+        + '<div style="font-size:10px;color:rgba(255,255,255,0.5);text-transform:capitalize">' + d + '</div>'
+        + '<div style="font-size:20px;margin:2px 0">' + ic(j.daily.weather_code[i]) + '</div>'
+        + '<div style="font-size:11px;color:#fff;font-weight:600">' + Math.round(j.daily.temperature_2m_max[i]) + '°<span style="color:rgba(255,255,255,0.4)">/' + Math.round(j.daily.temperature_2m_min[i]) + '°</span></div>'
+        + '<div style="font-size:9px;color:#7ab3e8">💧' + (j.daily.precipitation_probability_max[i] ?? 0) + '%</div>'
+        + '</div>';
+    }).join("");
+    cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:6px;letter-spacing:.05em;text-transform:uppercase">🌤️ El tiempo en la zona</div><div style="display:flex;gap:6px">' + days + '</div>';
+  } catch (e) { cont.innerHTML = ""; }
+}
+
+async function loadRutaFriendsModal(nombre) {
+  const el = document.getElementById("rm-friends"); if (!el || !state.user) return;
+  try {
+    const friends = await getFriendsCache().catch(() => []);
+    const nameById = {}; (friends || []).forEach(f => nameById[f.id] = f.username);
+    const all = [...(friends || []).map(f => f.id), state.user.id];
+    const { data } = await db.from("photos").select("user_id").eq("municipio", "🥾 " + nombre).in("user_id", all);
+    const users = [...new Set((data || []).map(d => d.user_id))];
+    if (!users.length) { el.textContent = ""; return; }
+    const otros = users.filter(u => u !== state.user.id).map(u => nameById[u]).filter(Boolean);
+    const partes = []; if (users.includes(state.user.id)) partes.push("tú"); partes.push(...otros);
+    el.innerHTML = "👥 La han hecho: " + esc(partes.join(", "));
+  } catch (_) { el.textContent = ""; }
+}
+
+// Galería: todas las fotos de la ruta (tuyas + amigos)
+async function loadRutaGallery(nombre) {
+  const cont = document.getElementById("rm-gallery"); if (!cont || !state.user) return;
+  try {
+    const friends = await getFriendsCache().catch(() => []);
+    const ids = [...new Set([...(friends || []).map(f => f.id), state.user.id])];
+    let cols = "id,user_id,storage_path,thumb_path,visibilidad";
+    let { data, error } = await db.from("photos").select(cols).in("user_id", ids).eq("municipio", "🥾 " + nombre).neq("storage_path", "text_only").order("created_at", { ascending: !1 }).limit(30);
+    if (error && /thumb_path|column|schema cache/i.test(error.message || "")) ({ data } = await db.from("photos").select("id,user_id,storage_path,visibilidad").in("user_id", ids).eq("municipio", "🥾 " + nombre).neq("storage_path", "text_only").limit(30));
+    const fotos = (data || []).filter(f => f.user_id === state.user.id || ["amigos", "publico"].includes(f.visibilidad));
+    if (!fotos.length) { cont.innerHTML = ""; return; }
+    const paths = [...new Set([...fotos.map(f => f.thumb_path).filter(Boolean), ...fotos.map(f => f.storage_path).filter(Boolean)])];
+    const urls = await signPaths(paths);
+    const cells = fotos.map(f => {
+      const t = f.thumb_path ? urls[f.thumb_path] : null, fu = urls[f.storage_path] || null;
+      return '<div onclick="openPhotoLightbox(this.dataset.f)" data-f="' + esc(fu || t || "") + '" style="aspect-ratio:1;border-radius:10px;overflow:hidden;cursor:pointer;background:#0d2030"><img src="' + esc(t || fu || "") + '" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"' + (t && fu ? ' onerror="this.onerror=null;this.src=\'' + esc(fu) + '\'"' : "") + '/></div>';
+    }).join("");
+    cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">📸 Fotos de la ruta (' + fotos.length + ')</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">' + cells + '</div>';
+  } catch (e) { cont.innerHTML = ""; }
+}
+
+// Reseñas / consejos de la comunidad
+async function loadRutaTips(nombre) {
+  const cont = document.getElementById("rm-tips"); if (!cont || !state.user) return;
+  cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">💬 Consejos de la gente</div>'
+    + '<div style="display:flex;gap:6px;margin-bottom:10px"><input id="rm-tip-input" placeholder="Deja un consejo (parking, época, dificultad...)" style="flex:1;padding:9px 11px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;color:#fff;font-family:Inter,sans-serif;outline:none"/><button data-rn="' + esc(nombre) + '" onclick="addRutaTip(this.dataset.rn,this)" style="padding:9px 13px;background:#22b050;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer">Enviar</button></div>'
+    + '<div id="rm-tip-list"><div style="font-size:12px;color:rgba(255,255,255,0.3)">Cargando...</div></div>';
+  try {
+    const { data, error } = await db.from("ruta_tips").select("*").eq("ruta", nombre).order("created_at", { ascending: !1 }).limit(20);
+    if (error) throw error;
+    const lst = document.getElementById("rm-tip-list");
+    const uids = [...new Set((data || []).map(t => t.user_id))];
+    let nm = {};
+    if (uids.length) { const { data: ps } = await db.from("profiles").select("id,username").in("id", uids); (ps || []).forEach(p => nm[p.id] = p.username); }
+    if (!data || !data.length) { lst.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.3)">Aún no hay consejos. ¡Deja el primero!</div>'; return; }
+    lst.innerHTML = data.map(t => '<div style="padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="font-size:12px;color:#fff;line-height:1.4">' + esc(t.texto) + '</div><div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:3px">@' + esc(nm[t.user_id] || "alguien") + '</div></div>').join("");
+  } catch (e) {
+    document.getElementById("rm-tip-list").innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.3)">Activa los consejos ejecutando el SQL (migración 10).</div>';
+  }
+}
+async function addRutaTip(nombre, btn) {
+  const inp = document.getElementById("rm-tip-input"); const txt = (inp?.value || "").trim();
+  if (!txt) return;
+  btn.disabled = !0;
+  try {
+    const { error } = await db.from("ruta_tips").insert({ ruta: nombre, user_id: state.user.id, texto: txt.slice(0, 300) });
+    if (error) throw error;
+    inp.value = ""; loadRutaTips(nombre); toast("¡Gracias por el consejo!", "success");
+  } catch (e) { toast("No se pudo enviar: " + (e.message || e), "error"); }
+  finally { btn.disabled = !1; }
+}
+
+async function toggleRutaWishlist(nombre, el) {
+  if (!state.user) return;
+  state.rutaWishlist = state.rutaWishlist || new Set();
+  const has = state.rutaWishlist.has(nombre);
+  try {
+    if (has) { await db.from("ruta_wishlist").delete().eq("user_id", state.user.id).eq("ruta", nombre); state.rutaWishlist.delete(nombre); }
+    else { await db.from("ruta_wishlist").upsert({ user_id: state.user.id, ruta: nombre }, { onConflict: "user_id,ruta" }); state.rutaWishlist.add(nombre); }
+    const now = !has;
+    if (el) { el.innerHTML = now ? "💖 En tu lista" : "🤍 Quiero hacerla"; el.style.background = now ? "rgba(232,90,160,0.15)" : "rgba(255,255,255,0.06)"; el.style.color = now ? "#f08fc4" : "rgba(255,255,255,0.7)"; el.style.border = now ? "1px solid rgba(232,90,160,0.4)" : "1px solid rgba(255,255,255,0.12)"; }
+  } catch (e) { toast("No se pudo (¿SQL migración 10?)", "error"); }
+}
+
+async function loadRutaWishlist() {
+  if (!state.user) return;
+  try { const { data } = await db.from("ruta_wishlist").select("ruta").eq("user_id", state.user.id); state.rutaWishlist = new Set((data || []).map(d => d.ruta)); } catch (_) { state.rutaWishlist = new Set(); }
+}
+
+// Compartir ruta (imagen sencilla reutilizando el estilo de fiesta)
+async function shareRuta(idx) {
+  const r = getRutas()[+idx]; if (!r) return;
+  try {
+    const W = 1080, H = 1080, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
+    const g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#0d2a1e"); g.addColorStop(1, "#13361f"); x.fillStyle = g; x.fillRect(0, 0, W, H);
+    x.textAlign = "center"; x.font = "120px serif"; x.fillText("🥾", W / 2, 230);
+    x.fillStyle = "#fff"; x.font = "bold 76px Georgia, serif"; const yy = _wrapTextEv(x, r.nombre, W / 2, 380, 900, 88);
+    x.fillStyle = "rgba(255,255,255,0.85)"; x.font = "44px Inter, Arial, sans-serif"; x.fillText("📏 " + r.km + " km · 📍 " + r.muni, W / 2, yy + 120);
+    const rt = state.rutaRatings?.[r.nombre];
+    if (rt) { x.fillStyle = "#e8c93a"; x.font = "48px Arial"; x.fillText("★".repeat(Math.round(rt.media)) + "  " + rt.media.toFixed(1), W / 2, yy + 200); }
+    x.fillStyle = "rgba(255,255,255,0.5)"; x.font = "30px Inter, Arial, sans-serif"; x.fillText("Ya lo pisé · Conquista Cantabria", W / 2, H - 80);
+    const blob = await new Promise(rz => c.toBlob(rz, "image/png"));
+    const file = new File([blob], "ruta.png", { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: r.nombre, text: "¡Esta ruta mola! 🥾" });
+    else { const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "ruta.png"; a.click(); URL.revokeObjectURL(url); toast("Imagen descargada", "success"); }
+  } catch (e) { toast("No se pudo compartir", "error"); }
+}
+
+async function loadRutaSuggestionsReview() {
+    const cont = document.getElementById("sugrev-rutas"); if (!cont) return;
+    try {
+        const { data, error } = await db.from("ruta_suggestions").select("*").eq("estado", "pendiente").order("created_at", { ascending: !1 });
+        if (error) throw error;
+        if (!data || !data.length) { cont.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px">Sin rutas pendientes</div>'; return; }
+        cont.innerHTML = data.map(s => '<div style="padding:13px;border:1px solid rgba(255,255,255,0.1);border-radius:14px;margin-bottom:10px">'
+            + '<div style="font-size:14px;font-weight:700;color:#fff">🥾 ' + esc(s.nombre) + '</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:2px">📍 ' + esc(s.muni || "") + (s.km ? ' · ' + s.km + ' km' : '') + (s.dificultad ? ' · ' + esc(s.dificultad) : '') + '</div>'
+            + (s.descripcion ? '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:5px;line-height:1.4">' + esc(s.descripcion) + '</div>' : '')
+            + '<div style="display:flex;gap:8px;margin-top:10px">'
+            + '<button data-sid="' + s.id + '" onclick="approveRutaSuggestion(this.dataset.sid,this)" style="flex:1;padding:9px;background:#22b050;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">✓ Aprobar y publicar</button>'
+            + '<button data-sid="' + s.id + '" onclick="rejectRutaSuggestion(this.dataset.sid,this)" style="padding:9px 14px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Rechazar</button>'
+            + '</div></div>').join("");
+    } catch (e) { cont.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:11px">Ejecuta el SQL de rutas (migración 10).</div>'; }
+}
+
+// — Sugerir una ruta (la revisa el admin Itsvalvs) —
+function openSugerirRuta() {
+    if (!state.user) { toast("Inicia sesión para sugerir una ruta", "info"); return; }
+    let ov = document.getElementById("sugruta-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "sugruta-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:340;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    const inp = "width:100%;margin-top:8px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;box-sizing:border-box";
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">➕ Sugerir una ruta</div><button onclick="document.getElementById(\'sugruta-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:6px">La revisaremos antes de publicarla. ¡Gracias por completar el mapa!</div>'
+        + '<input id="sr-nombre" placeholder="Nombre de la ruta" style="' + inp + '"/>'
+        + '<input id="sr-muni" placeholder="Municipio de inicio" style="' + inp + '"/>'
+        + '<input id="sr-km" type="number" step="0.1" placeholder="Km (ej. 8.5)" style="' + inp + '"/>'
+        + '<select id="sr-dif" style="' + inp + '"><option value="">Dificultad...</option><option value="Fácil">Fácil</option><option value="Media">Media</option><option value="Difícil">Difícil</option></select>'
+        + '<input id="sr-url" placeholder="Enlace Wikiloc (opcional)" style="' + inp + '"/>'
+        + '<textarea id="sr-desc" placeholder="Descripción / consejos (opcional)" style="' + inp + ';min-height:64px;resize:none"></textarea>'
+        + '<button onclick="enviarSugerenciaRuta(this)" style="width:100%;margin-top:12px;padding:13px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Enviar sugerencia</button>'
+        + '</div>';
+    ov.style.display = "flex";
+}
+async function enviarSugerenciaRuta(btn) {
+    const nombre = document.getElementById("sr-nombre")?.value.trim();
+    const muni = document.getElementById("sr-muni")?.value.trim();
+    const km = parseFloat(document.getElementById("sr-km")?.value) || null;
+    const dif = document.getElementById("sr-dif")?.value || null;
+    const url = document.getElementById("sr-url")?.value.trim() || null;
+    const desc = document.getElementById("sr-desc")?.value.trim() || null;
+    if (!nombre || !muni) { toast("Pon al menos nombre y municipio", "info"); return; }
+    btn.disabled = !0; btn.textContent = "Enviando...";
+    try {
+        const { error } = await db.from("ruta_suggestions").insert({ user_id: state.user.id, nombre, muni, km, dificultad: dif, url, descripcion: desc, estado: "pendiente" });
+        if (error) throw error;
+        document.getElementById("sugruta-modal").style.display = "none";
+        toast("¡Sugerencia enviada! La revisaremos 🙌", "success");
+    } catch (e) { toast("No se pudo enviar: " + (e.message || e), "error"); }
+    finally { btn.disabled = !1; btn.textContent = "Enviar sugerencia"; }
+}
+async function approveRutaSuggestion(sid, btn) {
+    if (!isAdmin()) return;
+    btn.disabled = !0; btn.textContent = "Publicando...";
+    try {
+        const { data: s, error: e1 } = await db.from("ruta_suggestions").select("*").eq("id", sid).single();
+        if (e1) throw e1;
+        const { error: e2 } = await db.from("rutas").insert({ nombre: s.nombre, muni: s.muni, km: s.km, dificultad: s.dificultad, url: s.url, descripcion: s.descripcion });
+        if (e2) throw e2;
+        await db.from("ruta_suggestions").update({ estado: "aprobada" }).eq("id", sid);
+        toast("Ruta publicada 🥾", "success");
+        btn.closest("div[style*='border-radius:14px']")?.remove();
+        state.rutas = null; loadRutasState();
+    } catch (e) { toast("No se pudo: " + (e.message || e), "error"); btn.disabled = !1; btn.textContent = "✓ Aprobar y publicar"; }
+}
+async function rejectRutaSuggestion(sid, btn) {
+    if (!isAdmin()) return;
+    try { await db.from("ruta_suggestions").update({ estado: "rechazada" }).eq("id", sid); btn.closest("div[style*='border-radius:14px']")?.remove(); toast("Sugerencia rechazada", "info"); }
+    catch (e) { toast("Error", "error"); }
+}
+
 function selectRuta(idx) {
     const r = getRutas()[+idx];
     if (!r) return;
@@ -4752,10 +5080,10 @@ function selectRuta(idx) {
         // sin abrir ficha completa, solo centrar
         try { zoomToMuni(r.muni); } catch(e) {}
     }
-    mostrarTarjetaRuta(r);
+    mostrarTarjetaRuta(r, +idx);
 }
 
-function mostrarTarjetaRuta(r) {
+function mostrarTarjetaRuta(r, idx) {
     let card = document.getElementById("ruta-card");
     if (!card) {
         card = document.createElement("div");
@@ -4776,8 +5104,8 @@ function mostrarTarjetaRuta(r) {
         + '<div style="font-size:12px;color:rgba(255,255,255,0.6)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
         + ratingLine
         + '<div id="ruta-card-friends" style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:4px"></div>'
-        + link
-        + '<button data-rn="' + esc(r.nombre) + '" onclick="openRutaUpload(this.dataset.rn)" style="display:block;width:100%;margin-top:11px;padding:11px;background:#22b050;color:#fff;border:none;border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✅ La he hecho — valorar y subir fotos</button>';
+        + '<button onclick="openRutaModal(' + (idx != null ? idx : -1) + ')" style="display:block;width:100%;margin-top:10px;padding:10px;background:rgba(34,114,232,0.14);color:#9cc4f0;border:1px solid rgba(34,114,232,0.35);border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📋 Ver ficha completa</button>'
+        + '<button data-rn="' + esc(r.nombre) + '" onclick="openRutaUpload(this.dataset.rn)" style="display:block;width:100%;margin-top:8px;padding:11px;background:#22b050;color:#fff;border:none;border-radius:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✅ La he hecho — valorar y subir fotos</button>';
     loadRutaFriends(r.nombre);
 }
 
@@ -5028,7 +5356,30 @@ function _badgeContext() {
     return { muni, fotos: state.photos.length, costaTotal, comarcaCompleta, muniConRuta, maxMes, likes: state._likesRecibidos || 0 };
 }
 
+async function loadHikingStats() {
+    const anchor = document.getElementById("profile-progress");
+    if (!anchor || !state.user) return;
+    let box = document.getElementById("hiking-stats");
+    if (!box) { box = document.createElement("div"); box.id = "hiking-stats"; anchor.parentNode.insertBefore(box, anchor.nextSibling); }
+    try {
+        const { data } = await db.from("photos").select("municipio").eq("user_id", state.user.id).like("municipio", "🥾%");
+        const rutasHechas = [...new Set((data || []).map(d => (d.municipio || "").replace(/^🥾\s*/, "").trim()).filter(Boolean))];
+        if (!rutasHechas.length) { box.innerHTML = ""; return; }
+        const rutas = getRutas();
+        let km = 0; rutasHechas.forEach(n => { const r = rutas.find(x => x.nombre === n); if (r && r.km) km += Number(r.km) || 0; });
+        const n = rutasHechas.length;
+        const tier = n >= 25 ? { e: "🏔️", t: "Montañero experto" } : n >= 10 ? { e: "🥾", t: "Senderista" } : n >= 5 ? { e: "🌲", t: "Senderista junior" } : { e: "🍃", t: "Caminante novato" };
+        box.innerHTML = '<div style="margin:14px 0;padding:14px;background:linear-gradient(135deg,rgba(34,176,80,0.12),rgba(34,114,232,0.08));border:1px solid rgba(34,176,80,0.25);border-radius:16px">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:700;color:#fff">' + tier.e + ' ' + tier.t + '</div><div style="font-size:11px;color:rgba(255,255,255,0.5)">' + n + ' ruta' + (n === 1 ? "" : "s") + '</div></div>'
+            + '<div style="display:flex;gap:18px;margin-top:10px">'
+            + '<div><div style="font-size:22px;font-weight:800;color:#5DCAA5">' + km.toFixed(1) + '</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">km caminados</div></div>'
+            + '<div><div style="font-size:22px;font-weight:800;color:#9cc4f0">' + n + '</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">rutas hechas</div></div>'
+            + '</div></div>';
+    } catch (_) { box.innerHTML = ""; }
+}
+
 async function refreshBadgesAndLevel(celebrate = false) {
+    loadHikingStats();
     const box = document.getElementById("profile-progress");
     const ctx = _badgeContext();
     const lvl = nivelPara(ctx.muni);
