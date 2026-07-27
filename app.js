@@ -254,7 +254,29 @@ async function openMentionProfile(username) {
 }
 
 // Compresión de imágenes antes de subir (3-8MB → 150-400KB)
+// Usa createImageBitmap con imageOrientation:'from-image' para respetar la
+// orientación EXIF de la cámara: así la foto NO sale girada ni en espejo en iOS.
 async function compressImage(file, maxDim = 1600, quality = 0.82) {
+  // Camino moderno: decodifica respetando el EXIF automáticamente.
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, w, h);
+    if (bmp.close) bmp.close();
+    const out = canvas.toDataURL('image/jpeg', quality);
+    // Si comprimir no ahorra nada, mejor el original tal cual.
+    const origUrl = await new Promise(res => {
+      const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = () => res(null); r.readAsDataURL(file);
+    });
+    if (origUrl && out.length >= origUrl.length) return { base64: origUrl, mime: file.type || 'image/jpeg', compressed: false };
+    return { base64: out, mime: 'image/jpeg', compressed: true };
+  } catch (_) { /* Navegadores sin createImageBitmap → método clásico abajo */ }
+
   const dataUrl = await new Promise((res, rej) => {
     const r = new FileReader();
     r.onload  = e => res(e.target.result);
@@ -1123,7 +1145,7 @@ async function confirmVisit() {
                 (state.visitedLocs = state.visitedLocs || {})[e] = locsSel;
             } catch (locErr) { console.warn("localidades:", locErr); }
         }
-        if (a) return console.error("Error guardando visita:", JSON.stringify(a)), alert("Error al guardar la visita: " + a.message), t.textContent = "Marcar como conquistado", void(t.disabled = !1);
+        if (a) return console.error("Error guardando visita:", JSON.stringify(a)), toast("Error al guardar la visita: " + a.message, "error"), t.textContent = "Marcar como conquistado", void(t.disabled = !1);
 
         // 2) Guardar las FOTOS (pueden ser varias). La descripción va con la primera.
         const _photos = state.pendingPhotos.length
@@ -1149,7 +1171,7 @@ async function confirmVisit() {
                     const ext = mime.includes("png") ? "png" : "jpg";
                     const path = `${uid}/${Date.now()}_${idx}.${ext}`;
                     const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: mime, cacheControl: "3600", upsert: !1 });
-                    if (upErr) { console.error("Upload error:", upErr); alert("No se pudo subir una foto: " + (upErr.message || JSON.stringify(upErr))); continue; }
+                    if (upErr) { console.error("Upload error:", upErr); toast("No se pudo subir una foto. Inténtalo de nuevo.", "error"); continue; }
                     const now = new Date();
                     const desc = idx === 0 ? (i || null) : null;
                     const baseRow = {
@@ -1202,7 +1224,7 @@ async function confirmVisit() {
         const s = document.getElementById("evidencia-desc");
         s && (s.value = ""), document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
-        }), updateProgress(), launchConfetti(), console.log("Visita guardada OK:", e, selectedVisibilidad);
+        }), updateProgress(), launchConfetti();
         (state.visitDates = state.visitDates || {})[e] = (state.visitDates[e] || (new Date).toISOString().slice(0, 10));
         toast(_photos.length ? ("¡" + e + " conquistado! " + _photos.length + (_photos.length === 1 ? " foto subida" : " fotos subidas")) : ("¡" + e + " conquistado!"), "success");
         refreshBadgesAndLevel(true);
@@ -1219,10 +1241,10 @@ async function confirmVisit() {
                 fecha: (new Date).toISOString().split("T")[0]
             }, { onConflict: "user_id,municipio" }), state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
                 t.getAttribute("data-name") === e && t.classList.add("visited")
-            }), showMuniBar(e), closeUploadSheet(), updateProgress(), alert("⚠️ Visita guardada pero sin foto. Error: " + t.message)
+            }), showMuniBar(e), closeUploadSheet(), updateProgress(), toast("Visita guardada, pero la foto no se pudo subir.", "info")
         } catch (e) {
-            alert("Error al guardar: " + t.message)
-        } else alert("Error al guardar: " + t.message)
+            toast("Error al guardar: " + t.message, "error")
+        } else toast("Error al guardar: " + t.message, "error")
     } finally {
         t.textContent = state.visited[state.selectedMuni] ? "Guardar nueva foto" : "Marcar como conquistado", t.disabled = !1
     }
@@ -2732,7 +2754,7 @@ async function searchAndOpenProfile(e) {
     const {
         data: t
     } = await db.from("profiles").select("id, username, avatar_url").ilike("username", e).single();
-    t ? openFriendProfile(t.id, t.username) : alert("Usuario @" + e + " no encontrado")
+    t ? openFriendProfile(t.id, t.username) : toast("Usuario @" + e + " no encontrado", "info")
 }
 async function deleteComment(e, t) {
     if (state.user && await confirmar("¿Borrar este comentario?", { titulo: "Borrar comentario", ok: "Borrar", peligro: !0 })) { await db.from("photo_comments").delete().eq("id", e).eq("user_id", state.user.id); await loadVisitComments(t, null); }
@@ -2752,7 +2774,7 @@ async function postComment(e, t, i) {
                 const { error: upe } = await db.storage.from("evidencias").upload(pth, blob, { contentType: cf.mime });
                 if (upe) {
                     console.error("Error subiendo foto de comentario:", upe);
-                    alert("No se pudo subir la foto del comentario: " + (upe.message || JSON.stringify(upe)));
+                    toast("No se pudo subir la foto del comentario.", "error");
                 } else {
                     fotoPath = pth;
                 }
@@ -2766,7 +2788,7 @@ async function postComment(e, t, i) {
             if (insErr && /foto_path|column|schema cache/i.test(insErr.message || "")) {
                 // La columna foto_path aún no existe: guardar al menos el texto
                 if (o) await db.from("photo_comments").insert({ user_id: state.user.id, photo_id: e, texto: o });
-                alert("La foto en comentarios necesita un ajuste en la base de datos (ejecuta el SQL). De momento se guardó solo el texto.");
+                toast("No se pudo adjuntar la foto; se guardó solo el texto del comentario.", "info");
             }
             await loadVisitComments(e);
             const t = (o || "").match(/@(\w+)/g);
@@ -2989,7 +3011,7 @@ async function sendFriendRequest(e, t, i) {
         following_id: e,
         estado: "pendiente"
     });
-    n && "23505" !== n.code && (alert("Error al enviar solicitud. Inténtalo de nuevo."), searchUser())
+    n && "23505" !== n.code && (toast("Error al enviar solicitud. Inténtalo de nuevo.", "error"), searchUser())
 }
 async function renderProfile() {
     const e = Object.keys(state.visited).length;
@@ -3168,7 +3190,7 @@ async function exportarFotoGaleria() {
             setTimeout(() => URL.revokeObjectURL(a.href), 5e3);
         }
     } catch (err) {
-        alert("No se pudo exportar la foto");
+        toast("No se pudo exportar la foto", "error");
     }
 }
 
@@ -3196,7 +3218,7 @@ async function editPhoto(e) {
     } = await db.from("photos").update({
         descripcion: i
     }).eq("id", e).eq("user_id", state.user.id);
-    n ? alert("Error: " + n.message) : (t.desc = i, state.feedCache = null)
+    n ? toast("Error: " + n.message, "error") : (t.desc = i, state.feedCache = null)
 }
 async function deletePhoto(e) {
     const t = state.photos[e];
@@ -3477,7 +3499,7 @@ document.getElementById("av-in").addEventListener("change", async function(e) {
         if (l) throw l;
         state.profile && (state.profile.avatar_url = versioned), i.innerHTML = `<img src="${versioned}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`
     } catch (e) {
-        console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, alert("No se pudo subir el avatar: " + e.message)
+        console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, toast("No se pudo subir el avatar. Inténtalo de nuevo.", "error")
     }
 }), init();
 const VAPID_PUBLIC_KEY = "BHd_AlIhjmYZEPc6QKPMas09kOzwvd50A4Vsb2O58Ilh40HLvSLVb9zbB9H6AMgPs9wLsRn0ovnyZP3DuUKOjQ4";
@@ -3533,7 +3555,7 @@ async function toggleNotifications() {
                 }
                 await registerPushNotifications(), e.innerHTML = state.pushRegistered ? "🔔 Notificaciones activas" : "🔕 Activar notificaciones"
             } catch (t) {
-                alert("Error activando notificaciones: " + t.message), e.innerHTML = "🔕 Activar notificaciones"
+                toast("Error activando notificaciones: " + t.message, "error"), e.innerHTML = "🔕 Activar notificaciones"
             }
             e.disabled = !1
         }
@@ -3756,7 +3778,7 @@ async function exportarMapa() {
         }
     } catch (err) {
         console.error("exportarMapa:", err);
-        alert("No se pudo generar la imagen");
+        toast("No se pudo generar la imagen", "error");
     } finally {
         btn && (btn.textContent = "📸 Exportar mapa", btn.disabled = !1);
     }
@@ -3823,7 +3845,7 @@ async function guardarRecomendacion() {
         closeRecModal();
         loadRecomendaciones(recMuni);
     } catch (err) {
-        alert("Error: " + err.message);
+        toast("Error: " + err.message, "error");
     } finally {
         btn.textContent = "Guardar recomendación", btn.disabled = !1;
     }
@@ -3967,7 +3989,7 @@ async function enviarRecReply(rid, muni, btn) {
         delete recReplyFotos[rid];
         loadRecomendaciones(muni);
     } catch (err) {
-        alert("Error: " + err.message);
+        toast("Error: " + err.message, "error");
         btn.textContent = "Publicar"; btn.disabled = !1;
     }
 }
@@ -4087,7 +4109,7 @@ function pickCommentFoto(cid) {
                 pendingCommentFotos[cid] = { base64, mime };
                 const cam = document.getElementById("comment-cam-" + cid);
                 if (cam) { cam.style.color = "#22b050"; cam.style.background = "rgba(34,176,80,0.2)"; cam.style.borderColor = "rgba(34,176,80,0.4)"; }
-            } catch (e) { alert("No se pudo procesar la foto"); }
+            } catch (e) { toast("No se pudo procesar la foto", "error"); }
         }
         inp.remove();
     });
@@ -4642,7 +4664,7 @@ async function toggleWishlist(muni) {
         // Si el filtro wishlist está activo en el mapa, refrescar
         if (mapFilter === "wishlist") applyMapFilter();
     } catch (e) {
-        alert("No se pudo actualizar la wishlist. ¿Ejecutaste el SQL de wishlist?");
+        toast("No se pudo actualizar tu wishlist. Inténtalo de nuevo.", "error");
     }
 }
 
