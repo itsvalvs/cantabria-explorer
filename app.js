@@ -565,6 +565,77 @@ function setAuthLoading(e) {
     if (b) b.disabled = e;
 }
 
+// ═══ ¿DE DÓNDE ERES? — bienvenida de origen ══════════════════
+// Saca los municipios de lo que ya tiene cargado la app,
+// para que los nombres coincidan EXACTOS con el resto.
+function getMunicipiosList() {
+  let munis = [];
+  const paths = document.querySelectorAll('.muni-path');
+  if (paths.length) munis = [...paths].map(p => p.getAttribute('data-name')).filter(Boolean);
+  if (!munis.length && window.state?.municipiosData) munis = Object.keys(state.municipiosData);
+  if (!munis.length && window.state?.muniFeatures) munis = Object.keys(state.muniFeatures);
+  return [...new Set(munis)].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+function showWelcomeOrigen(tries = 0) {
+  if (document.getElementById('origen-modal')) return;
+  const munis = getMunicipiosList();
+  // Si el mapa aún no se ha dibujado, reintenta un momento
+  if (!munis.length && tries < 8) { setTimeout(() => showWelcomeOrigen(tries + 1), 500); return; }
+
+  const opciones = munis.map(m => '<option value="' + esc(m) + '"></option>').join('');
+  const ov = document.createElement('div');
+  ov.id = 'origen-modal';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(6,12,20,0.82);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:22px;font-family:Inter,sans-serif';
+  ov.innerHTML =
+    '<div style="width:100%;max-width:360px;background:#141e2c;border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:26px 22px;box-shadow:0 20px 60px rgba(0,0,0,0.5)">'
+    + '<div style="font-size:34px;text-align:center;margin-bottom:6px">🏔️</div>'
+    + '<div style="font-family:Georgia,serif;font-style:italic;font-size:23px;color:#fff;text-align:center;margin-bottom:6px">¿De dónde eres?</div>'
+    + '<div style="font-size:13px;color:rgba(255,255,255,0.55);text-align:center;line-height:1.5;margin-bottom:18px">Esto es turismo interno: hecho por y para cántabros.<br>Dinos tu pueblo (aunque vivas fuera 😉).</div>'
+    + '<input id="origen-inp" list="origen-list" autocomplete="off" placeholder="Escribe tu municipio…" style="width:100%;box-sizing:border-box;padding:13px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:12px;color:#fff;font-size:15px;font-family:Inter,sans-serif;outline:none"/>'
+    + '<datalist id="origen-list">' + opciones + '</datalist>'
+    + '<div id="origen-err" style="display:none;color:#e8288a;font-size:12px;margin-top:8px"></div>'
+    + '<button id="origen-ok" style="width:100%;margin-top:16px;padding:14px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Empezar a conquistar</button>'
+    + '<button id="origen-fuera" style="width:100%;margin-top:10px;padding:11px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:12px;cursor:pointer;font-family:Inter,sans-serif;text-decoration:underline">No soy de Cantabria</button>'
+    + '</div>';
+  document.body.appendChild(ov);
+
+  document.getElementById('origen-ok').onclick = () => {
+    const val = document.getElementById('origen-inp').value.trim();
+    const err = document.getElementById('origen-err');
+    if (!val) { err.textContent = 'Escribe tu municipio o pulsa «No soy de Cantabria».'; err.style.display = 'block'; return; }
+    const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const match = munis.find(m => norm(m) === norm(val)); // acepta aunque no ponga tildes
+    if (!match) { err.textContent = 'No encontramos ese municipio. Elígelo de la lista.'; err.style.display = 'block'; return; }
+    saveOrigen(match);
+  };
+  document.getElementById('origen-fuera').onclick = showFueraMessage;
+}
+
+// Mensajito con cariño para los de fuera (sin bloquear)
+function showFueraMessage() {
+  const ov = document.getElementById('origen-modal');
+  if (!ov) return;
+  ov.firstChild.innerHTML =
+    '<div style="font-size:34px;text-align:center;margin-bottom:8px">💚</div>'
+    + '<div style="font-family:Georgia,serif;font-style:italic;font-size:22px;color:#fff;text-align:center;margin-bottom:12px">Esto es cosa de cántabros</div>'
+    + '<div style="font-size:14px;color:rgba(255,255,255,0.7);text-align:center;line-height:1.6;margin-bottom:20px">«Ya lo pisé» es turismo interno, hecho por y para gente de aquí. Puedes curiosear y usarla, pero está pensada para los cántabros y para descubrir lo nuestro. ¡Bienvenida/o igual! 🙂</div>'
+    + '<button id="origen-entrar" style="width:100%;padding:14px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Entrar a curiosear</button>';
+  document.getElementById('origen-entrar').onclick = () => saveOrigen('fuera');
+}
+
+async function saveOrigen(origen) {
+  const ov = document.getElementById('origen-modal');
+  try {
+    if (state?.user) {
+      await db.from('profiles').update({ origen }).eq('id', state.user.id);
+      if (state.profile) state.profile.origen = origen;
+    }
+  } catch (e) { console.warn('saveOrigen:', e); }
+  if (ov) ov.remove();
+  if (origen !== 'fuera' && typeof toast === 'function') toast('¡Bienvenida/o a Ya lo pisé! 🥾', 'success');
+}
+
 async function doLogout() {
     await db.auth.signOut(), state.user = null, state.profile = null, state.visited = {}, state.photos = [], showAuth()
 }
@@ -601,6 +672,7 @@ async function loadUserData(e) {
             t = a.avatar_url;
         e.innerHTML = '<img src="' + t + '" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>'
     }
+    if (a && !a.origen) setTimeout(showWelcomeOrigen, 500);
     state.visitedLocs = state.visitedLocs || {};
     state.visitDates = state.visitDates || {};
     i.data && (i.data.forEach(e => {
