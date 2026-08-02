@@ -252,69 +252,24 @@ async function openMentionProfile(username) {
     toast('Solicitud enviada a @' + profile.username, 'success');
   }
 }
-// Lee la orientación EXIF (1-8) de un JPEG. Devuelve 1 si no la encuentra.
-function getExifOrientation(file) {
-  return new Promise(resolve => {
-    const r = new FileReader();
-    r.onload = e => {
-      try {
-        const view = new DataView(e.target.result);
-        if (view.getUint16(0, false) !== 0xFFD8) return resolve(1);
-        const len = view.byteLength; let off = 2;
-        while (off < len) {
-          const marker = view.getUint16(off, false); off += 2;
-          if (marker === 0xFFE1) {
-            if (view.getUint32(off + 2, false) !== 0x45786966) return resolve(1);
-            const tiff = off + 8;
-            const little = view.getUint16(tiff, false) === 0x4949;
-            const first = tiff + view.getUint32(tiff + 4, little);
-            const tags = view.getUint16(first, little);
-            for (let i = 0; i < tags; i++) {
-              const entry = first + 2 + i * 12;
-              if (view.getUint16(entry, little) === 0x0112)
-                return resolve(view.getUint16(entry + 8, little) || 1);
-            }
-            return resolve(1);
-          } else if ((marker & 0xFF00) !== 0xFF00) { return resolve(1); }
-          else { off += view.getUint16(off, false); }
-        }
-      } catch (_) {}
-      resolve(1);
-    };
-    r.onerror = () => resolve(1);
-    r.readAsArrayBuffer(file.slice(0, 128 * 1024));
-  });
-}
-
 // Compresión de imágenes antes de subir (3-8MB → 150-400KB).
-// Leemos la orientación EXIF y la aplicamos al canvas, así la foto NUNCA
-// sale girada ni tumbada, sin depender de que el navegador respete el EXIF.
+// createImageBitmap con imageOrientation:'from-image' aplica la orientación
+// EXIF UNA sola vez (igual que un <img>): la foto de la cámara sale derecha
+// y las de galería, que ya están bien, NO se rotan de más.
 async function compressImage(file, maxDim = 1600, quality = 0.82) {
-  const ori = await getExifOrientation(file).catch(() => 1);
   let bmp = null;
-  try { bmp = await createImageBitmap(file, { imageOrientation: 'none' }); } catch (_) {}
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (_) {}
   if (!bmp) {
+    // Sin createImageBitmap: devolvemos el original sin tocar.
     const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = () => res(null); r.readAsDataURL(file); });
     return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
   }
-  const iw = bmp.width, ih = bmp.height;
-  const scale = Math.min(1, maxDim / Math.max(iw, ih));
-  const w = Math.round(iw * scale), h = Math.round(ih * scale);
-  const swap = ori >= 5 && ori <= 8;
+  const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
   const canvas = document.createElement('canvas');
-  canvas.width  = swap ? h : w;
-  canvas.height = swap ? w : h;
+  canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  switch (ori) {
-    case 2: ctx.transform(-1, 0, 0,  1, w, 0); break;
-    case 3: ctx.transform(-1, 0, 0, -1, w, h); break;
-    case 4: ctx.transform( 1, 0, 0, -1, 0, h); break;
-    case 5: ctx.transform( 0, 1, 1,  0, 0, 0); break;
-    case 6: ctx.transform( 0, 1, -1, 0, h, 0); break;
-    case 7: ctx.transform( 0, -1, -1, 0, h, w); break;
-    case 8: ctx.transform( 0, -1, 1,  0, 0, w); break;
-  }
   ctx.drawImage(bmp, 0, 0, w, h);
   if (bmp.close) bmp.close();
   const out = canvas.toDataURL('image/jpeg', quality);
@@ -726,7 +681,7 @@ async function loadUserData(e) {
 }
 
 function switchScreen(e) {
-    document.querySelectorAll(".screen").forEach(e => e.classList.remove("active")), document.getElementById("screen-" + e).classList.add("active"), updateNavColors(e), "profile" === e && renderProfile(), "feed" === e && (clearFeedBadge(), loadFeed()), "eventos" === e && loadEventos(), "dado" === e && renderMuniList()
+    document.querySelectorAll(".screen").forEach(e => e.classList.remove("active")), document.getElementById("screen-" + e).classList.add("active"), updateNavColors(e), "profile" === e && renderProfile(), "feed" === e && (clearFeedBadge(), loadFeed()), "eventos" === e && loadEventos(), "dado" === e && renderMuniList(), "map" === e && (typeof showMyLocationOnMap === "function") && showMyLocationOnMap()
 }
 
 function _normSearch(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""); }
@@ -1465,12 +1420,13 @@ function _evSingleCard(e) {
     const txt = inscrito ? "Apuntado" : "Apuntarme";
     const ic = inscrito ? "ti-check" : "ti-plus";
     const a = _evDateShort(e.fecha);
+    const _mf = _muniDeEvento(e)?.imagen_url;
     const past = (new Date - new Date(e.fecha)) / 864e5;
     const fotosBtn = (inscrito || past >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos</button>` : "";
     return `
     <div class="ev-card" data-eid="${esc(e.id)}" onclick="openEventModal(this.dataset.eid)" style="cursor:pointer">
-      <div class="ev-img" style="background-color:${e.color_bg || "#1a3a5a"}">
-        <i class="ti ${e.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>
+      <div class="ev-img" style="${_mf ? 'background-image:url(' + esc(_mf) + ');background-size:cover;background-position:center' : 'background-color:' + (e.color_bg || "#1a3a5a")}">
+        ${_mf ? '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.3),transparent 45%)"></div>' : `<i class="ti ${e.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>`}
         <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana || ""} ${a}</div>
         <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge || e.tipo}</div>
       </div>
@@ -1494,6 +1450,7 @@ function _evSingleCard(e) {
 function _evFestivalCard(f) {
     const fechas = [...new Set(f.rows.map(r => r.fecha))].sort();
     const dateLabel = fechas.length === 1 ? _evDateShort(fechas[0]) : (_evDateShort(fechas[0]) + " – " + _evDateShort(fechas[fechas.length - 1]));
+    const _mf = _muniDeEvento(f.rows[0])?.imagen_url;
     const pueblos = f.rows.map(ev => {
         const inscrito = state.inscripciones[ev.id];
         const bg = inscrito ? "#1a7a3e" : "#aa1060";
@@ -1519,8 +1476,8 @@ function _evFestivalCard(f) {
     }).join("");
     return `
     <div class="ev-card" style="cursor:default">
-      <div class="ev-img" style="background-color:${f.color_bg || "#3a1a3a"}">
-        <i class="ti ${f.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>
+      <div class="ev-img" style="${_mf ? 'background-image:url(' + esc(_mf) + ');background-size:cover;background-position:center' : 'background-color:' + (f.color_bg || "#3a1a3a")}">
+        ${_mf ? '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.3),transparent 45%)"></div>' : `<i class="ti ${f.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>`}
         <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i> ${dateLabel}</div>
         <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${f.tipo_badge || f.tipo}</div>
       </div>
@@ -3208,6 +3165,11 @@ function openPMobj(e) {
         <i class="ti ti-trash" aria-hidden="true"></i> Borrar
       </button>
     </div>
+    <div class="mrow" style="padding-bottom:2px">
+      <button data-fid="${esc(e.id)}" onclick="goToFeedPhoto(this.dataset.fid)" style="width:100%;padding:10px;background:rgba(34,114,232,0.12);color:#9cc4f0;border:1px solid rgba(34,114,232,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;gap:6px">
+        <i class="ti ti-arrow-right" aria-hidden="true"></i> Ver en el feed
+      </button>
+    </div>
     <div class="mrow"><i class="ti ti-eye" aria-hidden="true"></i><span>Visibilidad</span>
       <strong style="display:flex;gap:6px;margin-top:4px">
         ${["privado", "amigos", "publico"].map(t => `
@@ -3219,6 +3181,30 @@ function openPMobj(e) {
           </button>`).join("")}
       </strong>
     </div>`;
+    document.getElementById("photo-modal").classList.add("open");
+}
+
+// Ir a la publicación de esta foto en el feed (mejor esfuerzo: la busca y,
+// si no está cargada, va pidiendo más páginas).
+function goToFeedPhoto(fid) {
+    closePM();
+    switchScreen("feed");
+    let tries = 0;
+    const buscar = () => {
+        tries++;
+        const img = document.querySelector('img[data-foto-id="' + fid + '"]');
+        if (img) {
+            const post = img.closest(".feed-post") || img;
+            post.scrollIntoView({ behavior: "smooth", block: "center" });
+            if (post.classList) { post.style.transition = "box-shadow .3s"; post.style.boxShadow = "0 0 0 2px #22b050"; setTimeout(() => post.style.boxShadow = "", 1800); }
+        } else if (tries < 7) {
+            if (typeof fetchFeedPage === "function") fetchFeedPage();
+            setTimeout(buscar, 650);
+        } else {
+            toast("Desliza por el feed para encontrarla", "info");
+        }
+    };
+    setTimeout(buscar, 500);
 }
 
 // Borrar la foto abierta en el modal (BD + Storage + galería local)
@@ -3352,6 +3338,7 @@ async function loadMap() {
             d = d3.geoMercator().fitExtent([[pad, pad], [o - pad, a - pad]], n),
             l = d3.geoPath(d),
             c = d3.select("#map-svg");
+        state.mapProjection = d; state.mapSvgNode = c.node();
         c.selectAll("*").remove();
 
         // Degradados y brillo
@@ -3445,6 +3432,7 @@ async function loadMap() {
                 g.select(".map-mesh-outer").style("stroke-width", (0.6 / k) + "px");
                 const rb = document.getElementById("map-reset-zoom");
                 if (rb) rb.style.display = k > 1.05 ? "flex" : "none";
+                if (state._meXY) g.select("#me-dot").attr("transform", "translate(" + state._meXY[0] + "," + state._meXY[1] + ") scale(" + (1 / k) + ")");
             });
         c.call(state.mapZoom).on("dblclick.zoom", null);
 
@@ -3460,10 +3448,32 @@ async function loadMap() {
             mc.appendChild(rb);
         }
 
-        document.getElementById("map-load").style.display = "none", refreshMapVisited(), updateProgress()
+        document.getElementById("map-load").style.display = "none", refreshMapVisited(), updateProgress(), showMyLocationOnMap()
     } catch (e) {
         document.getElementById("map-load").innerHTML = '<p style="color:rgba(255,255,255,0.4);font-size:12px;padding:20px;text-align:center">Error al cargar el mapa.</p>'
     }
+}
+
+// Punto "estás aquí" en el mapa, con GPS de alta precisión. Se ancla al grupo
+// zoomable (se mueve y escala con el mapa) y se refresca al entrar al mapa.
+function showMyLocationOnMap() {
+    if (!navigator.geolocation || !state.mapProjection) return;
+    navigator.geolocation.getCurrentPosition(pos => {
+        state.lastLngLat = [pos.coords.longitude, pos.coords.latitude];
+        const xy = state.mapProjection(state.lastLngLat);
+        if (!xy || isNaN(xy[0])) return;
+        const g = d3.select("#map-zoom-group");
+        if (g.empty()) return;
+        state._meXY = xy;
+        const k = (state.mapSvgNode ? d3.zoomTransform(state.mapSvgNode).k : 1) || 1;
+        let dot = g.select("#me-dot");
+        if (dot.empty()) {
+            dot = g.append("g").attr("id", "me-dot").attr("pointer-events", "none");
+            dot.append("circle").attr("r", 7).attr("fill", "rgba(34,114,232,0.22)").attr("stroke", "rgba(34,114,232,0.45)").attr("stroke-width", 0.6);
+            dot.append("circle").attr("r", 3.4).attr("fill", "#2272e8").attr("stroke", "#fff").attr("stroke-width", 1.4);
+        }
+        dot.attr("transform", "translate(" + xy[0] + "," + xy[1] + ") scale(" + (1 / k) + ")").raise();
+    }, err => { console.warn("GPS mapa:", err && err.message); }, { enableHighAccuracy: true, timeout: 9000, maximumAge: 10000 });
 }
 
 function refreshMapVisited() {
