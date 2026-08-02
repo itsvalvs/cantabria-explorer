@@ -252,53 +252,72 @@ async function openMentionProfile(username) {
     toast('Solicitud enviada a @' + profile.username, 'success');
   }
 }
-
-// Compresión de imágenes antes de subir (3-8MB → 150-400KB)
-// Usa createImageBitmap con imageOrientation:'from-image' para respetar la
-// orientación EXIF de la cámara: así la foto NO sale girada ni en espejo en iOS.
-async function compressImage(file, maxDim = 1600, quality = 0.82) {
-  // Camino moderno: decodifica respetando el EXIF automáticamente.
-  try {
-    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
-    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale);
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(bmp, 0, 0, w, h);
-    if (bmp.close) bmp.close();
-    const out = canvas.toDataURL('image/jpeg', quality);
-    // Si comprimir no ahorra nada, mejor el original tal cual.
-    const origUrl = await new Promise(res => {
-      const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = () => res(null); r.readAsDataURL(file);
-    });
-    if (origUrl && out.length >= origUrl.length) return { base64: origUrl, mime: file.type || 'image/jpeg', compressed: false };
-    return { base64: out, mime: 'image/jpeg', compressed: true };
-  } catch (_) { /* Navegadores sin createImageBitmap → método clásico abajo */ }
-
-  const dataUrl = await new Promise((res, rej) => {
+// Lee la orientación EXIF (1-8) de un JPEG. Devuelve 1 si no la encuentra.
+function getExifOrientation(file) {
+  return new Promise(resolve => {
     const r = new FileReader();
-    r.onload  = e => res(e.target.result);
-    r.onerror = () => rej(new Error('No se pudo leer la foto'));
-    r.readAsDataURL(file);
+    r.onload = e => {
+      try {
+        const view = new DataView(e.target.result);
+        if (view.getUint16(0, false) !== 0xFFD8) return resolve(1);
+        const len = view.byteLength; let off = 2;
+        while (off < len) {
+          const marker = view.getUint16(off, false); off += 2;
+          if (marker === 0xFFE1) {
+            if (view.getUint32(off + 2, false) !== 0x45786966) return resolve(1);
+            const tiff = off + 8;
+            const little = view.getUint16(tiff, false) === 0x4949;
+            const first = tiff + view.getUint32(tiff + 4, little);
+            const tags = view.getUint16(first, little);
+            for (let i = 0; i < tags; i++) {
+              const entry = first + 2 + i * 12;
+              if (view.getUint16(entry, little) === 0x0112)
+                return resolve(view.getUint16(entry + 8, little) || 1);
+            }
+            return resolve(1);
+          } else if ((marker & 0xFF00) !== 0xFF00) { return resolve(1); }
+          else { off += view.getUint16(off, false); }
+        }
+      } catch (_) {}
+      resolve(1);
+    };
+    r.onerror = () => resolve(1);
+    r.readAsArrayBuffer(file.slice(0, 128 * 1024));
   });
-  const img = await new Promise((res, rej) => {
-    const im = new Image();
-    im.onload  = () => res(im);
-    im.onerror = () => rej(new Error('decode'));
-    im.src = dataUrl;
-  }).catch(() => null);
-  if (!img || !img.width) return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
-  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-  const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+}
+
+// Compresión de imágenes antes de subir (3-8MB → 150-400KB).
+// Leemos la orientación EXIF y la aplicamos al canvas, así la foto NUNCA
+// sale girada ni tumbada, sin depender de que el navegador respete el EXIF.
+async function compressImage(file, maxDim = 1600, quality = 0.82) {
+  const ori = await getExifOrientation(file).catch(() => 1);
+  let bmp = null;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'none' }); } catch (_) {}
+  if (!bmp) {
+    const dataUrl = await new Promise(res => { const r = new FileReader(); r.onload = e => res(e.target.result); r.onerror = () => res(null); r.readAsDataURL(file); });
+    return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
+  }
+  const iw = bmp.width, ih = bmp.height;
+  const scale = Math.min(1, maxDim / Math.max(iw, ih));
+  const w = Math.round(iw * scale), h = Math.round(ih * scale);
+  const swap = ori >= 5 && ori <= 8;
   const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
+  canvas.width  = swap ? h : w;
+  canvas.height = swap ? w : h;
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, w, h);
+  switch (ori) {
+    case 2: ctx.transform(-1, 0, 0,  1, w, 0); break;
+    case 3: ctx.transform(-1, 0, 0, -1, w, h); break;
+    case 4: ctx.transform( 1, 0, 0, -1, 0, h); break;
+    case 5: ctx.transform( 0, 1, 1,  0, 0, 0); break;
+    case 6: ctx.transform( 0, 1, -1, 0, h, 0); break;
+    case 7: ctx.transform( 0, -1, -1, 0, h, w); break;
+    case 8: ctx.transform( 0, -1, 1,  0, 0, w); break;
+  }
+  ctx.drawImage(bmp, 0, 0, w, h);
+  if (bmp.close) bmp.close();
   const out = canvas.toDataURL('image/jpeg', quality);
-  if (out.length >= dataUrl.length) return { base64: dataUrl, mime: file.type || 'image/jpeg', compressed: false };
   return { base64: out, mime: 'image/jpeg', compressed: true };
 }
 
@@ -2684,10 +2703,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         <div class="comment-input-row">
           <input class="comment-input" id="comment-input-${cid}" type="text" placeholder="Añade un comentario..." maxlength="200"
             data-cid="${cid}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
-            onkeydown="if(event.key==='Enter')postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)"/>
-          <button class="comment-send" id="comment-cam-${cid}" data-cid="${cid}" onclick="pickCommentFoto(this.dataset.cid)" title="Adjuntar foto" style="background:rgba(255,255,255,0.07)">
-            <i class="ti ti-camera" aria-hidden="true"></i>
-          </button>
+            onkeydown="if(event.key==='Enter')postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)"/
           <button class="comment-send" data-cid="${cid}" data-uid="${esc(v.user_id)}" data-muni="${muniSafe}"
             onclick="postComment(this.dataset.cid, this.dataset.uid, this.dataset.muni)">
             <i class="ti ti-send" aria-hidden="true"></i>
@@ -2836,24 +2852,14 @@ async function postComment(e, t, i) {
     if (!n || !state.user) return;
     const o = n.value.trim();
     const cf = pendingCommentFotos[e];
-    if (o || cf) {
+    if (o) {
         n.value = "", n.disabled = !0;
         try {
-            let fotoPath = null;
-            if (cf) {
-                const blob = await (await fetch(cf.base64)).blob();
-                const pth = state.user.id + "/comment_" + Date.now() + ".jpg";
-                const { error: upe } = await db.storage.from("evidencias").upload(pth, blob, { contentType: cf.mime });
-                if (upe) {
-                    console.error("Error subiendo foto de comentario:", upe);
-                    toast("No se pudo subir la foto del comentario.", "error");
-                } else {
-                    fotoPath = pth;
-                }
-                delete pendingCommentFotos[e];
-                const cam = document.getElementById("comment-cam-" + e);
-                if (cam) { cam.style.color = ""; cam.style.background = "rgba(255,255,255,0.07)"; }
-            }
+            const insErr = (await db.from("photo_comments").insert({
+                user_id: state.user.id, photo_id: e, texto: o
+            })).error;
+            if (insErr) { console.error("Error al comentar:", insErr); toast("No se pudo publicar el comentario.", "error"); }
+
             let insErr = (await db.from("photo_comments").insert({
                 user_id: state.user.id, photo_id: e, texto: o || null, foto_path: fotoPath
             })).error;
@@ -4161,32 +4167,6 @@ window.addEventListener("scroll", hideMentionDD, true);
 
 // Activar modo offline
 registerSW();
-
-
-// ═══ FOTOS EN COMENTARIOS ═══════════════════════════════════
-const pendingCommentFotos = {};
-function pickCommentFoto(cid) {
-    // Input nuevo en cada uso: evita listeners pegados y el bug de iOS
-    // al reutilizar el mismo <input> para varios comentarios
-    const inp = document.createElement("input");
-    inp.type = "file";
-    inp.accept = "image/*";
-    inp.style.display = "none";
-    document.body.appendChild(inp);
-    inp.addEventListener("change", async function() {
-        const f = inp.files && inp.files[0];
-        if (f) {
-            try {
-                const { base64, mime } = await compressImage(f, 1280, 0.8);
-                pendingCommentFotos[cid] = { base64, mime };
-                const cam = document.getElementById("comment-cam-" + cid);
-                if (cam) { cam.style.color = "#22b050"; cam.style.background = "rgba(34,176,80,0.2)"; cam.style.borderColor = "rgba(34,176,80,0.4)"; }
-            } catch (e) { toast("No se pudo procesar la foto", "error"); }
-        }
-        inp.remove();
-    });
-    inp.click();
-}
 
 // ═══ REPORTAR Y BLOQUEAR ════════════════════════════════════
 async function reportarContenido(tipo, contenidoId, usuarioId) {
