@@ -2846,12 +2846,10 @@ async function searchAndOpenProfile(e) {
 }
 async function deleteComment(e, t) {
     if (state.user && await confirmar("¿Borrar este comentario?", { titulo: "Borrar comentario", ok: "Borrar", peligro: !0 })) { await db.from("photo_comments").delete().eq("id", e).eq("user_id", state.user.id); await loadVisitComments(t, null); }
-}
-async function postComment(e, t, i) {
+}async function postComment(e, t, i) {
     const n = document.getElementById("comment-input-" + e);
     if (!n || !state.user) return;
     const o = n.value.trim();
-    const cf = pendingCommentFotos[e];
     if (o) {
         n.value = "", n.disabled = !0;
         try {
@@ -2859,15 +2857,6 @@ async function postComment(e, t, i) {
                 user_id: state.user.id, photo_id: e, texto: o
             })).error;
             if (insErr) { console.error("Error al comentar:", insErr); toast("No se pudo publicar el comentario.", "error"); }
-
-            let insErr = (await db.from("photo_comments").insert({
-                user_id: state.user.id, photo_id: e, texto: o || null, foto_path: fotoPath
-            })).error;
-            if (insErr && /foto_path|column|schema cache/i.test(insErr.message || "")) {
-                // La columna foto_path aún no existe: guardar al menos el texto
-                if (o) await db.from("photo_comments").insert({ user_id: state.user.id, photo_id: e, texto: o });
-                toast("No se pudo adjuntar la foto; se guardó solo el texto del comentario.", "info");
-            }
             await loadVisitComments(e);
             const t = (o || "").match(/@(\w+)/g);
             if (t)
