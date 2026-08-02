@@ -328,16 +328,102 @@ function zoomToMuni(muni) {
   if (!node) return;
   const b = node.getBBox();
   const { W, H } = state.mapDims;
-  const scale = Math.min(8, Math.max(2, 0.5 / Math.max(b.width / W, b.height / H)));
+  // Un poco más de aire alrededor del municipio (antes 0.5) para que la
+  // "vista de detalle" no quede tan pegada al borde.
+  const scale = Math.min(8, Math.max(2, 0.62 / Math.max(b.width / W, b.height / H)));
   const tx = W / 2 - scale * (b.x + b.width / 2);
   const ty = H / 2 - scale * (b.y + b.height / 2);
-  d3.select('#map-svg').transition().duration(750)
+  d3.select('#map-svg').transition().duration(750).ease(d3.easeCubicOut)
     .call(state.mapZoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
 function resetMapZoom() {
   if (!state.mapZoom) return;
   d3.select('#map-svg').transition().duration(500)
     .call(state.mapZoom.transform, d3.zoomIdentity);
+}
+
+// ── "Modo detalle" de un municipio: agranda + apaga el resto del mapa ──
+// (foco/spotlight) + tarjeta flotante con la info, y permite desagrandar
+// tocando la X, el propio municipio otra vez, o el mar de alrededor.
+function spotlightMuni(name) {
+  d3.selectAll('.muni-path')
+    .transition().duration(300)
+    .style('opacity', function() { return d3.select(this).attr('data-name') === name ? 1 : 0.25; })
+    .style('filter', function() { return d3.select(this).attr('data-name') === name ? 'url(#glow-select)' : 'saturate(0.35)'; });
+}
+function clearMuniSpotlight() {
+  d3.selectAll('.muni-path')
+    .transition().duration(300)
+    .style('opacity', 1)
+    .style('filter', null);
+}
+function selectMuniOnMap(name) {
+  if (!name) return;
+  // Si ya está agrandado este mismo municipio, un segundo toque lo desagranda
+  if (state.mapZoomedMuni === name) { unzoomMuni(); return; }
+  d3.selectAll('.muni-path').classed('selected', false);
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(name) : name;
+  d3.select('.muni-path[data-name="' + sel + '"]').classed('selected', true);
+  state.selectedMuni = name;
+  state.mapZoomedMuni = name;
+  spotlightMuni(name);
+  zoomToMuni(name);
+  showMuniBar(name);
+  showMuniZoomCard(name);
+  const rb = document.getElementById('map-reset-zoom');
+  if (rb) rb.style.display = 'flex';
+}
+function unzoomMuni() {
+  state.mapZoomedMuni = null;
+  clearMuniSpotlight();
+  resetMapZoom();
+  hideMuniZoomCard();
+}
+// Tarjeta flotante con la ficha rápida del municipio agrandado
+function showMuniZoomCard(name) {
+  const mc = document.getElementById('map-cont');
+  if (!mc) return;
+  let card = document.getElementById('muni-zoom-card');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'muni-zoom-card';
+    card.style.cssText = 'position:absolute;left:10px;right:10px;top:10px;z-index:5;'
+      + 'background:rgba(10,16,24,0.86);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.12);'
+      + 'border-radius:16px;padding:12px 14px;display:flex;align-items:flex-start;gap:10px;'
+      + 'box-shadow:0 10px 26px rgba(0,0,0,0.35);opacity:0;transform:translateY(-8px);transition:opacity .25s ease,transform .25s ease';
+    mc.appendChild(card);
+  }
+  const t = (state.municipiosData && state.municipiosData[name]) || { tipo: isCoast(name) ? 'costa' : 'montaña' };
+  const i = t.tipo === 'costa';
+  const visited = !!state.visited[name];
+  const pills = [];
+  if (t.comarca) pills.push('Comarca de ' + esc(t.comarca));
+  if (t.poblacion) pills.push(t.poblacion.toLocaleString('es-ES') + ' hab.');
+  if (t.area_km2) pills.push(t.area_km2 + ' km²');
+  card.innerHTML =
+    '<div style="flex:1;min-width:0">'
+      + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+        + '<span style="font-family:\'Playfair Display\',serif;font-weight:700;font-size:16px;color:#fff">' + esc(name) + '</span>'
+        + '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:' + (i ? 'rgba(56,138,221,0.25);color:#85B7EB' : 'rgba(29,158,117,0.25);color:#5DCAA5') + '">' + (i ? '🌊 Costa' : '⛰️ Montaña') + '</span>'
+        + (visited ? '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(34,176,80,0.2);color:#22b050">✓ Conquistado</span>' : '')
+      + '</div>'
+      + (pills.length ? '<div style="margin-top:5px;font-size:12px;color:rgba(255,255,255,0.55)">' + pills.join(' · ') + '</div>' : '')
+      + '<div style="display:flex;gap:8px;margin-top:10px">'
+        + '<button onclick="closeMuniZoomCard_openFicha()" style="padding:7px 13px;background:#22b050;color:#fff;border:none;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Ver ficha completa</button>'
+      + '</div>'
+    + '</div>'
+    + '<button onclick="unzoomMuni()" aria-label="Desagrandar municipio" style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;color:#fff;cursor:pointer;font-size:15px;line-height:1">✕</button>';
+  requestAnimationFrame(() => { card.style.opacity = '1'; card.style.transform = 'translateY(0)'; });
+}
+function hideMuniZoomCard() {
+  const card = document.getElementById('muni-zoom-card');
+  if (!card) return;
+  card.style.opacity = '0'; card.style.transform = 'translateY(-8px)';
+  setTimeout(() => { card && card.remove && card.style.opacity === '0' && card.remove(); }, 260);
+}
+function closeMuniZoomCard_openFicha() {
+  const name = state.mapZoomedMuni || state.selectedMuni;
+  if (name) openMuniModal(name);
 }
 
 const SUPABASE_URL = "https://sdsdbfjmpjbrcgrbyvkm.supabase.co",
@@ -3359,7 +3445,15 @@ async function loadMap() {
         mg.append("feMergeNode").attr("in", "blur");
         mg.append("feMergeNode").attr("in", "SourceGraphic");
 
-        c.append("rect").attr("width", o).attr("height", a).attr("fill", "url(#grad-sea)");
+        // Brillo dorado para el municipio en "modo agrandado" (spotlight)
+        const glowSel = defs.append("filter").attr("id", "glow-select")
+            .attr("x", "-60%").attr("y", "-60%").attr("width", "220%").attr("height", "220%");
+        glowSel.append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 2.4)
+            .attr("flood-color", "#e8c93a").attr("flood-opacity", 0.85);
+
+        c.append("rect").attr("id", "map-sea-bg").attr("width", o).attr("height", a).attr("fill", "url(#grad-sea)")
+            .style("cursor", "default")
+            .on("click", () => { if (state.mapZoomedMuni) unzoomMuni(); });
 
         // Grupo zoomable: municipios + bordes
         const g = c.append("g").attr("id", "map-zoom-group");
@@ -3405,10 +3499,7 @@ async function loadMap() {
             return "Comunidad de Campoo y Cabuérniga" === t ? "Mancomunidad de Campoo-Cabuérniga" : t;
         }).style("stroke", "none").on("click", function() {
             const name = d3.select(this).attr("data-name");
-            d3.selectAll(".muni-path").classed("selected", !1);
-            d3.select(this).classed("selected", !0);
-            state.selectedMuni = name;
-            showMuniBar(name);
+            selectMuniOnMap(name);
         });
 
         const u = e => String(e).startsWith("39") || 53072 === e || "53072" === e;
@@ -3444,7 +3535,7 @@ async function loadMap() {
             rb.innerHTML = '<i class="ti ti-zoom-out-area" aria-hidden="true"></i>';
             rb.title = "Ver toda Cantabria";
             rb.setAttribute("aria-label", "Ver toda Cantabria");
-            rb.onclick = resetMapZoom;
+            rb.onclick = () => { if (state.mapZoomedMuni) unzoomMuni(); else resetMapZoom(); };
             mc.appendChild(rb);
         }
 
