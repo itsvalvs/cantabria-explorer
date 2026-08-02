@@ -402,6 +402,7 @@ function showMuniZoomCard(name) {
   if (t.area_km2) pills.push(t.area_km2 + ' km²');
   card.innerHTML =
     '<div style="flex:1;min-width:0">'
+      + '<div id="muni-zoom-map" style="display:none;margin-bottom:10px"></div>'
       + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
         + '<span style="font-family:\'Playfair Display\',serif;font-weight:700;font-size:16px;color:#fff">' + esc(name) + '</span>'
         + '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:' + (i ? 'rgba(56,138,221,0.25);color:#85B7EB' : 'rgba(29,158,117,0.25);color:#5DCAA5') + '">' + (i ? '🌊 Costa' : '⛰️ Montaña') + '</span>'
@@ -414,6 +415,7 @@ function showMuniZoomCard(name) {
     + '</div>'
     + '<button onclick="unzoomMuni()" aria-label="Desagrandar municipio" style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;color:#fff;cursor:pointer;font-size:15px;line-height:1">✕</button>';
   requestAnimationFrame(() => { card.style.opacity = '1'; card.style.transform = 'translateY(0)'; });
+  renderMuniZoomMapPreview(name);
 }
 function hideMuniZoomCard() {
   const card = document.getElementById('muni-zoom-card');
@@ -424,6 +426,66 @@ function hideMuniZoomCard() {
 function closeMuniZoomCard_openFicha() {
   const name = state.mapZoomedMuni || state.selectedMuni;
   if (name) openMuniModal(name);
+}
+
+// ── Mapa "bonito" real (calles/agua/verde de OSM) por municipio ──
+// Los datos vienen precalculados en la tabla muni_mapas (ver
+// fetch_muni_mapas.mjs); aquí solo se leen, se cachean en memoria y se
+// pintan recortados con la silueta real del municipio.
+state.muniMapasCache = state.muniMapasCache || {};
+async function getMuniMapaData(name) {
+  if (Object.prototype.hasOwnProperty.call(state.muniMapasCache, name)) return state.muniMapasCache[name];
+  try {
+    const { data, error } = await db.from('muni_mapas').select('geojson').eq('municipio', name).maybeSingle();
+    if (error) throw error;
+    state.muniMapasCache[name] = data ? data.geojson : null;
+  } catch (e) {
+    console.warn('getMuniMapaData:', e);
+    state.muniMapasCache[name] = null;
+  }
+  return state.muniMapasCache[name];
+}
+function buildMuniDetailSvg(name, geojson) {
+  const feature = state.muniFeatures && state.muniFeatures[name];
+  if (!feature) return '';
+  const W = 320, H = 180, pad = 6;
+  const proj = d3.geoMercator().fitExtent([[pad, pad], [W - pad, H - pad]], feature);
+  const path = d3.geoPath(proj);
+  const clipId = 'clip-muni-' + name.replace(/[^a-zA-Z0-9]/g, '');
+  const boundaryD = path(feature);
+  let roads = '', water = '', green = '';
+  ((geojson && geojson.features) || []).forEach(f => {
+    const d = path(f);
+    if (!d) return;
+    if (f.properties.layer === 'road') {
+      const w = ['motorway', 'trunk', 'primary'].includes(f.properties.highway) ? 1.3 : 0.65;
+      roads += '<path d="' + d + '" fill="none" stroke="#f3ead9" stroke-width="' + w + '" stroke-linecap="round" opacity="0.9"/>';
+    } else if (f.properties.layer === 'water') {
+      water += '<path d="' + d + '" fill="#4d87bf" stroke="#3a6fa3" stroke-width="0.4" opacity="0.9"/>';
+    } else if (f.properties.layer === 'green') {
+      green += '<path d="' + d + '" fill="#1d7a4a" opacity="0.35"/>';
+    }
+  });
+  return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;border-radius:12px;background:#0d1622">'
+    + '<defs><clipPath id="' + clipId + '"><path d="' + boundaryD + '"/></clipPath>'
+    + '<linearGradient id="grass-' + clipId + '" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0%" stop-color="#3fae6e"/><stop offset="100%" stop-color="#227f4c"/></linearGradient></defs>'
+    + '<g clip-path="url(#' + clipId + ')"><path d="' + boundaryD + '" fill="url(#grass-' + clipId + ')"/>' + green + water + roads + '</g>'
+    + '<path d="' + boundaryD + '" fill="none" stroke="#0f1923" stroke-width="1.6"/>'
+    + '<g transform="translate(' + (W - 22) + ',22)" opacity="0.75">'
+    + '<circle r="11" fill="rgba(10,16,24,0.5)" stroke="rgba(255,255,255,0.4)" stroke-width="0.6"/>'
+    + '<path d="M0,-8 L2.4,0 L0,8 L-2.4,0 Z" fill="#e8c93a"/>'
+    + '<text y="-13" text-anchor="middle" font-size="6" fill="#fff" font-family="Inter,sans-serif">N</text></g></svg>';
+}
+async function renderMuniZoomMapPreview(name) {
+  const holder = document.getElementById('muni-zoom-map');
+  if (!holder) return;
+  const geojson = await getMuniMapaData(name);
+  // Si mientras cargaba el usuario cambió de municipio o cerró la tarjeta, no pintar
+  if (state.mapZoomedMuni !== name || !document.getElementById('muni-zoom-map')) return;
+  if (!geojson) { holder.style.display = 'none'; return; }
+  holder.innerHTML = buildMuniDetailSvg(name, geojson);
+  holder.style.display = 'block';
 }
 
 const SUPABASE_URL = "https://sdsdbfjmpjbrcgrbyvkm.supabase.co",
@@ -2068,11 +2130,7 @@ function openMuniModal(e) {
         p = document.getElementById("mm-comer-sg"),
         m = t.comer_sg || [];
     u && p && (m.length ? (u.style.display = "block", p.innerHTML = m.map((e, t) => '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="width:24px;height:24px;border-radius:50%;background:rgba(232,184,32,0.15);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0">🌾</div><p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">' + e + "</p></div>").join("")) : u.style.display = "none"), document.getElementById("mm-btn-mapa").onclick = () => {
-        closeMuniModal(), state.selectedMuni = e, switchScreen("map"), setTimeout(() => {
-            document.querySelectorAll(".muni-path").forEach(e => e.classList.remove("selected")), document.querySelectorAll(".muni-path").forEach(t => {
-                t.getAttribute("data-name") === e && (t.classList.add("selected"), showMuniBar(e))
-            })
-        }, 250)
+        closeMuniModal(), switchScreen("map"), setTimeout(() => selectMuniOnMap(e), 250)
     }, loadMuniGallery(e), loadMuniFriendEvidence(e), loadRecomendaciones(e);
     document.getElementById("muni-modal").style.display = "flex"
 }
