@@ -805,6 +805,7 @@ function deselectMuni() {
 document.addEventListener("click", function(e) {
     if (!document.getElementById("screen-map")?.classList.contains("active")) return;
     const t = e.target;
+    if (!t.isConnected) return; // el clic redibujó algo (p.ej. los filtros de ruta); no es un toque en el fondo
     if (t.closest(".muni-path")) return;           // otro municipio (lo gestiona D3)
     if (t.closest("#muni-bar")) return;            // barra de acción
     if (t.closest(".bsheet")) return;              // hoja de subir evidencia
