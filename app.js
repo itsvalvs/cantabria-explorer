@@ -4205,7 +4205,56 @@ async function bloquearUsuario(uid, uname) {
     }
 }
 
+//nievi
+async function verBloqueados() {
+    if (!state.user) return;
+    let ov = document.getElementById("bloqueados-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "bloqueados-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:360;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:80vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">🚫 Usuarios bloqueados</div><button onclick="document.getElementById(\'bloqueados-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div id="bloqueados-list"><div style="color:rgba(255,255,255,0.4);font-size:13px">Cargando...</div></div></div>';
+    ov.style.display = "flex";
+    try {
+        const { data: bl } = await db.from("blocks").select("blocked_id").eq("blocker_id", state.user.id);
+        const ids = (bl || []).map(b => b.blocked_id);
+        const cont = document.getElementById("bloqueados-list");
+        if (!ids.length) { cont.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:10px 0">No has bloqueado a nadie.</div>'; return; }
+        const { data: profs } = await db.from("profiles").select("id,username,avatar_url").in("id", ids);
+        cont.innerHTML = (profs || []).map(p => {
+            const av = p.avatar_url
+                ? '<img src="' + esc(p.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt=""/>'
+                : getInitials(p.username);
+            return '<div style="display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06)">'
+                + '<div style="width:36px;height:36px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:12px;color:#7ab3e8;flex-shrink:0;overflow:hidden">' + av + '</div>'
+                + '<span style="flex:1;font-size:14px;color:#fff">' + esc(p.username) + '</span>'
+                + '<button data-uid="' + esc(p.id) + '" onclick="desbloquearUsuario(this.dataset.uid, this)" style="padding:7px 14px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.35);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Desbloquear</button>'
+                + '</div>';
+        }).join("");
+    } catch (e) {
+        document.getElementById("bloqueados-list").innerHTML = '<div style="color:#ff6b6b;font-size:12px">Error al cargar</div>';
+    }
+}
 
+async function desbloquearUsuario(uid, btn) {
+    if (!state.user || !uid) return;
+    if (btn) { btn.disabled = !0; btn.textContent = "..."; }
+    try {
+        await db.from("blocks").delete().eq("blocker_id", state.user.id).eq("blocked_id", uid);
+        state.blockedIds?.delete(uid);
+        state.feedCache = null; _friendsCache = null;
+        if (btn) { const row = btn.closest("div"); if (row) row.remove(); }
+        toast("Usuario desbloqueado. Si quieres volver a ser amigos, tendrás que enviarle la solicitud otra vez.", "success");
+    } catch (e) {
+        toast("No se pudo desbloquear: " + (e.message || e), "error");
+        if (btn) { btn.disabled = !1; btn.textContent = "Desbloquear"; }
+    }
+}
 // ═══ FICHA DE EVENTO ════════════════════════════════════════
 
 // — Programa por horas (ev.programa = [{hora, acto}] o JSON string) —
