@@ -4355,6 +4355,18 @@ function _eventDistanceHtml(ev) {
   } catch (_) { return ""; }
 }
 
+// Devuelve los datos del municipio de una fiesta (para su foto de cabecera).
+function _muniDeEvento(ev) {
+    if (!state.municipiosData) return null;
+    const cand = [ev.municipio, ev.lugar];
+    if (ev.lugar) {
+        const m = ev.lugar.match(/\(([^)]+)\)/);      // "Silió (Molledo)" → "Molledo"
+        if (m) cand.push(m[1].trim());
+        cand.push(ev.lugar.replace(/\s*\(.*\)/, "").trim());
+    }
+    for (const c of cand) if (c && state.municipiosData[c]) return state.municipiosData[c];
+    return null;
+}
 
 function openEventModal(eid) {
     const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
@@ -4392,10 +4404,16 @@ function openEventModal(eid) {
           + '<div style="font-size:10px;font-weight:600;color:#e8c93a;margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase">💡 Recomendación</div>'
           + '<div style="font-size:13px;color:rgba(255,255,255,0.7);line-height:1.5">' + esc(ev.recomendacion) + '</div></div>'
         : "";
-    const cartel = ev.imagen_url
-        ? '<div style="width:100%;height:210px;overflow:hidden;position:relative"><img src="' + esc(ev.imagen_url) + '" style="width:100%;height:100%;object-fit:cover;display:block" alt="' + esc(ev.nombre) + '"/><div style="position:absolute;inset:0;background:linear-gradient(to top,#141e2c 5%,transparent 60%)"></div></div>'
-        : '<div style="width:100%;height:110px;background:linear-gradient(135deg,#2a1f3d,#3d1f33);display:flex;align-items:center;justify-content:center;font-size:42px">🎉</div>';
 
+    // Cabecera: foto del MUNICIPIO al que pertenece la fiesta
+    const _muniData = _muniDeEvento(ev);
+    const cartel = _muniData?.imagen_url
+        ? '<div style="width:100%;height:210px;overflow:hidden;position:relative"><img src="' + esc(_muniData.imagen_url) + '" style="width:100%;height:100%;object-fit:cover;display:block" alt="' + esc(ev.lugar || ev.nombre) + '"/><div style="position:absolute;inset:0;background:linear-gradient(to top,#141e2c 5%,transparent 60%)"></div></div>'
+        : '<div style="width:100%;height:110px;background:linear-gradient(135deg,#2a1f3d,#3d1f33);display:flex;align-items:center;justify-content:center;font-size:42px">🎉</div>';
+    // Programación: la foto (ev.imagen_url) si la hay; si no, mensaje de espera
+    const programaFoto = ev.imagen_url
+        ? '<div style="margin-top:16px"><div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:6px;letter-spacing:.05em;text-transform:uppercase">📋 Programación</div><img src="' + esc(ev.imagen_url) + '" style="width:100%;border-radius:12px;display:block;border:1px solid rgba(255,255,255,0.08)" alt="Programación de ' + esc(ev.nombre) + '"/></div>'
+        : '<div style="margin-top:16px;padding:15px 14px;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.16);border-radius:12px;text-align:center;font-size:12px;color:rgba(255,255,255,0.5);line-height:1.5">⏳ Esperando a que nos envíen la programación de las fiestas.</div>';
     ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;position:relative" onclick="event.stopPropagation()">'
         + '<button onclick="closeEventModal()" style="position:absolute;top:12px;right:12px;z-index:2;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:15px;cursor:pointer">✕</button>'
         + cartel
@@ -4406,6 +4424,7 @@ function openEventModal(eid) {
         + contactoHtml + recoHtml
         + recapBanner
         + '<div id="evm-map"></div>'
+        + programaFoto
         + renderProgramaHtml(ev)
         + '<div id="evm-going" style="margin-top:16px"></div>'
         + '<div id="evm-fotos" style="margin-top:14px"></div>'
