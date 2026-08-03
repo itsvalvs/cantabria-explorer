@@ -432,8 +432,11 @@ function closeMuniZoomCard_openFicha() {
 // Los datos vienen precalculados en la tabla muni_mapas (ver
 // fetch_muni_mapas.mjs); aquí solo se leen, se cachean en memoria y se
 // pintan recortados con la silueta real del municipio.
-state.muniMapasCache = state.muniMapasCache || {};
+// (el caché de mapas bonitos por municipio se inicializa de forma
+// perezosa dentro de getMuniMapaData, ver abajo — así no se accede a
+// `state` antes de que exista, ya que `state` se declara más abajo)
 async function getMuniMapaData(name) {
+  if (!state.muniMapasCache) state.muniMapasCache = {};
   if (Object.prototype.hasOwnProperty.call(state.muniMapasCache, name)) return state.muniMapasCache[name];
   try {
     const { data, error } = await db.from('muni_mapas').select('geojson').eq('municipio', name).maybeSingle();
