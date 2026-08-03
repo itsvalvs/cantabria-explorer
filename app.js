@@ -890,7 +890,52 @@ function highlightMuniOnMap(e) {
 function updateProgress() {
     const e = Object.keys(state.visited).length,
         t = state.totalMuni;
-    document.getElementById("pfill").style.width = Math.round(e / t * 100) + "%", document.getElementById("plabel").textContent = e + " municipio" + (1 !== e ? "s" : "") + " conquistado" + (1 !== e ? "s" : ""), document.getElementById("ppct").textContent = e + " / " + t, checkInsignia(e, t)
+    document.getElementById("pfill").style.width = Math.round(e / t * 100) + "%", document.getElementById("plabel").textContent = e + " municipio" + (1 !== e ? "s" : "") + " conquistado" + (1 !== e ? "s" : ""), document.getElementById("ppct").textContent = e + " / " + t, checkInsignia(e, t);
+    // El número de conquistados abre la lista completa
+    ["ppct", "plabel"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.style.cursor = "pointer"; el.onclick = openConquistadosList; }
+    });
+}
+
+// ── Lista de municipios conquistados (modal propio, construido en JS) ──
+function openConquistadosList() {
+    let ov = document.getElementById("conquistados-ov");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "conquistados-ov";
+        ov.style.cssText = "position:fixed;inset:0;z-index:1000;background:rgba(8,12,18,0.72);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center";
+        ov.innerHTML = '<div style="width:100%;max-width:480px;max-height:78vh;background:#141e2c;border-radius:20px 20px 0 0;display:flex;flex-direction:column;box-shadow:0 -10px 30px rgba(0,0,0,0.4)">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0">'
+            + '<span style="font-family:\'Playfair Display\',serif;font-weight:700;font-size:16px;color:#fff">Municipios conquistados</span>'
+            + '<button id="conquistados-close" aria-label="Cerrar" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;color:#fff;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0">✕</button>'
+            + '</div><div id="conquistados-list" style="overflow-y:auto;padding:6px 0"></div></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener("click", e => { if (e.target === ov) closeConquistadosList(); });
+        document.getElementById("conquistados-close").onclick = closeConquistadosList;
+    }
+    const listEl = document.getElementById("conquistados-list");
+    const names = Object.keys(state.visited);
+    if (!names.length) {
+        listEl.innerHTML = '<div style="text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px">Todavía no has conquistado ningún municipio.</div>';
+    } else {
+        const dates = state.visitDates || {};
+        names.sort((a, b) => (dates[b] || "").localeCompare(dates[a] || ""));
+        listEl.innerHTML = names.map(n => {
+            const d = dates[n];
+            const coast = isCoast(n);
+            return '<div onclick="closeConquistadosList();openMuniModal(' + esc(JSON.stringify(n)) + ')" style="display:flex;align-items:center;gap:10px;padding:11px 18px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04)">'
+                + '<span style="font-size:16px;flex-shrink:0">' + (coast ? "🌊" : "⛰️") + '</span>'
+                + '<span style="flex:1;font-size:13.5px;color:rgba(255,255,255,0.9)">' + esc(n) + '</span>'
+                + (d ? '<span style="font-size:11px;color:rgba(255,255,255,0.4);flex-shrink:0">' + esc(d) + '</span>' : "")
+                + '</div>';
+        }).join("");
+    }
+    ov.style.display = "flex";
+}
+function closeConquistadosList() {
+    const ov = document.getElementById("conquistados-ov");
+    if (ov) ov.style.display = "none";
 }
 document.addEventListener("click", function(e) {
     if (!e.target.closest("#map-search-input") && !e.target.closest("#map-search-results")) {
@@ -2745,7 +2790,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         <div class="post-av" style="color:${color};overflow:hidden">${avatarHtml}</div>
         <div>
           <div class="post-user">${userSafe}</div>
-          <div class="post-time">${fecha}</div>
+          <div class="post-time" style="color:rgba(255,255,255,0.45)">${fecha}</div>
         </div>
         ${v.gps_verificada ? '<span title="Visita verificada por GPS" style="font-size:9px;background:rgba(34,176,80,0.15);color:#22b050;border:1px solid rgba(34,176,80,0.35);border-radius:999px;padding:2px 7px;font-weight:600;white-space:nowrap">📍 Verificada</span>' : ""}
         ${v._tipo === "rec"
@@ -2956,30 +3001,39 @@ async function deleteComment(e, t) {
     if (!n || !state.user) return;
     const o = n.value.trim();
     if (o) {
-        n.value = "", n.disabled = !0;
+        const sendBtn = document.querySelector('.comment-send[data-cid="' + e + '"]');
+        n.disabled = !0;
+        let sentOk = !1;
+        if (sendBtn) { sendBtn.disabled = !0; sendBtn._prevHtml = sendBtn.innerHTML; sendBtn.innerHTML = '<div class="spin" style="width:13px;height:13px;border-width:2px;margin:0 auto"></div>'; }
         try {
             const insErr = (await db.from("photo_comments").insert({
                 user_id: state.user.id, photo_id: e, texto: o
             })).error;
             if (insErr) { console.error("Error al comentar:", insErr); toast("No se pudo publicar el comentario.", "error"); }
-            await loadVisitComments(e);
-            const t = (o || "").match(/@(\w+)/g);
-            if (t)
-                for (const e of t) {
-                    const t = e.slice(1),
-                        {
-                            data: i
-                        } = await db.from("profiles").select("id").ilike("username", t).single();
-                    i && i.id !== state.user.id && await db.from("push_subscriptions").select("user_id").eq("user_id", i.id).limit(1).then(async ({
-                        data: e
-                    }) => {
-                        e?.length && console.log("Notificación pendiente para:", t)
-                    })
-                }
+            else {
+                sentOk = !0;
+                n.value = "";
+                await loadVisitComments(e);
+                const t = (o || "").match(/@(\w+)/g);
+                if (t)
+                    for (const e of t) {
+                        const t = e.slice(1),
+                            {
+                                data: i
+                            } = await db.from("profiles").select("id").ilike("username", t).single();
+                        i && i.id !== state.user.id && await db.from("push_subscriptions").select("user_id").eq("user_id", i.id).limit(1).then(async ({
+                            data: e
+                        }) => {
+                            e?.length && console.log("Notificación pendiente para:", t)
+                        })
+                    }
+            }
         } catch (e) {
             toast("Error al comentar: " + e.message, "error")
         } finally {
-            n.disabled = !1
+            n.disabled = !1;
+            if (!sentOk) n.value = o; // no perder lo escrito si algo falló
+            if (sendBtn) { sendBtn.disabled = !1; sendBtn.innerHTML = sendBtn._prevHtml || sendBtn.innerHTML; }
         }
     }
 }
@@ -3286,6 +3340,9 @@ function openPM(e) {
 function openPMobj(e) {
     if (!e) return;
     state.currentPM = e;
+    ensurePMCloseBtn();
+    const closeX = document.getElementById("pm-close-x");
+    if (closeX) closeX.style.display = "flex";
     const t = document.getElementById("pm-img");
     e.src ? (t.src = e.src, t.style.display = "block") : (t.src = "", t.style.display = "none");
     // Cargar la versión a resolución completa (la galería muestra miniatura)
@@ -3407,9 +3464,22 @@ async function changePhotoVis(e, t, i) {
 }
 
 function closePM() {
-    document.getElementById("photo-modal").classList.remove("open")
+    document.getElementById("photo-modal").classList.remove("open");
+    const x = document.getElementById("pm-close-x");
+    if (x) x.style.display = "none";
 }
-async function editPhoto(e) {
+// Botón X fijo para cerrar la tarjeta de foto de la galería (por si el
+// diseño de photo-modal no trae ya uno visible)
+function ensurePMCloseBtn() {
+    if (document.getElementById("pm-close-x")) return;
+    const btn = document.createElement("button");
+    btn.id = "pm-close-x";
+    btn.setAttribute("aria-label", "Cerrar");
+    btn.innerHTML = "✕";
+    btn.style.cssText = "position:fixed;top:16px;right:16px;z-index:2000;width:34px;height:34px;border-radius:50%;background:rgba(10,16,24,0.65);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,0.15);color:#fff;font-size:16px;line-height:1;cursor:pointer;display:none;align-items:center;justify-content:center";
+    btn.onclick = closePM;
+    document.body.appendChild(btn);
+}async function editPhoto(e) {
     const t = state.photos.find(t => t.id === e);
     if (!t) return;
     const i = prompt("Editar descripción:", t.desc || "");
