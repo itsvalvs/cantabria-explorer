@@ -11,7 +11,7 @@
 //  reinstala solo y limpia las cachés antiguas.
 // ═══════════════════════════════════════════════════════════
 
-const VERSION = 'ylp-v21';
+const VERSION = 'ylp-v22';
 
 const PRECACHE = [
   './',
@@ -99,7 +99,10 @@ self.addEventListener('fetch', e => {
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req).then(res => {
-        if (res && res.ok) caches.open(VERSION).then(c => c.put('index.html', res.clone()));
+        if (res && res.ok) {
+          const copy = res.clone(); // clonar YA, antes de que el body se consuma
+          caches.open(VERSION).then(c => c.put('index.html', copy));
+        }
         return res;
       }).catch(() => caches.match('index.html'))
     );
@@ -111,7 +114,10 @@ self.addEventListener('fetch', e => {
   if (url.origin === location.origin) {
     e.respondWith(
       fetch(req).then(res => {
-        if (res && res.ok) caches.open(VERSION).then(c => c.put(strippedKey(req), res.clone()));
+        if (res && res.ok) {
+          const copy = res.clone(); // clonar YA, antes de que el body se consuma
+          caches.open(VERSION).then(c => c.put(strippedKey(req), copy));
+        }
         return res;
       }).catch(() => caches.match(strippedKey(req)))
     );
@@ -126,7 +132,10 @@ self.addEventListener('fetch', e => {
   // Resto (fuentes de Google, iconos...): cache-first oportunista
   e.respondWith(
     caches.match(req).then(c => c || fetch(req).then(res => {
-      if (res && res.ok) caches.open(VERSION).then(cc => cc.put(req, res.clone()));
+      if (res && res.ok) {
+        const copy = res.clone();
+        caches.open(VERSION).then(cc => cc.put(req, copy));
+      }
       return res;
     }).catch(() => c))
   );
