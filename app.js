@@ -107,7 +107,7 @@ async function backfillRutaThumbs(btn) {
         if (!sg?.signedUrl) continue;
         const blob = await (await fetch(sg.signedUrl)).blob();
         const dataUrl = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
-        const td = await dataUrlToThumb(dataUrl, 480, 0.7);
+        const td = await dataUrlToThumb(dataUrl, 960, 0.78);
         if (!td) continue;
         const tb = await (await fetch(td)).blob();
         const tp = p.storage_path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
@@ -278,7 +278,7 @@ async function compressImage(file, maxDim = 1600, quality = 0.82) {
 
 // Genera una miniatura (~480px) a partir de un dataURL ya existente.
 // Se usa para subir un "thumb" ligero que alimenta el feed y la galería.
-async function dataUrlToThumb(dataUrl, maxDim = 480, quality = 0.7) {
+async function dataUrlToThumb(dataUrl, maxDim = 960, quality = 0.78) {
   try {
     const img = await new Promise((res, rej) => {
       const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataUrl;
@@ -1392,7 +1392,7 @@ async function confirmVisit() {
                     state.photos.unshift(stateP);
                     // Miniatura (aditivo: no rompe si falta la columna thumb_path)
                     try {
-                        const td = await dataUrlToThumb(ph.base64, 480, 0.7);
+                        const td = await dataUrlToThumb(ph.base64, 960, 0.78);
                         if (td) {
                             const tb = await (await fetch(td)).blob();
                             const tp = path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
@@ -1825,7 +1825,7 @@ async function confirmRutaPhoto() {
                     // Miniatura ANTES de insertar, para guardar thumb_path (feed ligero)
                     let thumbPath = null;
                     try {
-                        const td = await dataUrlToThumb(ph.base64, 480, 0.7);
+                        const td = await dataUrlToThumb(ph.base64, 960, 0.78);
                         if (td) {
                             const tb = await (await fetch(td)).blob();
                             const tp = path.replace(/\.(jpg|jpeg|png)$/i, "") + "_thumb.jpg";
@@ -5466,7 +5466,8 @@ async function fetchNotifications() {
                 .order("created_at", { ascending: false }).limit(30);
             (cs || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => items.push({
                 ts: +new Date(c.created_at), icon: "💬",
-                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> comentó: " + esc((c.texto || "").slice(0, 50))
+                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> comentó: " + esc((c.texto || "").slice(0, 50)),
+                action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
             }));
         } catch (e) { console.warn("notif comments:", e); }
         // 3) Likes / reacciones en tus fotos
@@ -5483,7 +5484,8 @@ async function fetchNotifications() {
             ls.forEach(l => items.push({
                 ts: +new Date(l.created_at || Date.now()),
                 icon: String(l.photo_id).endsWith("_fire") ? "🔥" : String(l.photo_id).endsWith("_love") ? "😍" : "❤️",
-                text: "<strong>@" + esc(names[l.user_id] || "alguien") + "</strong> reaccionó a tu foto"
+                text: "<strong>@" + esc(names[l.user_id] || "alguien") + "</strong> reaccionó a tu foto",
+                action: "goToFeedPhoto(" + JSON.stringify(String(l.photo_id).replace(/_(fire|love)$/, "")) + ")"
             }));
         } catch (e) { console.warn("notif likes:", e); }
     }
