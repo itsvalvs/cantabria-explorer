@@ -464,9 +464,19 @@ function buildMuniDetailSvg(name, geojson) {
       const w = ['motorway', 'trunk', 'primary'].includes(f.properties.highway) ? 1.3 : 0.65;
       roads += '<path d="' + d + '" fill="none" stroke="#f3ead9" stroke-width="' + w + '" stroke-linecap="round" opacity="0.9"/>';
     } else if (f.properties.layer === 'water') {
-      water += '<path d="' + d + '" fill="#4d87bf" stroke="#3a6fa3" stroke-width="0.4" opacity="0.9"/>';
+      if (f.geometry.type === 'Polygon') {
+        water += '<path d="' + d + '" fill="#4d87bf" stroke="#3a6fa3" stroke-width="0.4" opacity="0.9"/>';
+      } else {
+        // Ríos/arroyos: son líneas, no áreas — nunca rellenar (si no, el
+        // navegador "cierra" el trazo solo y pinta manchas azules falsas)
+        water += '<path d="' + d + '" fill="none" stroke="#4d87bf" stroke-width="1.1" stroke-linecap="round" opacity="0.85"/>';
+      }
     } else if (f.properties.layer === 'green') {
-      green += '<path d="' + d + '" fill="#1d7a4a" opacity="0.35"/>';
+      if (f.geometry.type === 'Polygon') {
+        green += '<path d="' + d + '" fill="#1d7a4a" opacity="0.35"/>';
+      }
+      // (si llegara como línea sin cerrar, se ignora: no hay un "borde de
+      // bosque" fiable que dibujar sin relleno, mejor omitirlo que inventarlo)
     }
   });
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;border-radius:12px;background:#0d1622">'
