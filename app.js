@@ -448,7 +448,11 @@ async function getMuniMapaData(name) {
   }
   return state.muniMapasCache[name];
 }
-function buildMuniDetailSvg(name, geojson) {
+const POI_ICONOS = {
+  museo: '🏛️', mirador: '🌄', monumento: '🏰',
+  cafeteria: '☕', restaurante: '🍽️', bar: '🍷', iglesia: '⛪'
+};
+function buildMuniDetailSvg(name, geojson, recos) {
   const feature = state.muniFeatures && state.muniFeatures[name];
   if (!feature) return '';
   const W = 320, H = 180, pad = 6;
@@ -456,8 +460,17 @@ function buildMuniDetailSvg(name, geojson) {
   const path = d3.geoPath(proj);
   const clipId = 'clip-muni-' + name.replace(/[^a-zA-Z0-9]/g, '');
   const boundaryD = path(feature);
-  let roads = '', water = '', green = '';
+  let roads = '', water = '', green = '', pois = '';
   ((geojson && geojson.features) || []).forEach(f => {
+    if (f.properties.layer === 'poi') {
+      const xy = proj(f.geometry.coordinates);
+      if (!xy) return;
+      const icon = POI_ICONOS[f.properties.categoria] || '📍';
+      pois += '<g transform="translate(' + xy[0] + ',' + xy[1] + ')">'
+        + '<circle r="6.5" fill="rgba(10,16,24,0.72)" stroke="rgba(255,255,255,0.45)" stroke-width="0.6"/>'
+        + '<text text-anchor="middle" dominant-baseline="central" font-size="7.5" y="0.5">' + icon + '</text></g>';
+      return;
+    }
     const d = path(f);
     if (!d) return;
     if (f.properties.layer === 'road') {
@@ -479,25 +492,54 @@ function buildMuniDetailSvg(name, geojson) {
       // bosque" fiable que dibujar sin relleno, mejor omitirlo que inventarlo)
     }
   });
+  // Recomendaciones (tuyas / de amigos, con GPS) — pin dorado destacado,
+  // por encima de todo lo demás para que se note que son "tus sitios"
+  let recosSvg = '';
+  (recos || []).forEach(r => {
+    if (r.lat == null || r.lng == null) return;
+    const xy = proj([r.lng, r.lat]);
+    if (!xy) return;
+    const icon = r.tipo === 'comida' ? '🍽️' : '📍';
+    recosSvg += '<g transform="translate(' + xy[0] + ',' + (xy[1] - 8) + ')">'
+      + '<path d="M0,16 C0,16 -7,7.5 -7,2 A7,7 0 1,1 7,2 C7,7.5 0,16 0,16 Z" fill="#e8c93a" stroke="#0f1923" stroke-width="0.7"/>'
+      + '<circle r="3.3" cy="1" fill="#0f1923"/>'
+      + '<text text-anchor="middle" y="4.5" font-size="6.5">' + icon + '</text></g>';
+  });
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;border-radius:12px;background:#0d1622">'
     + '<defs><clipPath id="' + clipId + '"><path d="' + boundaryD + '"/></clipPath>'
     + '<linearGradient id="grass-' + clipId + '" x1="0" y1="0" x2="0" y2="1">'
     + '<stop offset="0%" stop-color="#3fae6e"/><stop offset="100%" stop-color="#227f4c"/></linearGradient></defs>'
-    + '<g clip-path="url(#' + clipId + ')"><path d="' + boundaryD + '" fill="url(#grass-' + clipId + ')"/>' + green + water + roads + '</g>'
+    + '<g clip-path="url(#' + clipId + ')"><path d="' + boundaryD + '" fill="url(#grass-' + clipId + ')"/>' + green + water + roads + pois + '</g>'
     + '<path d="' + boundaryD + '" fill="none" stroke="#0f1923" stroke-width="1.6"/>'
+    + '<g clip-path="url(#' + clipId + ')">' + recosSvg + '</g>'
     + '<g transform="translate(' + (W - 22) + ',22)" opacity="0.75">'
     + '<circle r="11" fill="rgba(10,16,24,0.5)" stroke="rgba(255,255,255,0.4)" stroke-width="0.6"/>'
     + '<path d="M0,-8 L2.4,0 L0,8 L-2.4,0 Z" fill="#e8c93a"/>'
     + '<text y="-13" text-anchor="middle" font-size="6" fill="#fff" font-family="Inter,sans-serif">N</text></g></svg>';
 }
+async function getRecosConGps(name) {
+  if (!state.user) return [];
+  try {
+    const { data: fs } = await db.from("friendships").select("follower_id, following_id")
+      .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado");
+    const fids = (fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id);
+    const ids = [...new Set([...fids, state.user.id])];
+    const { data } = await db.from("recomendaciones").select("nombre,tipo,lat,lng")
+      .eq("municipio", name).in("user_id", ids).not("lat", "is", null).not("lng", "is", null);
+    return data || [];
+  } catch (e) {
+    console.warn("getRecosConGps:", e);
+    return [];
+  }
+}
 async function renderMuniZoomMapPreview(name) {
   const holder = document.getElementById('muni-zoom-map');
   if (!holder) return;
-  const geojson = await getMuniMapaData(name);
+  const [geojson, recos] = await Promise.all([getMuniMapaData(name), getRecosConGps(name)]);
   // Si mientras cargaba el usuario cambió de municipio o cerró la tarjeta, no pintar
   if (state.mapZoomedMuni !== name || !document.getElementById('muni-zoom-map')) return;
-  if (!geojson) { holder.style.display = 'none'; return; }
-  holder.innerHTML = buildMuniDetailSvg(name, geojson);
+  if (!geojson && !recos.length) { holder.style.display = 'none'; return; }
+  holder.innerHTML = buildMuniDetailSvg(name, geojson, recos);
   holder.style.display = 'block';
 }
 
@@ -4142,6 +4184,18 @@ async function guardarRecomendacion() {
             const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: recFotoMime });
             if (!upErr) fotoPath = path;
         }
+        // Ubicación GPS (si el usuario la tiene activada) para poder pintar
+        // este sitio como un pin destacado en el mapa. No bloquea el
+        // guardado si falla o no da tiempo: simplemente se queda sin pin.
+        let recLat = null, recLng = null;
+        if (navigator.geolocation) {
+            try {
+                const pos = await new Promise((resolve, reject) =>
+                    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: !0, timeout: 4000, maximumAge: 120000 })
+                );
+                recLat = pos.coords.latitude; recLng = pos.coords.longitude;
+            } catch (e) { /* sin GPS: la recomendación se guarda igual, solo sin pin */ }
+        }
         const { error } = await db.from("recomendaciones").insert({
             user_id: state.user.id,
             municipio: recMuni,
@@ -4149,7 +4203,9 @@ async function guardarRecomendacion() {
             tipo: recTipo,
             comentario: coment || null,
             link: link || null,
-            foto_path: fotoPath
+            foto_path: fotoPath,
+            lat: recLat,
+            lng: recLng
         });
         if (error) throw error;
         closeRecModal();
