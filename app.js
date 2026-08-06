@@ -379,6 +379,12 @@ function unzoomMuni() {
   resetMapZoom();
   hideMuniZoomCard();
 }
+// ⛔ Mini-mapa del municipio: DESACTIVADO temporalmente.
+//    Para volver a activarlo, pon esta constante a true. No hay nada más que tocar:
+//    el código del mini-mapa (getMuniMapaData / buildMuniDetailSvg / renderMuniZoomMapPreview)
+//    sigue intacto más abajo.
+const MUNI_MINIMAPA_ACTIVO = false;
+
 // Tarjeta flotante con la ficha rápida del municipio agrandado
 function showMuniZoomCard(name) {
   const mc = document.getElementById('map-cont');
@@ -402,7 +408,7 @@ function showMuniZoomCard(name) {
   if (t.area_km2) pills.push(t.area_km2 + ' km²');
   card.innerHTML =
     '<div style="flex:1;min-width:0">'
-      //+ '<div id="muni-zoom-map" style="display:none;margin-bottom:10px"></div>'
+      + (MUNI_MINIMAPA_ACTIVO ? '<div id="muni-zoom-map" style="display:none;margin-bottom:10px"></div>' : '')
       + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
         + '<span style="font-family:\'Playfair Display\',serif;font-weight:700;font-size:16px;color:#fff">' + esc(name) + '</span>'
         + '<span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:' + (i ? 'rgba(56,138,221,0.25);color:#85B7EB' : 'rgba(29,158,117,0.25);color:#5DCAA5') + '">' + (i ? '🌊 Costa' : '⛰️ Montaña') + '</span>'
@@ -415,7 +421,7 @@ function showMuniZoomCard(name) {
     + '</div>'
     + '<button onclick="unzoomMuni()" aria-label="Desagrandar municipio" style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;color:#fff;cursor:pointer;font-size:15px;line-height:1">✕</button>';
   requestAnimationFrame(() => { card.style.opacity = '1'; card.style.transform = 'translateY(0)'; });
-  //renderMuniZoomMapPreview(name);
+  if (MUNI_MINIMAPA_ACTIVO) renderMuniZoomMapPreview(name);
 }
 function hideMuniZoomCard() {
   const card = document.getElementById('muni-zoom-card');
@@ -533,6 +539,7 @@ async function getRecosConGps(name) {
   }
 }
 async function renderMuniZoomMapPreview(name) {
+  if (!MUNI_MINIMAPA_ACTIVO) return;   // ⛔ desactivado: ni pinta ni consulta muni_mapas
   const holder = document.getElementById('muni-zoom-map');
   if (!holder) return;
   const [geojson, recos] = await Promise.all([getMuniMapaData(name), getRecosConGps(name)]);
@@ -2860,8 +2867,8 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         <div class="post-location" style="z-index:2"><i class="ti ti-map-pin" aria-hidden="true"></i>${muniSafe}</div>
       </div>` : `<div class="post-img-multi" style="position:relative;width:100%;background:${coast ? "#0d2535" : "#0d2a1e"}">
         <div class="post-carousel" data-n="${carruselFotos.length}" style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch;min-height:200px">
-      ${carruselFotos.map(f => `<div class="cslide" style="flex:0 0 100%;width:100%;max-width:100%;min-width:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden">
-          <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;max-width:100%;height:auto;display:block;object-fit:contain" alt="${muniSafe}" onerror="this.style.display='none'"/>
+          ${carruselFotos.map(f => `<div class="cslide" style="flex:0 0 100%;width:100%;max-width:100%;min-width:0;scroll-snap-align:center;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden">
+            <img src="" data-foto-id="${esc(f.id)}" loading="lazy" decoding="async" style="width:100%;max-width:100%;height:auto;display:block;object-fit:contain" alt="${muniSafe}" onerror="this.style.display='none'"/>
             <div class="post-img-placeholder" style="position:absolute;display:flex;flex-direction:column;align-items:center;gap:8px;color:rgba(255,255,255,0.2)"><div class="spin" style="width:20px;height:20px;border-width:2px"></div></div>
           </div>`).join("")}
         </div>
