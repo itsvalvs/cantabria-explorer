@@ -3871,6 +3871,16 @@ async function registerPushNotifications() {
     try {
         const reg = await navigator.serviceWorker.ready;
         let sub = await reg.pushManager.getSubscription();
+        // Si la suscripción existente se creó con OTRA clave VAPID, hay que rehacerla:
+        // si no, el navegador reutiliza la vieja para siempre y el envío falla.
+        if (sub) {
+            try {
+                const actual = new Uint8Array(sub.options?.applicationServerKey || []);
+                const nueva = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+                const igual = actual.length === nueva.length && actual.every((v, i) => v === nueva[i]);
+                if (!igual) { await sub.unsubscribe(); sub = null; }
+            } catch (_) { try { await sub.unsubscribe(); } catch (__) {} sub = null; }
+        }
         if (!sub) {
             sub = await reg.pushManager.subscribe({
                 userVisibleOnly: !0,
