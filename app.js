@@ -5663,44 +5663,67 @@ function timeAgo(ts) {
 async function fetchNotifications() {
     if (!state.user) return [];
     const items = [];
-    // 1) Solicitudes de amistad pendientes (siempre "no leídas" hasta aceptarlas)
+    const yo = state.user.id;
+    const miNick = (state.profile?.username || "").trim();
+    const add = (o) => items.push(o);
+
+    // 1) Solicitudes de amistad pendientes
     try {
         const { data: reqs } = await db.from("friendships")
             .select("follower_id, profiles:profiles!friendships_follower_id_fkey(username,avatar_url)")
-            .eq("following_id", state.user.id).eq("estado", "pendiente");
-        (reqs || []).filter(r => !state.blockedIds?.has(r.follower_id)).forEach(r => items.push({
-            ts: Date.now(), always: true, icon: "👋",
+            .eq("following_id", yo).eq("estado", "pendiente");
+        (reqs || []).filter(r => !state.blockedIds?.has(r.follower_id)).forEach(r => add({
+            key: "req:" + r.follower_id, ts: Date.now(), always: true, icon: "👋",
             text: "<strong>@" + esc(r.profiles?.username || "alguien") + "</strong> quiere ser tu amigo",
             action: "switchScreen('profile')"
         }));
     } catch (e) { console.warn("notif reqs:", e); }
 
+    // 2) Menciones @tu_usuario (van antes para tener prioridad sobre el comentario suelto)
+    if (miNick) {
+        try {
+            const { data: ms } = await db.from("photo_comments")
+                .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
+                .ilike("texto", "%@" + miNick + "%").neq("user_id", yo)
+                .order("created_at", { ascending: false }).limit(20);
+            (ms || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => add({
+                key: "cm:" + c.photo_id + ":" + c.created_at + ":" + c.user_id,
+                ts: +new Date(c.created_at), icon: "📣",
+                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> te mencionó: " + esc((c.texto || "").slice(0, 45)),
+                action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
+            }));
+        } catch (e) { console.warn("notif menciones:", e); }
+    }
+
     const myIds = state.photos.map(p => p.id).filter(Boolean).slice(0, 200);
     if (myIds.length) {
-        // 2) Comentarios en tus fotos
+        // 3) Comentarios en tus fotos
         try {
             const { data: cs } = await db.from("photo_comments")
                 .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
-                .in("photo_id", myIds).neq("user_id", state.user.id)
+                .in("photo_id", myIds).neq("user_id", yo)
                 .order("created_at", { ascending: false }).limit(30);
-            (cs || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => items.push({
+            (cs || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => add({
+                key: "cm:" + c.photo_id + ":" + c.created_at + ":" + c.user_id,
                 ts: +new Date(c.created_at), icon: "💬",
                 text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> comentó: " + esc((c.texto || "").slice(0, 50)),
                 action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
             }));
         } catch (e) { console.warn("notif comments:", e); }
-        // 3) Likes / reacciones en tus fotos
+
+        // 4) Likes / reacciones en tus fotos
         try {
             const likeIds = myIds.flatMap(id => [id, id + "_fire", id + "_love"]);
             let r = await db.from("photo_likes").select("user_id,photo_id,created_at")
-                .in("photo_id", likeIds).neq("user_id", state.user.id)
+                .in("photo_id", likeIds).neq("user_id", yo)
                 .order("created_at", { ascending: false }).limit(40);
-            if (r.error) r = await db.from("photo_likes").select("user_id,photo_id").in("photo_id", likeIds).neq("user_id", state.user.id).limit(40);
+            if (r.error) r = await db.from("photo_likes").select("user_id,photo_id").in("photo_id", likeIds).neq("user_id", yo).limit(40);
             const ls = (r.data || []).filter(l => !state.blockedIds?.has(l.user_id));
             const likers = [...new Set(ls.map(l => l.user_id))];
             const names = {};
             if (likers.length) { const { data: ps } = await db.from("profiles").select("id,username").in("id", likers); (ps || []).forEach(p => names[p.id] = p.username); }
-            ls.forEach(l => items.push({
+            ls.forEach(l => add({
+                key: "lk:" + l.photo_id + ":" + l.user_id,
                 ts: +new Date(l.created_at || Date.now()),
                 icon: String(l.photo_id).endsWith("_fire") ? "🔥" : String(l.photo_id).endsWith("_love") ? "😍" : "❤️",
                 text: "<strong>@" + esc(names[l.user_id] || "alguien") + "</strong> reaccionó a tu foto",
@@ -5708,8 +5731,31 @@ async function fetchNotifications() {
             }));
         } catch (e) { console.warn("notif likes:", e); }
     }
-    items.sort((a, b) => b.ts - a.ts);
-    return items.slice(0, 40);
+
+    // 5) Respuestas en publicaciones donde tú también has comentado
+    try {
+        const { data: mios } = await db.from("photo_comments").select("photo_id")
+            .eq("user_id", yo).order("created_at", { ascending: false }).limit(50);
+        const hilos = [...new Set((mios || []).map(c => String(c.photo_id)))].filter(id => !myIds.includes(id));
+        if (hilos.length) {
+            const { data: cs2 } = await db.from("photo_comments")
+                .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
+                .in("photo_id", hilos).neq("user_id", yo)
+                .order("created_at", { ascending: false }).limit(30);
+            (cs2 || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => add({
+                key: "cm:" + c.photo_id + ":" + c.created_at + ":" + c.user_id,
+                ts: +new Date(c.created_at), icon: "💭",
+                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> también comentó: " + esc((c.texto || "").slice(0, 45)),
+                action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
+            }));
+        }
+    } catch (e) { console.warn("notif hilos:", e); }
+
+    // Sin duplicados (una mención en tu propia foto saldría dos veces)
+    const vistos = new Set();
+    const unicos = items.filter(i => { if (vistos.has(i.key)) return false; vistos.add(i.key); return true; });
+    unicos.sort((a, b) => b.ts - a.ts);
+    return unicos.slice(0, 40);
 }
 
 async function loadNotifBadge() {
@@ -5717,12 +5763,33 @@ async function loadNotifBadge() {
         const items = await fetchNotifications();
         state._notifs = items;
         const lastSeen = _notifLastSeen();
-        const unread = items.filter(i => i.always || i.ts > lastSeen).length;
+        const unread = items.filter(i => i.ts > lastSeen).length;
         document.querySelectorAll(".notif-badge").forEach(b => {
             if (unread > 0) { b.textContent = unread > 9 ? "9+" : unread; b.style.display = "flex"; }
             else b.style.display = "none";
         });
     } catch (e) { console.warn("loadNotifBadge:", e); }
+}
+
+function renderNotifList() {
+    const list = document.getElementById("notif-list");
+    if (!list) return;
+    const items = state._notifs || [];
+    const lastSeen = _notifLastSeen();
+    if (!items.length) {
+        list.innerHTML = '<div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.3);font-size:13px"><i class="ti ti-bell-off" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>No tienes notificaciones todavía</div>';
+        return;
+    }
+    list.innerHTML = items.map(i => {
+        const unread = i.ts > lastSeen;
+        return '<div ' + (i.action ? 'onclick="closeNotifs();' + i.action + '" style="cursor:pointer;' : 'style="')
+            + 'display:flex;gap:11px;align-items:flex-start;padding:11px 18px;' + (unread ? 'background:rgba(34,114,232,0.06);' : '') + 'border-bottom:1px solid rgba(255,255,255,0.04)">'
+            + '<span style="font-size:18px;flex-shrink:0;line-height:1.3">' + i.icon + '</span>'
+            + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.45">' + i.text
+            + '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px">' + timeAgo(i.ts) + '</div></div>'
+            + (unread ? '<span style="width:7px;height:7px;border-radius:50%;background:#2272e8;flex-shrink:0;margin-top:5px"></span>' : '')
+            + '</div>';
+    }).join("");
 }
 
 async function openNotifs() {
@@ -5731,24 +5798,22 @@ async function openNotifs() {
     if (!ov || !list) return;
     ov.style.display = "flex";
     list.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 10px"></div>Cargando...</div>';
-    const items = state._notifs || await fetchNotifications();
-    state._notifs = items;
-    const lastSeen = _notifLastSeen();
-    if (!items.length) {
-        list.innerHTML = '<div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.3);font-size:13px"><i class="ti ti-bell-off" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>No tienes notificaciones todavía</div>';
-    } else {
-        list.innerHTML = items.map(i => {
-            const unread = i.always || i.ts > lastSeen;
-            return '<div ' + (i.action ? 'onclick="closeNotifs();' + i.action + '" style="cursor:pointer;' : 'style="')
-                + 'display:flex;gap:11px;align-items:flex-start;padding:11px 18px;' + (unread ? 'background:rgba(34,114,232,0.06);' : '') + 'border-bottom:1px solid rgba(255,255,255,0.04)">'
-                + '<span style="font-size:18px;flex-shrink:0;line-height:1.3">' + i.icon + '</span>'
-                + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.45">' + i.text
-                + '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px">' + timeAgo(i.ts) + '</div></div>'
-                + (unread ? '<span style="width:7px;height:7px;border-radius:50%;background:#2272e8;flex-shrink:0;margin-top:5px"></span>' : '')
-                + '</div>';
-        }).join("");
-    }
-    markNotifsRead();
+    state._notifs = await fetchNotifications();
+    renderNotifList();   // se pintan con el estado real de leído/no leído
+}
+
+function closeNotifs() {
+    const ov = document.getElementById("notif-ov");
+    if (ov) ov.style.display = "none";
+    markNotifsRead();   // al cerrar, se dan por vistas
+}
+
+function markNotifsRead(repintar) {
+    try { localStorage.setItem(_notifSeenKey(), String(Date.now())); } catch (_) {}
+    loadNotifBadge();
+    if (repintar) renderNotifList();
+}
+
 }
 function closeNotifs() { const ov = document.getElementById("notif-ov"); if (ov) ov.style.display = "none"; }
 function markNotifsRead() {
