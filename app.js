@@ -5229,7 +5229,11 @@ function openRutaModal(idx) {
   const inWish = state.rutaWishlist?.has(r.nombre);
   ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;position:relative" onclick="event.stopPropagation()">'
     + '<button onclick="document.getElementById(\'ruta-modal\').style.display=\'none\'" style="position:absolute;top:12px;right:12px;z-index:2;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:15px;cursor:pointer">✕</button>'
-    + '<div style="width:100%;height:96px;background:linear-gradient(135deg,#13361f,#1f4d34);display:flex;align-items:center;justify-content:center;font-size:40px">🥾</div>'
+    + (state.municipiosData?.[r.muni]?.imagen_url
+        ? '<div style="width:100%;height:150px;background-image:linear-gradient(to top,rgba(20,30,44,0.92),rgba(20,30,44,0.05)),url(' + esc(state.municipiosData[r.muni].imagen_url) + ');background-size:cover;background-position:center;display:flex;align-items:flex-end;padding:12px 16px">'
+            + '<span style="font-size:11.5px;font-weight:600;color:#fff;background:rgba(0,0,0,0.5);padding:4px 11px;border-radius:999px;backdrop-filter:blur(4px)">📍 ' + esc(r.muni) + '</span>'
+          + '</div>'
+        : '<div style="width:100%;height:96px;background:linear-gradient(135deg,#13361f,#1f4d34);display:flex;align-items:center;justify-content:center;font-size:40px">🥾</div>')
     + '<div style="padding:16px 18px 26px">'
     + '<div style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:#fff;line-height:1.2">' + esc(r.nombre) + '</div>'
     + '<div style="margin-top:5px;font-size:13px;color:rgba(255,255,255,0.55)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
