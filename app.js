@@ -3861,7 +3861,7 @@ document.getElementById("av-in").addEventListener("change", async function(e) {
         console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, toast("No se pudo subir el avatar. Inténtalo de nuevo.", "error")
     }
 }), init();
-const VAPID_PUBLIC_KEY = "BHd_AlIhjmYZEPc6QKPMas09kOzwvd50A4Vsb2O58Ilh40HLvSLVb9zbB9H6AMgPs9wLsRn0ovnyZP3DuUKOjQ4";
+const VAPID_PUBLIC_KEY = "BIeBLHW1SBvzcH4LO6B7Ode2x66CuXUa8bjY_BCXbO6oYGA2p1hcstmOao4gtW3Kc01Y6BEpInA6EOq1lKlA4Y4";
 // La clave pública VAPID real se asigna a la constante existente abajo
 async function registerPushNotifications() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
