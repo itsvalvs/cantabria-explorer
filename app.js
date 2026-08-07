@@ -1804,14 +1804,14 @@ function renderEventos() {
     const cont = document.getElementById("eventos-list");
     if (!festObjs.length) { cont.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:13px">No hay eventos en este filtro.</div>'; return; }
     const adminBanner = isAdmin()
-        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
+        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button><button onclick="openReportsReview()" style="padding:7px 13px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">🚩 Reportes<span id="rep-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#e82828;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
         : "";
     cont.innerHTML = adminBanner + perOrder.map(per => {
         const header = '<div style="padding:14px 4px 8px;font-size:12px;font-weight:700;color:#f08fc4;letter-spacing:.05em;text-transform:uppercase">📅 ' + esc(per) + '</div>';
         const cards = periodos[per].map(f => f.rows.length === 1 ? _evSingleCard(f.rows[0]) : _evFestivalCard(f)).join("");
         return header + cards;
     }).join("");
-    if (isAdmin()) loadPendingSuggestionsBadge();
+    if (isAdmin()) { loadPendingSuggestionsBadge(); loadPendingReportsBadge(); }
     list.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); });
 }
 async function loadEventPhotos(eventId, targetId) {
@@ -4833,8 +4833,70 @@ function renderFestMiniMap(ev) {
     } catch (e) { cont.innerHTML = ""; }
 }
 
-// — Moderación de sugerencias (solo el admin: Itsvalvs) —
-function isAdmin() { return (state.profile?.username || "").toLowerCase() === "itsvalvs"; }
+function isAdmin() { return state.profile?.rol === "admin" || (state.profile?.username || "").toLowerCase() === "itsvalvs"; }
+
+// — Panel de reportes recibidos (solo admin) —
+async function openReportsReview() {
+    if (!isAdmin()) return;
+    let ov = document.getElementById("reprev-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "reprev-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:345;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">🚩 Reportes recibidos</div><button onclick="document.getElementById(\'reprev-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div id="reprev-list"><div style="color:rgba(255,255,255,0.4);font-size:13px">Cargando...</div></div></div>';
+    ov.style.display = "flex";
+    try {
+        const { data, error } = await db.from("reports").select("*").eq("estado", "pendiente").order("created_at", { ascending: !1 });
+        if (error) throw error;
+        const uids = [...new Set([].concat(...(data || []).map(r => [r.reporter_id, r.reported_user_id])).filter(Boolean))];
+        let nameById = {};
+        if (uids.length) {
+            const { data: profs } = await db.from("profiles").select("id,username").in("id", uids);
+            (profs || []).forEach(p => { nameById[p.id] = p.username; });
+        }
+        document.getElementById("reprev-list").innerHTML = (!data || !data.length)
+            ? '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:6px 0">Sin reportes pendientes 🎉</div>'
+            : data.map(r => {
+                const quien = nameById[r.reporter_id] ? "@" + esc(nameById[r.reporter_id]) : "alguien";
+                const contra = nameById[r.reported_user_id] ? "@" + esc(nameById[r.reported_user_id]) : "—";
+                const f = r.created_at ? new Date(r.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+                return '<div style="padding:13px;border:1px solid rgba(255,255,255,0.1);border-radius:14px;margin-bottom:10px">'
+                    + '<div style="font-size:13px;color:#ff9b9b;font-weight:700">🚩 ' + esc(r.content_type || "contenido") + ' · contra ' + contra + '</div>'
+                    + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:3px">Reportado por ' + quien + ' · ' + f + '</div>'
+                    + '<div style="font-size:12.5px;color:rgba(255,255,255,0.75);margin-top:7px;line-height:1.45">' + esc(r.motivo || "") + '</div>'
+                    + (r.content_id ? '<div style="font-size:10.5px;color:rgba(255,255,255,0.3);margin-top:5px;word-break:break-all">id: ' + esc(r.content_id) + '</div>' : '')
+                    + '<div style="display:flex;gap:7px;margin-top:10px">'
+                    + '<button data-rid="' + esc(r.id) + '" onclick="resolverReporte(this.dataset.rid,\'revisado\')" style="flex:1;padding:8px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.35);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✓ Revisado</button>'
+                    + '<button data-rid="' + esc(r.id) + '" onclick="resolverReporte(this.dataset.rid,\'descartado\')" style="flex:1;padding:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Descartar</button>'
+                    + '</div></div>';
+            }).join("");
+    } catch (e) {
+        const l = document.getElementById("reprev-list");
+        if (l) l.innerHTML = '<div style="color:#ff6b6b;font-size:13px">Error: ' + esc(e.message || e) + '</div>';
+    }
+}
+
+async function resolverReporte(id, estado) {
+    if (!isAdmin()) return;
+    try {
+        await db.from("reports").update({ estado }).eq("id", id);
+        openReportsReview(); loadPendingReportsBadge();
+    } catch (e) { toast("No se pudo actualizar", "error"); }
+}
+
+async function loadPendingReportsBadge() {
+    if (!isAdmin()) return;
+    try {
+        const { count } = await db.from("reports").select("id", { count: "exact", head: !0 }).eq("estado", "pendiente");
+        const b = document.getElementById("rep-pend-badge");
+        if (b) { b.textContent = count || 0; b.style.display = count ? "inline-block" : "none"; }
+    } catch (_) {}
+}
 
 async function openSuggestionsReview() {
     if (!isAdmin()) return;
