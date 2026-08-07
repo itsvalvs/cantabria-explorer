@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js)
+//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js) prueba
 // ═══════════════════════════════════════════════════════════
 function esc(s) {
   return String(s ?? '')
@@ -1804,14 +1804,14 @@ function renderEventos() {
     const cont = document.getElementById("eventos-list");
     if (!festObjs.length) { cont.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:13px">No hay eventos en este filtro.</div>'; return; }
     const adminBanner = isAdmin()
-        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
+        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button><button onclick="openReportsReview()" style="padding:7px 13px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">🚩 Reportes<span id="rep-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#e82828;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
         : "";
     cont.innerHTML = adminBanner + perOrder.map(per => {
         const header = '<div style="padding:14px 4px 8px;font-size:12px;font-weight:700;color:#f08fc4;letter-spacing:.05em;text-transform:uppercase">📅 ' + esc(per) + '</div>';
         const cards = periodos[per].map(f => f.rows.length === 1 ? _evSingleCard(f.rows[0]) : _evFestivalCard(f)).join("");
         return header + cards;
     }).join("");
-    if (isAdmin()) loadPendingSuggestionsBadge();
+    if (isAdmin()) { loadPendingSuggestionsBadge(); loadPendingReportsBadge(); }
     list.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); });
 }
 async function loadEventPhotos(eventId, targetId) {
@@ -3861,7 +3861,7 @@ document.getElementById("av-in").addEventListener("change", async function(e) {
         console.error("Avatar error:", e), i.innerHTML = `<span id="av-init">${n}</span><div class="av-edit"><i class="ti ti-pencil" aria-hidden="true"></i></div>`, toast("No se pudo subir el avatar. Inténtalo de nuevo.", "error")
     }
 }), init();
-const VAPID_PUBLIC_KEY = "BHd_AlIhjmYZEPc6QKPMas09kOzwvd50A4Vsb2O58Ilh40HLvSLVb9zbB9H6AMgPs9wLsRn0ovnyZP3DuUKOjQ4";
+const VAPID_PUBLIC_KEY = "BIeBLHW1SBvzcH4LO6B7Ode2x66CuXUa8bjY_BCXbO6oYGA2p1hcstmOao4gtW3Kc01Y6BEpInA6EOq1lKlA4Y4";
 // La clave pública VAPID real se asigna a la constante existente abajo
 async function registerPushNotifications() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -3871,6 +3871,16 @@ async function registerPushNotifications() {
     try {
         const reg = await navigator.serviceWorker.ready;
         let sub = await reg.pushManager.getSubscription();
+        // Si la suscripción existente se creó con OTRA clave VAPID, hay que rehacerla:
+        // si no, el navegador reutiliza la vieja para siempre y el envío falla.
+        if (sub) {
+            try {
+                const actual = new Uint8Array(sub.options?.applicationServerKey || []);
+                const nueva = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+                const igual = actual.length === nueva.length && actual.every((v, i) => v === nueva[i]);
+                if (!igual) { await sub.unsubscribe(); sub = null; }
+            } catch (_) { try { await sub.unsubscribe(); } catch (__) {} sub = null; }
+        }
         if (!sub) {
             sub = await reg.pushManager.subscribe({
                 userVisibleOnly: !0,
@@ -4833,8 +4843,70 @@ function renderFestMiniMap(ev) {
     } catch (e) { cont.innerHTML = ""; }
 }
 
-// — Moderación de sugerencias (solo el admin: Itsvalvs) —
-function isAdmin() { return (state.profile?.username || "").toLowerCase() === "itsvalvs"; }
+function isAdmin() { return state.profile?.rol === "admin" || (state.profile?.username || "").toLowerCase() === "itsvalvs"; }
+
+// — Panel de reportes recibidos (solo admin) —
+async function openReportsReview() {
+    if (!isAdmin()) return;
+    let ov = document.getElementById("reprev-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "reprev-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:345;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">🚩 Reportes recibidos</div><button onclick="document.getElementById(\'reprev-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div id="reprev-list"><div style="color:rgba(255,255,255,0.4);font-size:13px">Cargando...</div></div></div>';
+    ov.style.display = "flex";
+    try {
+        const { data, error } = await db.from("reports").select("*").eq("estado", "pendiente").order("created_at", { ascending: !1 });
+        if (error) throw error;
+        const uids = [...new Set([].concat(...(data || []).map(r => [r.reporter_id, r.reported_user_id])).filter(Boolean))];
+        let nameById = {};
+        if (uids.length) {
+            const { data: profs } = await db.from("profiles").select("id,username").in("id", uids);
+            (profs || []).forEach(p => { nameById[p.id] = p.username; });
+        }
+        document.getElementById("reprev-list").innerHTML = (!data || !data.length)
+            ? '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:6px 0">Sin reportes pendientes 🎉</div>'
+            : data.map(r => {
+                const quien = nameById[r.reporter_id] ? "@" + esc(nameById[r.reporter_id]) : "alguien";
+                const contra = nameById[r.reported_user_id] ? "@" + esc(nameById[r.reported_user_id]) : "—";
+                const f = r.created_at ? new Date(r.created_at).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+                return '<div style="padding:13px;border:1px solid rgba(255,255,255,0.1);border-radius:14px;margin-bottom:10px">'
+                    + '<div style="font-size:13px;color:#ff9b9b;font-weight:700">🚩 ' + esc(r.content_type || "contenido") + ' · contra ' + contra + '</div>'
+                    + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:3px">Reportado por ' + quien + ' · ' + f + '</div>'
+                    + '<div style="font-size:12.5px;color:rgba(255,255,255,0.75);margin-top:7px;line-height:1.45">' + esc(r.motivo || "") + '</div>'
+                    + (r.content_id ? '<div style="font-size:10.5px;color:rgba(255,255,255,0.3);margin-top:5px;word-break:break-all">id: ' + esc(r.content_id) + '</div>' : '')
+                    + '<div style="display:flex;gap:7px;margin-top:10px">'
+                    + '<button data-rid="' + esc(r.id) + '" onclick="resolverReporte(this.dataset.rid,\'revisado\')" style="flex:1;padding:8px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.35);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✓ Revisado</button>'
+                    + '<button data-rid="' + esc(r.id) + '" onclick="resolverReporte(this.dataset.rid,\'descartado\')" style="flex:1;padding:8px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Descartar</button>'
+                    + '</div></div>';
+            }).join("");
+    } catch (e) {
+        const l = document.getElementById("reprev-list");
+        if (l) l.innerHTML = '<div style="color:#ff6b6b;font-size:13px">Error: ' + esc(e.message || e) + '</div>';
+    }
+}
+
+async function resolverReporte(id, estado) {
+    if (!isAdmin()) return;
+    try {
+        await db.from("reports").update({ estado }).eq("id", id);
+        openReportsReview(); loadPendingReportsBadge();
+    } catch (e) { toast("No se pudo actualizar", "error"); }
+}
+
+async function loadPendingReportsBadge() {
+    if (!isAdmin()) return;
+    try {
+        const { count } = await db.from("reports").select("id", { count: "exact", head: !0 }).eq("estado", "pendiente");
+        const b = document.getElementById("rep-pend-badge");
+        if (b) { b.textContent = count || 0; b.style.display = count ? "inline-block" : "none"; }
+    } catch (_) {}
+}
 
 async function openSuggestionsReview() {
     if (!isAdmin()) return;
@@ -5229,7 +5301,11 @@ function openRutaModal(idx) {
   const inWish = state.rutaWishlist?.has(r.nombre);
   ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;position:relative" onclick="event.stopPropagation()">'
     + '<button onclick="document.getElementById(\'ruta-modal\').style.display=\'none\'" style="position:absolute;top:12px;right:12px;z-index:2;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:15px;cursor:pointer">✕</button>'
-    + '<div style="width:100%;height:96px;background:linear-gradient(135deg,#13361f,#1f4d34);display:flex;align-items:center;justify-content:center;font-size:40px">🥾</div>'
+    + (state.municipiosData?.[r.muni]?.imagen_url
+        ? '<div style="width:100%;height:150px;background-image:linear-gradient(to top,rgba(20,30,44,0.92),rgba(20,30,44,0.05)),url(' + esc(state.municipiosData[r.muni].imagen_url) + ');background-size:cover;background-position:center;display:flex;align-items:flex-end;padding:12px 16px">'
+            + '<span style="font-size:11.5px;font-weight:600;color:#fff;background:rgba(0,0,0,0.5);padding:4px 11px;border-radius:999px;backdrop-filter:blur(4px)">📍 ' + esc(r.muni) + '</span>'
+          + '</div>'
+        : '<div style="width:100%;height:96px;background:linear-gradient(135deg,#13361f,#1f4d34);display:flex;align-items:center;justify-content:center;font-size:40px">🥾</div>')
     + '<div style="padding:16px 18px 26px">'
     + '<div style="font-family:\'Playfair Display\',serif;font-size:22px;font-weight:700;color:#fff;line-height:1.2">' + esc(r.nombre) + '</div>'
     + '<div style="margin-top:5px;font-size:13px;color:rgba(255,255,255,0.55)">📏 ' + r.km + ' km · 📍 ' + esc(r.muni) + '</div>'
@@ -5587,44 +5663,67 @@ function timeAgo(ts) {
 async function fetchNotifications() {
     if (!state.user) return [];
     const items = [];
-    // 1) Solicitudes de amistad pendientes (siempre "no leídas" hasta aceptarlas)
+    const yo = state.user.id;
+    const miNick = (state.profile?.username || "").trim();
+    const add = (o) => items.push(o);
+
+    // 1) Solicitudes de amistad pendientes
     try {
         const { data: reqs } = await db.from("friendships")
             .select("follower_id, profiles:profiles!friendships_follower_id_fkey(username,avatar_url)")
-            .eq("following_id", state.user.id).eq("estado", "pendiente");
-        (reqs || []).filter(r => !state.blockedIds?.has(r.follower_id)).forEach(r => items.push({
-            ts: Date.now(), always: true, icon: "👋",
+            .eq("following_id", yo).eq("estado", "pendiente");
+        (reqs || []).filter(r => !state.blockedIds?.has(r.follower_id)).forEach(r => add({
+            key: "req:" + r.follower_id, ts: Date.now(), always: true, icon: "👋",
             text: "<strong>@" + esc(r.profiles?.username || "alguien") + "</strong> quiere ser tu amigo",
             action: "switchScreen('profile')"
         }));
     } catch (e) { console.warn("notif reqs:", e); }
 
+    // 2) Menciones @tu_usuario (van antes para tener prioridad sobre el comentario suelto)
+    if (miNick) {
+        try {
+            const { data: ms } = await db.from("photo_comments")
+                .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
+                .ilike("texto", "%@" + miNick + "%").neq("user_id", yo)
+                .order("created_at", { ascending: false }).limit(20);
+            (ms || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => add({
+                key: "cm:" + c.photo_id + ":" + c.created_at + ":" + c.user_id,
+                ts: +new Date(c.created_at), icon: "📣",
+                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> te mencionó: " + esc((c.texto || "").slice(0, 45)),
+                action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
+            }));
+        } catch (e) { console.warn("notif menciones:", e); }
+    }
+
     const myIds = state.photos.map(p => p.id).filter(Boolean).slice(0, 200);
     if (myIds.length) {
-        // 2) Comentarios en tus fotos
+        // 3) Comentarios en tus fotos
         try {
             const { data: cs } = await db.from("photo_comments")
                 .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
-                .in("photo_id", myIds).neq("user_id", state.user.id)
+                .in("photo_id", myIds).neq("user_id", yo)
                 .order("created_at", { ascending: false }).limit(30);
-            (cs || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => items.push({
+            (cs || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => add({
+                key: "cm:" + c.photo_id + ":" + c.created_at + ":" + c.user_id,
                 ts: +new Date(c.created_at), icon: "💬",
                 text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> comentó: " + esc((c.texto || "").slice(0, 50)),
                 action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
             }));
         } catch (e) { console.warn("notif comments:", e); }
-        // 3) Likes / reacciones en tus fotos
+
+        // 4) Likes / reacciones en tus fotos
         try {
             const likeIds = myIds.flatMap(id => [id, id + "_fire", id + "_love"]);
             let r = await db.from("photo_likes").select("user_id,photo_id,created_at")
-                .in("photo_id", likeIds).neq("user_id", state.user.id)
+                .in("photo_id", likeIds).neq("user_id", yo)
                 .order("created_at", { ascending: false }).limit(40);
-            if (r.error) r = await db.from("photo_likes").select("user_id,photo_id").in("photo_id", likeIds).neq("user_id", state.user.id).limit(40);
+            if (r.error) r = await db.from("photo_likes").select("user_id,photo_id").in("photo_id", likeIds).neq("user_id", yo).limit(40);
             const ls = (r.data || []).filter(l => !state.blockedIds?.has(l.user_id));
             const likers = [...new Set(ls.map(l => l.user_id))];
             const names = {};
             if (likers.length) { const { data: ps } = await db.from("profiles").select("id,username").in("id", likers); (ps || []).forEach(p => names[p.id] = p.username); }
-            ls.forEach(l => items.push({
+            ls.forEach(l => add({
+                key: "lk:" + l.photo_id + ":" + l.user_id,
                 ts: +new Date(l.created_at || Date.now()),
                 icon: String(l.photo_id).endsWith("_fire") ? "🔥" : String(l.photo_id).endsWith("_love") ? "😍" : "❤️",
                 text: "<strong>@" + esc(names[l.user_id] || "alguien") + "</strong> reaccionó a tu foto",
@@ -5632,8 +5731,31 @@ async function fetchNotifications() {
             }));
         } catch (e) { console.warn("notif likes:", e); }
     }
-    items.sort((a, b) => b.ts - a.ts);
-    return items.slice(0, 40);
+
+    // 5) Respuestas en publicaciones donde tú también has comentado
+    try {
+        const { data: mios } = await db.from("photo_comments").select("photo_id")
+            .eq("user_id", yo).order("created_at", { ascending: false }).limit(50);
+        const hilos = [...new Set((mios || []).map(c => String(c.photo_id)))].filter(id => !myIds.includes(id));
+        if (hilos.length) {
+            const { data: cs2 } = await db.from("photo_comments")
+                .select("user_id,texto,created_at,photo_id, profiles(username,avatar_url)")
+                .in("photo_id", hilos).neq("user_id", yo)
+                .order("created_at", { ascending: false }).limit(30);
+            (cs2 || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => add({
+                key: "cm:" + c.photo_id + ":" + c.created_at + ":" + c.user_id,
+                ts: +new Date(c.created_at), icon: "💭",
+                text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> también comentó: " + esc((c.texto || "").slice(0, 45)),
+                action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
+            }));
+        }
+    } catch (e) { console.warn("notif hilos:", e); }
+
+    // Sin duplicados (una mención en tu propia foto saldría dos veces)
+    const vistos = new Set();
+    const unicos = items.filter(i => { if (vistos.has(i.key)) return false; vistos.add(i.key); return true; });
+    unicos.sort((a, b) => b.ts - a.ts);
+    return unicos.slice(0, 40);
 }
 
 async function loadNotifBadge() {
@@ -5641,12 +5763,33 @@ async function loadNotifBadge() {
         const items = await fetchNotifications();
         state._notifs = items;
         const lastSeen = _notifLastSeen();
-        const unread = items.filter(i => i.always || i.ts > lastSeen).length;
+        const unread = items.filter(i => i.ts > lastSeen).length;
         document.querySelectorAll(".notif-badge").forEach(b => {
             if (unread > 0) { b.textContent = unread > 9 ? "9+" : unread; b.style.display = "flex"; }
             else b.style.display = "none";
         });
     } catch (e) { console.warn("loadNotifBadge:", e); }
+}
+
+function renderNotifList() {
+    const list = document.getElementById("notif-list");
+    if (!list) return;
+    const items = state._notifs || [];
+    const lastSeen = _notifLastSeen();
+    if (!items.length) {
+        list.innerHTML = '<div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.3);font-size:13px"><i class="ti ti-bell-off" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>No tienes notificaciones todavía</div>';
+        return;
+    }
+    list.innerHTML = items.map(i => {
+        const unread = i.ts > lastSeen;
+        return '<div ' + (i.action ? 'onclick="closeNotifs();' + i.action + '" style="cursor:pointer;' : 'style="')
+            + 'display:flex;gap:11px;align-items:flex-start;padding:11px 18px;' + (unread ? 'background:rgba(34,114,232,0.06);' : '') + 'border-bottom:1px solid rgba(255,255,255,0.04)">'
+            + '<span style="font-size:18px;flex-shrink:0;line-height:1.3">' + i.icon + '</span>'
+            + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.45">' + i.text
+            + '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px">' + timeAgo(i.ts) + '</div></div>'
+            + (unread ? '<span style="width:7px;height:7px;border-radius:50%;background:#2272e8;flex-shrink:0;margin-top:5px"></span>' : '')
+            + '</div>';
+    }).join("");
 }
 
 async function openNotifs() {
@@ -5655,30 +5798,22 @@ async function openNotifs() {
     if (!ov || !list) return;
     ov.style.display = "flex";
     list.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 10px"></div>Cargando...</div>';
-    const items = state._notifs || await fetchNotifications();
-    state._notifs = items;
-    const lastSeen = _notifLastSeen();
-    if (!items.length) {
-        list.innerHTML = '<div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.3);font-size:13px"><i class="ti ti-bell-off" aria-hidden="true" style="font-size:32px;display:block;margin-bottom:10px"></i>No tienes notificaciones todavía</div>';
-    } else {
-        list.innerHTML = items.map(i => {
-            const unread = i.always || i.ts > lastSeen;
-            return '<div ' + (i.action ? 'onclick="closeNotifs();' + i.action + '" style="cursor:pointer;' : 'style="')
-                + 'display:flex;gap:11px;align-items:flex-start;padding:11px 18px;' + (unread ? 'background:rgba(34,114,232,0.06);' : '') + 'border-bottom:1px solid rgba(255,255,255,0.04)">'
-                + '<span style="font-size:18px;flex-shrink:0;line-height:1.3">' + i.icon + '</span>'
-                + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.45">' + i.text
-                + '<div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px">' + timeAgo(i.ts) + '</div></div>'
-                + (unread ? '<span style="width:7px;height:7px;border-radius:50%;background:#2272e8;flex-shrink:0;margin-top:5px"></span>' : '')
-                + '</div>';
-        }).join("");
-    }
-    markNotifsRead();
+    state._notifs = await fetchNotifications();
+    renderNotifList();   // se pintan con el estado real de leído/no leído
 }
-function closeNotifs() { const ov = document.getElementById("notif-ov"); if (ov) ov.style.display = "none"; }
-function markNotifsRead() {
+
+function closeNotifs() {
+    const ov = document.getElementById("notif-ov");
+    if (ov) ov.style.display = "none";
+    markNotifsRead();   // al cerrar, se dan por vistas
+}
+
+function markNotifsRead(repintar) {
     try { localStorage.setItem(_notifSeenKey(), String(Date.now())); } catch (_) {}
-    loadNotifBadge(); // tras esto el badge solo refleja solicitudes pendientes
+    loadNotifBadge();
+    if (repintar) renderNotifList();
 }
+
 
 // ═══════════════════════════════════════════════════════════
 //  TOASTS  +  MODAL DE CONFIRMACIÓN PROPIO
