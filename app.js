@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js)
+//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js) prueba
 // ═══════════════════════════════════════════════════════════
 function esc(s) {
   return String(s ?? '')
