@@ -1334,6 +1334,7 @@ function openSheet() {
     const o = document.getElementById("evidencia-desc");
     o && (o.value = "");
     renderSheetLocalidades(e);
+    renderSheetTags();
     document.getElementById("upload-sheet").classList.add("open")
 }
 
@@ -1376,6 +1377,44 @@ function renderSheetLocalidades(muni) {
         });
     }
 }
+
+// Etiquetar amigos en la publicación
+async function renderSheetTags() {
+    const desc = document.getElementById("evidencia-desc");
+    let box = document.getElementById("sheet-tags");
+    if (!box && desc) {
+        box = document.createElement("div");
+        box.id = "sheet-tags";
+        desc.parentNode.insertBefore(box, desc);
+    }
+    if (!box) return;
+    box.style.display = "none"; box.innerHTML = "";
+    let amigos = [];
+    try { amigos = await getFriendsCache(); } catch (_) { return; }
+    if (!amigos.length) return;   // sin amigos, no se muestra nada
+    box.style.cssText = "margin-bottom:12px;padding:11px 12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px;display:block";
+    box.innerHTML =
+        '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">🏷️ ¿Con quién has ido?</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto">'
+        + amigos.map(a =>
+            '<label style="display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:999px;font-size:12px;cursor:pointer;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.05);color:rgba(255,255,255,0.6)">'
+            + '<input type="checkbox" class="tag-chk" value="' + esc(a.id) + '" style="accent-color:#2272e8;margin:0"/>'
+            + "@" + esc(a.username || "amigo") + '</label>'
+        ).join("")
+        + '</div>';
+    if (!box._wired) {
+        box._wired = !0;
+        box.addEventListener("change", ev => {
+            const chk = ev.target;
+            if (!chk.classList?.contains("tag-chk")) return;
+            const lab = chk.parentElement;
+            lab.style.border = chk.checked ? "1px solid rgba(34,114,232,0.5)" : "1px solid rgba(255,255,255,0.14)";
+            lab.style.background = chk.checked ? "rgba(34,114,232,0.15)" : "rgba(255,255,255,0.05)";
+            lab.style.color = chk.checked ? "#9cc4f0" : "rgba(255,255,255,0.6)";
+        });
+    }
+}
+
 
 function closeUploadSheet() {
     document.getElementById("upload-sheet").classList.remove("open");
@@ -1458,6 +1497,7 @@ async function confirmVisit() {
             if (!sess) throw new Error("Sesión expirada — sal y vuelve a entrar");
             const uid = sess.id;
             const batchId = (self.crypto?.randomUUID?.() || (Date.now() + "-" + Math.random().toString(16).slice(2)));
+            const _idsSubidos = [];
             for (let idx = 0; idx < _photos.length; idx++) {
                 const ph = _photos[idx];
                 try {
@@ -1493,6 +1533,7 @@ async function confirmVisit() {
                         time: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
                         coords: state.lastCoords || "", desc: desc || "", vis: selectedVisibilidad, path, thumb: null
                     };
+                    if (row?.id) _idsSubidos.push(row.id);
                     state.photos.unshift(stateP);
                     // Miniatura (aditivo: no rompe si falta la columna thumb_path)
                     try {
@@ -1520,6 +1561,15 @@ async function confirmVisit() {
                 coords: "", desc: i, vis: selectedVisibilidad
             });
         }
+        // Etiquetas: se asocian a la primera foto del lote (la que representa el post)
+        try {
+            const etiquetados = [...document.querySelectorAll(".tag-chk:checked")].map(c => c.value);
+            if (etiquetados.length && _idsSubidos.length) {
+                await db.from("photo_tags").insert(etiquetados.map(uid => ({
+                    photo_id: _idsSubidos[0], tagged_id: uid, tagger_id: state.user.id
+                })));
+            }
+        } catch (tagErr) { console.warn("etiquetas:", tagErr); }
         state.visited[e] = !0, document.querySelectorAll(".muni-path").forEach(t => {
             t.getAttribute("data-name") === e && t.classList.add("visited")
         }), showMuniBar(e), closeUploadSheet(), document.getElementById("file-in").value = "", document.getElementById("prev-w").style.display = "none", document.getElementById("uzone").style.display = "block", state.pendingFile = null, state.pendingBase64 = null, state.pendingMime = null, state.pendingPhotos = [], state.feedCache = null;
@@ -2880,6 +2930,7 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
         <div class="post-muni">${muniSafe}</div>
         ${foto?.rating ? `<div style="margin:1px 0 3px;color:#e8c93a;font-size:14px;letter-spacing:2px">${"★".repeat(foto.rating)}<span style="color:rgba(255,255,255,0.18)">${"★".repeat(Math.max(0,5-foto.rating))}</span></div>` : ""}
         ${descFoto ? `<div class="post-desc">${renderMentions(esc(descFoto))}</div>` : ""}
+        ${foto ? `<div id="tags-${esc(foto.id)}" style="display:none;font-size:11.5px;color:#9cc4f0;margin-top:4px"></div>` : ""}
         <div class="post-actions">
           ${foto ? `
           <div style="display:flex;gap:6px;align-items:center">
@@ -2992,6 +3043,21 @@ async function renderFeedPosts(visits, fotasByMuniUser, fotasByUser, friendProfi
             else if (btn) btn.style.opacity = "0.55";
         });
     });
+
+    // 3.5) Etiquetas de personas
+    try {
+        const { data: tags } = await db.from("photo_tags")
+            .select("photo_id,tagged_id, profiles:profiles!photo_tags_tagged_id_fkey(username)")
+            .in("photo_id", fotoIds);
+        const porFoto = {};
+        (tags || []).forEach(t => (porFoto[t.photo_id] = porFoto[t.photo_id] || []).push(t.profiles?.username || "alguien"));
+        Object.entries(porFoto).forEach(([fid, nombres]) => {
+            const el = document.getElementById("tags-" + fid);
+            if (!el) return;
+            el.innerHTML = "🏷️ con " + nombres.map(n => "<strong>@" + esc(n) + "</strong>").join(", ");
+            el.style.display = "block";
+        });
+    } catch (e) { console.warn("tags feed:", e); }
 
     // 3) Comentarios
     const byPhoto = {};
@@ -5751,6 +5817,20 @@ async function fetchNotifications() {
         }
     } catch (e) { console.warn("notif hilos:", e); }
 
+    // 6) Te han etiquetado en una foto
+    try {
+        const { data: tg } = await db.from("photo_tags")
+            .select("photo_id,tagger_id,created_at, profiles:profiles!photo_tags_tagger_id_fkey(username)")
+            .eq("tagged_id", yo).order("created_at", { ascending: false }).limit(20);
+        (tg || []).filter(t => !state.blockedIds?.has(t.tagger_id)).forEach(t => add({
+            key: "tg:" + t.photo_id + ":" + t.tagger_id,
+            ts: +new Date(t.created_at), icon: "🏷️",
+            text: "<strong>@" + esc(t.profiles?.username || "alguien") + "</strong> te ha etiquetado en una foto",
+            action: "goToFeedPhoto(" + JSON.stringify(String(t.photo_id)) + ")"
+        }));
+    } catch (e) { console.warn("notif tags:", e); }
+
+  
     // Sin duplicados (una mención en tu propia foto saldría dos veces)
     const vistos = new Set();
     const unicos = items.filter(i => { if (vistos.has(i.key)) return false; vistos.add(i.key); return true; });
