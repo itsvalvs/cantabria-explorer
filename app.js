@@ -6047,7 +6047,7 @@ function renderNotifList() {
     }
     list.innerHTML = items.map(i => {
         const unread = i.ts > lastSeen;
-        return '<div ' + (i.action ? 'onclick="closeNotifs();' + i.action + '" style="cursor:pointer;' : 'style="')
+        return '<div ' + (i.action ? 'onclick="closeNotifs();' + esc(i.action) + '" style="cursor:pointer;' : 'style="')
             + 'display:flex;gap:11px;align-items:flex-start;padding:11px 18px;' + (unread ? 'background:rgba(34,114,232,0.06);' : '') + 'border-bottom:1px solid rgba(255,255,255,0.04)">'
             + '<span style="font-size:18px;flex-shrink:0;line-height:1.3">' + i.icon + '</span>'
             + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,0.85);line-height:1.45">' + i.text
