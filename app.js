@@ -1,6 +1,26 @@
 // ═══════════════════════════════════════════════════════════
 //  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js) prueba
 // ═══════════════════════════════════════════════════════════
+// ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
+// Si en la consola no ves este mensaje, el navegador te está
+// sirviendo un app.js antiguo (sube el ?v= del index.html).
+const APP_BUILD = "2026-08-08 · notis+miniaturas";
+console.log("%c Ya lo pisé — build " + APP_BUILD + " ",
+    "background:#22b050;color:#fff;font-weight:700;border-radius:4px;padding:2px 6px");
+
+// Diagnóstico rápido desde la consola: window.ylpDebug()
+window.ylpDebug = function () {
+    const munis = Object.values(state.municipiosData || {});
+    const conFoto = munis.filter(m => m.imagen_url && String(m.imagen_url).trim());
+    console.log("build:", APP_BUILD);
+    console.log("municipios cargados:", munis.length, "| con imagen_url:", conFoto.length);
+    if (conFoto.length) console.log("ejemplo de URL:", conFoto[0].nombre, "->", conFoto[0].imagen_url);
+    console.log("notificaciones en memoria:", (state._notifs || []).length);
+    const primera = document.querySelector("#notif-list > div");
+    console.log("onclick de la 1ª notificación:", primera ? primera.getAttribute("onclick") : "(abre la campana primero)");
+    console.log("goToFeedPhoto existe:", typeof goToFeedPhoto);
+};
+
 function esc(s) {
   return String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
