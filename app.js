@@ -3368,6 +3368,7 @@ async function renderProfile() {
     const e = Object.keys(state.visited).length;
     document.getElementById("sv").textContent = e, document.getElementById("sp").textContent = Math.round(e / state.totalMuni * 100) + "%", document.getElementById("sph").textContent = state.photos.length, renderGallery();
     refreshBadgesAndLevel(false);
+    syncNotifButton();
     loadLikesRecibidos().then(() => refreshBadgesAndLevel(false));
     await Promise.all([loadSolicitudes(), loadFriendCount()])
 }
@@ -3973,27 +3974,100 @@ function urlBase64ToUint8Array(e) {
     for (let e = 0; e < i.length; e++) n[e] = i.charCodeAt(e);
     return n
 }
-async function toggleNotifications() {
-    const e = document.getElementById("btn-notif");
-    if (e)
-        if (state.pushRegistered) e.innerHTML = "🔔 Notificaciones activas";
-        else {
-            e.textContent = "Activando...", e.disabled = !0;
-            try {
-                // En la app nativa (Capacitor) el permiso lo gestiona el plugin
-                if (!window.nativePushRegister) {
-                    if (typeof Notification === "undefined") {
-                        // iOS Safari sin instalar: no existe la API
-                        return alert("Para recibir notificaciones en iPhone, añade primero la app a la pantalla de inicio:\n\nCompartir → Añadir a pantalla de inicio, y ábrela desde ahí."), e.disabled = !1, void(e.innerHTML = "🔕 Activar notificaciones");
-                    }
-                    if ("granted" !== await Notification.requestPermission()) return alert("Necesitas dar permiso de notificaciones para activarlas."), e.disabled = !1, void(e.innerHTML = "🔕 Activar notificaciones");
-                }
-                await registerPushNotifications(), e.innerHTML = state.pushRegistered ? "🔔 Notificaciones activas" : "🔕 Activar notificaciones"
-            } catch (t) {
-                toast("Error activando notificaciones: " + t.message, "error"), e.innerHTML = "🔕 Activar notificaciones"
-            }
-            e.disabled = !1
+
+// ── Estado real de las notificaciones (permiso + suscripción) ──
+async function getPushStatus() {
+    if (window.nativePushRegister) return state.pushRegistered ? "activas" : "off";
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "nosoporta";
+    if (typeof Notification === "undefined") return "nosoporta";
+    if (Notification.permission === "denied") return "bloqueadas";
+    try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub && Notification.permission === "granted") return "activas";
+    } catch (_) {}
+    return "off";
+}
+
+async function syncNotifButton() {
+    const b = document.getElementById("btn-notif");
+    if (!b || !state.user) return;
+    const st = await getPushStatus();
+    state.pushRegistered = (st === "activas");
+    b.disabled = false;
+    if (st === "activas") {
+        b.innerHTML = "🔔 Notificaciones activas";
+        b.style.backgroundColor = "#14533a";
+        b.style.color = "#8fe8bd";
+        // Reasegura una sola vez por sesión que la suscripción sigue en Supabase
+        if (!state._pushSynced) {
+            state._pushSynced = true;
+            try { await registerPushNotifications(); } catch (_) {}
         }
+    } else if (st === "bloqueadas") {
+        b.innerHTML = "🚫 Notificaciones bloqueadas";
+        b.style.backgroundColor = "rgba(255,255,255,0.08)";
+        b.style.color = "rgba(255,255,255,0.5)";
+    } else {
+        b.innerHTML = "🔕 Activar notificaciones";
+        b.style.backgroundColor = "#1848a8";
+        b.style.color = "#b0d4ff";
+    }
+}
+
+async function toggleNotifications() {
+    const b = document.getElementById("btn-notif");
+    if (!b || !state.user) return;
+    const st = await getPushStatus();
+
+    // Ya activas → ofrecer desactivarlas
+    if (st === "activas") {
+        const ok = await confirmar(
+            "Dejarás de recibir avisos de solicitudes de amistad y actividad de tus amigos.",
+            { titulo: "¿Desactivar notificaciones?", ok: "Desactivar", cancel: "Cancelar", peligro: true }
+        );
+        if (!ok) return;
+        b.textContent = "Desactivando..."; b.disabled = true;
+        try {
+            const reg = await navigator.serviceWorker.ready;
+            const sub = await reg.pushManager.getSubscription();
+            if (sub) await sub.unsubscribe();
+            await db.from("push_subscriptions").delete().eq("user_id", state.user.id);
+            state.pushRegistered = false;
+            state._pushSynced = false;
+            toast("Notificaciones desactivadas", "info");
+        } catch (err) {
+            toast("No se pudieron desactivar: " + err.message, "error");
+        }
+        return void syncNotifButton();
+    }
+
+    // Permiso denegado a nivel de navegador/sistema
+    if (st === "bloqueadas") {
+        return void alert("Tienes las notificaciones bloqueadas para esta app.\n\nActívalas desde los ajustes del navegador o del móvil (Ajustes → Notificaciones → Ya lo pisé) y vuelve aquí.");
+    }
+
+    // iPhone en Safari sin instalar
+    if (st === "nosoporta") {
+        return void alert("Para recibir notificaciones en iPhone, añade primero la app a la pantalla de inicio:\n\nCompartir → Añadir a pantalla de inicio, y ábrela desde ahí.");
+    }
+
+    // Activar
+    b.textContent = "Activando..."; b.disabled = true;
+    try {
+        if (!window.nativePushRegister) {
+            if ("granted" !== await Notification.requestPermission()) {
+                toast("Necesitas dar permiso para activarlas", "error");
+                return void syncNotifButton();
+            }
+        }
+        await registerPushNotifications();
+        state._pushSynced = true;
+        toast("Notificaciones activadas 🔔", "success");
+    } catch (err) {
+        toast("Error activando notificaciones: " + err.message, "error");
+    }
+    syncNotifButton();
 }
 
 function subscribeToFriendActivity() {
