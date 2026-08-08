@@ -5803,6 +5803,7 @@ function timeAgo(ts) {
 async function fetchNotifications() {
     if (!state.user) return [];
     const items = [];
+    const seenKeys = new Set();
     const yo = state.user.id;
     const miNick = (state.profile?.username || "").trim();
     const add = (o) => items.push(o);
@@ -5833,6 +5834,39 @@ async function fetchNotifications() {
                 action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
             }));
         } catch (e) { console.warn("notif menciones:", e); }
+    }
+
+    // 2) Etiquetas (@menciones) en fotos y comentarios de otros
+    const myUser = (state.profile?.username || "").trim();
+    if (myUser) {
+        const pat = "%@" + myUser + "%";
+        try {
+            const { data: mp } = await db.from("photos")
+                .select("id,user_id,municipio,created_at, profiles(username)")
+                .ilike("descripcion", pat).neq("user_id", state.user.id)
+                .order("created_at", { ascending: false }).limit(20);
+            (mp || []).filter(p => !state.blockedIds?.has(p.user_id)).forEach(p => items.push({
+                ts: +new Date(p.created_at), icon: "🏷️",
+                text: "<strong>@" + esc(p.profiles?.username || "alguien") + "</strong> te ha etiquetado en una foto"
+                    + (p.municipio ? " de " + esc(p.municipio) : ""),
+                action: "goToFeedPhoto(" + JSON.stringify(String(p.id)) + ")"
+            }));
+        } catch (e) { console.warn("notif etiq foto:", e); }
+        try {
+            const { data: mc } = await db.from("photo_comments")
+                .select("user_id,texto,created_at,photo_id, profiles(username)")
+                .ilike("texto", pat).neq("user_id", state.user.id)
+                .order("created_at", { ascending: false }).limit(20);
+            (mc || []).filter(c => !state.blockedIds?.has(c.user_id)).forEach(c => {
+                seenKeys.add("c|" + c.photo_id + "|" + c.user_id + "|" + c.created_at);
+                items.push({
+                    ts: +new Date(c.created_at), icon: "🏷️",
+                    text: "<strong>@" + esc(c.profiles?.username || "alguien") + "</strong> te ha etiquetado: "
+                        + esc((c.texto || "").slice(0, 50)),
+                    action: "goToFeedPhoto(" + JSON.stringify(String(c.photo_id)) + ")"
+                });
+            });
+        } catch (e) { console.warn("notif etiq comentario:", e); }
     }
 
     const myIds = state.photos.map(p => p.id).filter(Boolean).slice(0, 200);
