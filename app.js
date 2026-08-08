@@ -3514,27 +3514,138 @@ function openPMobj(e) {
     document.getElementById("photo-modal").classList.add("open");
 }
 
-// Ir a la publicación de esta foto en el feed (mejor esfuerzo: la busca y,
-// si no está cargada, va pidiendo más páginas).
-function goToFeedPhoto(fid) {
+// ═══════════════════════════════════════════════════════════
+//  IR A LA PUBLICACIÓN DE UNA NOTIFICACIÓN
+//  Si ya está pintada en el feed → scroll directo.
+//  Si no (publicación antigua, de otro filtro, etc.) → se abre ella
+//  sola en modo "permalink", sin depender de paginar el feed entero.
+// ═══════════════════════════════════════════════════════════
+
+// Cambia a la pestaña feed SIN llamar a loadFeed() (que pisaría lo que pintamos)
+function _irAFeedSinRecargar() {
+    document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+    document.getElementById("screen-feed")?.classList.add("active");
+    if (typeof updateNavColors === "function") updateNavColors("feed");
+    if (typeof clearFeedBadge === "function") clearFeedBadge();
+}
+
+// Busca la publicación ya pintada y hace scroll. true si la encontró.
+function _resaltarPost(fid) {
+    const el = document.getElementById("comments-" + fid)
+            || document.querySelector('img[data-foto-id="' + fid + '"]');
+    const post = el?.closest?.(".feed-post") || (el && el.classList?.contains("feed-post") ? el : null);
+    if (!post) return false;
+    post.scrollIntoView({ behavior: "smooth", block: "center" });
+    post.style.transition = "box-shadow .3s";
+    post.style.boxShadow = "0 0 0 2px #22b050";
+    setTimeout(() => { post.style.boxShadow = ""; }, 2000);
+    return true;
+}
+
+function _btnVolverFeed(estilo) {
+    return '<button onclick="loadFeed(true)" style="' + estilo + '">'
+        + '<i class="ti ti-arrow-left" aria-hidden="true"></i> Volver al feed</button>';
+}
+
+function _postNoDisponible(msg) {
+    return '<div style="text-align:center;padding:36px 18px;color:rgba(255,255,255,0.35);font-size:13px;line-height:1.7">'
+        + '<i class="ti ti-photo-off" aria-hidden="true" style="font-size:30px;display:block;margin-bottom:10px"></i>'
+        + (msg || "Esta publicación ya no está disponible.") + '<br>'
+        + _btnVolverFeed("margin-top:14px;padding:8px 18px;background:rgba(34,114,232,0.15);color:#9cc4f0;border:1px solid rgba(34,114,232,0.3);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;display:inline-flex;align-items:center;gap:6px")
+        + '</div>';
+}
+
+async function goToFeedPhoto(fid) {
+    fid = String(fid || "").replace(/_(fire|love)$/, "");
+    if (!fid) return;
     closePM();
-    switchScreen("feed");
-    let tries = 0;
-    const buscar = () => {
-        tries++;
-        const img = document.querySelector('img[data-foto-id="' + fid + '"]');
-        if (img) {
-            const post = img.closest(".feed-post") || img;
-            post.scrollIntoView({ behavior: "smooth", block: "center" });
-            if (post.classList) { post.style.transition = "box-shadow .3s"; post.style.boxShadow = "0 0 0 2px #22b050"; setTimeout(() => post.style.boxShadow = "", 1800); }
-        } else if (tries < 7) {
-            if (typeof fetchFeedPage === "function") fetchFeedPage();
-            setTimeout(buscar, 650);
-        } else {
-            toast("Desliza por el feed para encontrarla", "info");
+    _irAFeedSinRecargar();
+    if (_resaltarPost(fid)) return;      // ya estaba pintada
+    await renderPostUnico(fid);          // si no, la abrimos sola
+}
+
+// Pinta UNA sola publicación (la de la notificación) en el feed
+async function renderPostUnico(fid) {
+    const fp = document.getElementById("feed-posts");
+    if (!fp || !state.user) return;
+
+    state._feedMode = "post";
+    state.feedCache = null;              // corta el scroll infinito del feed normal
+    if (typeof clearGlobalRanking === "function") clearGlobalRanking();
+    const sr = document.getElementById("stories-row");
+    if (sr) { sr.innerHTML = ""; sr.style.display = "none"; }
+    const sent = document.getElementById("feed-sentinel");
+    if (sent) sent.textContent = "";
+    fp.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 10px"></div>Abriendo publicación...</div>';
+
+    try {
+        const cols = "id,user_id,municipio,storage_path,thumb_path,descripcion,rating,visibilidad,created_at,batch_id";
+        let r = await db.from("photos").select(cols).eq("id", fid).maybeSingle();
+        if (r.error && /rating|batch_id|thumb_path|column|schema cache/i.test(r.error.message || "")) {
+            r = await db.from("photos").select("id,user_id,municipio,storage_path,descripcion,visibilidad,created_at").eq("id", fid).maybeSingle();
         }
-    };
-    setTimeout(buscar, 500);
+        const base = r.data;
+        if (!base) { fp.innerHTML = _postNoDisponible(); return; }
+        if (state.blockedIds?.has(base.user_id)) {
+            fp.innerHTML = _postNoDisponible("Has bloqueado a quien publicó esto.");
+            return;
+        }
+
+        // Resto del lote, para que el carrusel salga completo
+        let lote = [base];
+        try {
+            if (base.batch_id) {
+                const { data } = await db.from("photos").select(cols)
+                    .eq("batch_id", base.batch_id).eq("user_id", base.user_id);
+                if (data?.length) lote = data;
+            } else {
+                const { data } = await db.from("photos").select(cols)
+                    .eq("user_id", base.user_id).eq("municipio", base.municipio)
+                    .order("created_at", { ascending: !1 }).limit(30);
+                const minuto = String(base.created_at || "").slice(0, 16);
+                const mismos = (data || []).filter(p => !p.batch_id && String(p.created_at || "").slice(0, 16) === minuto);
+                if (mismos.length) lote = mismos;
+            }
+        } catch (_) {}
+
+        const { data: prof } = await db.from("profiles")
+            .select("id,username,avatar_url").eq("id", base.user_id).maybeSingle();
+
+        const g    = lote.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        const imgs = g.filter(x => x.storage_path && x.storage_path !== "text_only");
+        // El representativo debe ser el de la notificación: comentarios y likes
+        // cuelgan de ese id concreto.
+        const rep  = g.find(x => x.id === fid) || imgs[0] || g[0];
+
+        const post = {
+            id: "pu_" + fid, _batchKey: "pu_" + fid, _batchId: base.batch_id || null,
+            user_id: base.user_id, municipio: base.municipio, visibilidad: base.visibilidad,
+            created_at: g.reduce((m, x) => x.created_at > m ? x.created_at : m, g[0].created_at),
+            profiles: prof || null, _fotos: imgs, _foto: rep
+        };
+
+        fp.innerHTML = "";
+        await renderFeedPosts([post], {}, {}, prof ? [prof] : [], !1);
+        fp.insertAdjacentHTML("afterbegin",
+            _btnVolverFeed("margin:0 0 10px;padding:8px 14px;background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.6);border:none;border-radius:999px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif;display:inline-flex;align-items:center;gap:6px"));
+        setTimeout(() => _resaltarPost(rep.id), 250);
+    } catch (e) {
+        console.error("renderPostUnico:", e);
+        fp.innerHTML = _postNoDisponible();
+    }
+}
+
+// Notificación de solicitud de amistad → perfil, con scroll a la sección
+function goToSolicitudes() {
+    switchScreen("profile");
+    setTimeout(() => {
+        const s = document.getElementById("solicitudes-section");
+        if (!s) return;
+        s.scrollIntoView({ behavior: "smooth", block: "center" });
+        s.style.transition = "box-shadow .3s";
+        s.style.boxShadow = "0 0 0 2px #e86820";
+        setTimeout(() => { s.style.boxShadow = ""; }, 2000);
+    }, 400);
 }
 
 // Borrar la foto abierta en el modal (BD + Storage + galería local)
@@ -5815,7 +5926,7 @@ async function fetchNotifications() {
         (reqs || []).filter(r => !state.blockedIds?.has(r.follower_id)).forEach(r => add({
             key: "req:" + r.follower_id, ts: Date.now(), always: true, icon: "👋",
             text: "<strong>@" + esc(r.profiles?.username || "alguien") + "</strong> quiere ser tu amigo",
-            action: "switchScreen('profile')"
+            action: "goToSolicitudes()"
         }));
     } catch (e) { console.warn("notif reqs:", e); }
 
