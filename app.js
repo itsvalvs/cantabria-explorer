@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js)
+//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js) prueba
 // ═══════════════════════════════════════════════════════════
 // ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
 // Si en la consola no ves este mensaje, el navegador te está
@@ -11,10 +11,12 @@ console.log("%c Ya lo pisé — build " + APP_BUILD + " ",
 // Diagnóstico rápido desde la consola: window.ylpDebug()
 window.ylpDebug = function () {
     const munis = Object.values(state.municipiosData || {});
-    const conFoto = munis.filter(m => m.imagen_url && String(m.imagen_url).trim());
+    const conFoto = munis.filter(m => muniFoto(m));
     console.log("build:", APP_BUILD);
-    console.log("municipios cargados:", munis.length, "| con imagen_url:", conFoto.length);
-    if (conFoto.length) console.log("ejemplo de URL:", conFoto[0].nombre, "->", conFoto[0].imagen_url);
+    console.log("municipios cargados:", munis.length, "| con foto:", conFoto.length);
+    if (munis.length) console.log("COLUMNAS REALES de la tabla municipios:", Object.keys(munis[0]).join(", "));
+    if (munis.length) console.table(munis.slice(0, 3));
+    if (conFoto.length) console.log("ejemplo:", conFoto[0].nombre, "->", muniFoto(conFoto[0]));
     console.log("notificaciones en memoria:", (state._notifs || []).length);
     const primera = document.querySelector("#notif-list > div");
     console.log("onclick de la 1ª notificación:", primera ? primera.getAttribute("onclick") : "(abre la campana primero)");
@@ -2192,6 +2194,15 @@ function filterMuniList(e) {
     }), "todos" === e && (document.getElementById("mf-todos").style.backgroundColor = "#e8b820", document.getElementById("mf-todos").style.color = "#fff")), renderMuniList()
 }
 
+// Devuelve la URL de foto de un municipio, mire como se llame la columna
+function muniFoto(m) {
+    if (!m) return "";
+    const u = [m.imagen_url, m.imagen, m.foto_url, m.foto, m.image_url,
+               m.img_url, m.img, m.portada, m.thumbnail, m.photo_url]
+        .find(v => v && String(v).trim());
+    return u ? String(u).trim() : "";
+}
+
 function renderMuniList() {
     const e = document.getElementById("muni-list");
     if (!e) return;
@@ -2203,7 +2214,7 @@ function renderMuniList() {
             n = state.popularidad?.[e.nombre] || 0,
             o = (e.sellos || []).slice(0, 3).map(e => SELLOS[e]?.emoji || "").join(" "),
             a = n > 0 ? '<span style="font-size:10px;color:#e8b820;background:rgba(232,184,32,0.12);padding:2px 7px;border-radius:999px">🔥 ' + n + "</span>" : "";
-        return `\n    <div onclick="openMuniModal('${e.nombre.replace(/'/g,"'")}')"\n      style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:#141e2c;border-radius:14px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);">\n      <div style="width:44px;height:44px;border-radius:10px;background:${i?"#0d2a4a":"#0d2a1e"};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;position:relative">\n        <i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:18px;color:${i?"#85B7EB":"#5DCAA5"}"></i>\n        ${e.imagen_url ? `<img src="${esc(e.imagen_url)}" loading="lazy" decoding="async" alt="${esc(e.nombre)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block" onerror="this.remove()"/>` : ""}\n      </div>\n      <div style="flex:1;min-width:0">\n        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.nombre} ${o}</div>\n        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${e.comarca||""}</div>\n      </div>\n      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">\n        ${a}\n        ${t?'<span style="width:8px;height:8px;border-radius:50%;background:#22b050;display:block"></span>':""}\n        <i class="ti ti-chevron-right" aria-hidden="true" style="font-size:16px;color:rgba(255,255,255,0.2)"></i>\n      </div>\n    </div>`
+        return `\n    <div onclick="openMuniModal('${e.nombre.replace(/'/g,"'")}')"\n      style="display:flex;align-items:center;gap:12px;padding:11px 12px;background:#141e2c;border-radius:14px;margin-bottom:6px;cursor:pointer;border:1px solid rgba(255,255,255,0.06);">\n      <div style="width:44px;height:44px;border-radius:10px;background:${i?"#0d2a4a":"#0d2a1e"};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;position:relative">\n        <i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:18px;color:${i?"#85B7EB":"#5DCAA5"}"></i>\n        ${muniFoto(e) ? `<img src="${esc(muniFoto(e))}" loading="lazy" decoding="async" alt="${esc(e.nombre)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block" onerror="this.remove()"/>` : ""}\n      </div>\n      <div style="flex:1;min-width:0">\n        <div style="font-size:14px;font-weight:500;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.nombre} ${o}</div>\n        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:1px">${e.comarca||""}</div>\n      </div>\n      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">\n        ${a}\n        ${t?'<span style="width:8px;height:8px;border-radius:50%;background:#22b050;display:block"></span>':""}\n        <i class="ti ti-chevron-right" aria-hidden="true" style="font-size:16px;color:rgba(255,255,255,0.2)"></i>\n      </div>\n    </div>`
     }).join("") : e.innerHTML = '<p style="color:rgba(255,255,255,0.3);font-size:13px;text-align:center;padding:20px 0">No se encontraron municipios</p>'
 }
 
