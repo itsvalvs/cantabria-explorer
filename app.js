@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js) prueba
+//  SEGURIDAD + FIXES INTEGRADOS (antes en app.patch.js)
 // ═══════════════════════════════════════════════════════════
 // ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
 // Si en la consola no ves este mensaje, el navegador te está
