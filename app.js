@@ -47,6 +47,24 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+// Sanitiza clases de icono Tabler (formato: "ti-algo-mas")
+// Solo permite: minúsculas, dígitos y guiones. Si no cumple, devuelve el fallback.
+function safeIcon(v, fallback) {
+  const s = String(v || '').trim();
+  return /^ti-[a-z0-9-]+$/.test(s) ? s : (fallback || 'ti-confetti');
+}
+
+// Sanitiza colores CSS: solo #hex, rgb(...), rgba(...) o color con letras
+function safeColor(v, fallback) {
+  const s = String(v || '').trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(s)) return s;
+  if (/^rgba?\(\s*[\d.\s,%]+\s*\)$/.test(s)) return s;
+  if (/^[a-zA-Z]+$/.test(s)) return s;
+  return fallback || '#1a3a5a';
+}
+
+
+
 function getInitials(name) {
   return esc((name || '?').split(' ').map(w => w[0] || '').join('').toUpperCase().substring(0, 2));
 }
@@ -1784,8 +1802,8 @@ function _evSingleCard(e) {
     const fotosBtn = (inscrito || past >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos</button>` : "";
     return `
     <div class="ev-card" data-eid="${esc(e.id)}" onclick="openEventModal(this.dataset.eid)" style="cursor:pointer">
-      <div class="ev-img" style="${_mf ? 'background-image:url(' + esc(_mf) + ');background-size:cover;background-position:center' : 'background-color:' + (e.color_bg || "#1a3a5a")}">
-        ${_mf ? '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.3),transparent 45%)"></div>' : `<i class="ti ${e.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>`}
+      <div class="ev-img" style="${_mf ? 'background-image:url(' + esc(_mf) + ');background-size:cover;background-position:center' : 'background-color:' + safeColor(e.color_bg, '#1a3a5a')}">
+        ${_mf ? '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.3),transparent 45%)"></div>' : `<i class="ti ${safeIcon(e.icon, 'ti-confetti')}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>`}
         <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i>${e.dia_semana || ""} ${a}</div>
         <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge || e.tipo}</div>
       </div>
@@ -1835,8 +1853,8 @@ function _evFestivalCard(f) {
     }).join("");
     return `
     <div class="ev-card" style="cursor:default">
-      <div class="ev-img" style="${_mf ? 'background-image:url(' + esc(_mf) + ');background-size:cover;background-position:center' : 'background-color:' + (f.color_bg || "#3a1a3a")}">
-        ${_mf ? '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.3),transparent 45%)"></div>' : `<i class="ti ${f.icon || "ti-confetti"}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>`}
+      <div class="ev-img" style="${_mf ? 'background-image:url(' + esc(_mf) + ');background-size:cover;background-position:center' : 'background-color:' + safeColor(f.color_bg, '#3a1a3a')}">
+        ${_mf ? '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.3),transparent 45%)"></div>' : `<i class="ti ${safeIcon(f.icon, 'ti-confetti')}" aria-hidden="true" style="color:rgba(255,255,255,0.13)"></i>`}
         <div class="ev-date-badge"><i class="ti ti-calendar" aria-hidden="true" style="font-size:11px"></i> ${dateLabel}</div>
         <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${f.tipo_badge || f.tipo}</div>
       </div>
