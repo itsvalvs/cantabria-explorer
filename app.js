@@ -4,9 +4,28 @@
 // ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
 // Si en la consola no ves este mensaje, el navegador te está
 // sirviendo un app.js antiguo (sube el ?v= del index.html).
-const APP_BUILD = "2026-08-08 · notis+miniaturas";
+const APP_BUILD = "2026-08-10 · gpu-lite mapa";
 console.log("%c Ya lo pisé — build " + APP_BUILD + " ",
     "background:#22b050;color:#fff;font-weight:700;border-radius:4px;padding:2px 6px");
+
+// ═══ DETECCIÓN GPU FRÁGIL ═══════════════════════════════════
+// Huawei Browser (sin GMS) y Chromium <100 tienen GPU Mali con
+// mala tolerancia a filtros SVG + drop-shadow animado + backdrop-filter
+// simultáneos. Al pinchar un municipio se puede pantallar el navegador.
+// Marcamos <html class="gpu-lite"> y el CSS/JS usan versiones ligeras.
+(function () {
+    try {
+        const ua = navigator.userAgent || "";
+        const isHuaweiBrowser = /HuaweiBrowser|HMSCore|HMS Core/i.test(ua);
+        const chromeMatch = ua.match(/Chrome\/(\d+)/);
+        const chromeVersion = chromeMatch ? parseInt(chromeMatch[1], 10) : 999;
+        const isOldChromium = /Android/.test(ua) && chromeVersion < 100;
+        if (isHuaweiBrowser || isOldChromium) {
+            document.documentElement.classList.add("gpu-lite");
+            console.log("[gpu-lite] activado. Chrome:", chromeVersion, "· Huawei:", isHuaweiBrowser);
+        }
+    } catch (_) {}
+})();
 
 // Diagnóstico rápido desde la consola: window.ylpDebug()
 window.ylpDebug = function () {
@@ -368,14 +387,23 @@ function resetMapZoom() {
 // (foco/spotlight) + tarjeta flotante con la info, y permite desagrandar
 // tocando la X, el propio municipio otra vez, o el mar de alrededor.
 function spotlightMuni(name) {
-  d3.selectAll('.muni-path')
-    .transition().duration(300)
-    .style('opacity', function() { return d3.select(this).attr('data-name') === name ? 1 : 0.25; })
-    .style('filter', function() { return d3.select(this).attr('data-name') === name ? 'url(#glow-select)' : 'saturate(0.35)'; });
+  const all = d3.selectAll('.muni-path');
+  all.interrupt(); // evita acumular transiciones si se pincha rápido
+  const lite = document.documentElement.classList.contains('gpu-lite');
+  all.transition().duration(300)
+    .style('opacity', function() { return d3.select(this).attr('data-name') === name ? 1 : 0.25; });
+  if (lite) {
+    // En GPU frágil (Huawei/Chromium viejo): sin filtro saturate() sobre 100+ paths
+    // ni glow SVG del seleccionado. La clase .selected ya da resalte suficiente.
+    all.style('filter', null);
+  } else {
+    all.style('filter', function() { return d3.select(this).attr('data-name') === name ? 'url(#glow-select)' : 'saturate(0.35)'; });
+  }
 }
 function clearMuniSpotlight() {
-  d3.selectAll('.muni-path')
-    .transition().duration(300)
+  const all = d3.selectAll('.muni-path');
+  all.interrupt();
+  all.transition().duration(300)
     .style('opacity', 1)
     .style('filter', null);
 }
@@ -415,8 +443,12 @@ function showMuniZoomCard(name) {
   if (!card) {
     card = document.createElement('div');
     card.id = 'muni-zoom-card';
+    const lite = document.documentElement.classList.contains('gpu-lite');
+    const bg = lite
+      ? 'background:rgba(10,16,24,0.94);'
+      : 'background:rgba(10,16,24,0.86);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
     card.style.cssText = 'position:absolute;left:10px;right:10px;top:10px;z-index:5;'
-      + 'background:rgba(10,16,24,0.86);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.12);'
+      + bg + 'border:1px solid rgba(255,255,255,0.12);'
       + 'border-radius:16px;padding:12px 14px;display:flex;align-items:flex-start;gap:10px;'
       + 'box-shadow:0 10px 26px rgba(0,0,0,0.35);opacity:0;transform:translateY(-8px);transition:opacity .25s ease,transform .25s ease';
     mc.appendChild(card);
@@ -3847,7 +3879,7 @@ async function loadMap() {
         // Brillo dorado para el municipio en "modo agrandado" (spotlight)
         const glowSel = defs.append("filter").attr("id", "glow-select")
             .attr("x", "-60%").attr("y", "-60%").attr("width", "220%").attr("height", "220%");
-        glowSel.append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 2.4)
+        glowSel.append("feDropShadow").attr("dx", 0).attr("dy", 0).attr("stdDeviation", 1.8)
             .attr("flood-color", "#e8c93a").attr("flood-opacity", 0.85);
 
         c.append("rect").attr("id", "map-sea-bg").attr("width", o).attr("height", a).attr("fill", "url(#grad-sea)")
