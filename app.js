@@ -896,6 +896,53 @@ async function saveOrigen(origen) {
   if (origen !== 'fuera' && typeof toast === 'function') toast('¡Bienvenida/o a Ya lo pisé! 🥾', 'success');
 }
 
+async function borrarCuenta() {
+    if (!state.user) return;
+    // 1er aviso — explicativo
+    const paso1 = await confirmar(
+        "Vas a borrar tu cuenta para siempre. Se eliminarán tus visitas, fotos, comentarios, amistades y avatar. Esto es irreversible.",
+        { titulo: "⚠️ Borrar cuenta", ok: "Continuar", cancel: "Cancelar", peligro: !0 }
+    );
+    if (!paso1) return;
+    // 2º aviso — hay que escribir BORRAR
+    const conf = prompt("Última confirmación: escribe la palabra BORRAR (en mayúsculas) para eliminar tu cuenta definitivamente.");
+    if (conf === null) return;
+    if (conf.trim() !== "BORRAR") {
+        toast("Cancelado. Tu cuenta sigue activa.", "info");
+        return;
+    }
+    toast("Borrando tu cuenta...", "info");
+    try {
+        const { data: sess } = await db.auth.getSession();
+        const token = sess?.session?.access_token;
+        if (!token) throw new Error("Sesión no encontrada. Vuelve a iniciar sesión.");
+        const resp = await fetch(SUPABASE_URL + "/functions/v1/borrar-cuenta", {
+            method: "POST",
+            headers: {
+                "Authorization": "Bearer " + token,
+                "apikey": SUPABASE_ANON,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({})
+        });
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(body.error || ("Error " + resp.status));
+        // Éxito — limpieza local total y volver al auth
+        try { await db.auth.signOut(); } catch (_) {}
+        try {
+            const uid = state.user?.id;
+            if (uid) localStorage.removeItem("ylp_offline_" + uid);
+        } catch (_) {}
+        state.user = null; state.profile = null;
+        state.visited = {}; state.photos = [];
+        state.feedCache = null; _friendsCache = null;
+        alert("Tu cuenta ha sido eliminada. Gracias por haber pisado con nosotros 💚");
+        location.reload();
+    } catch (err) {
+        toast("No se pudo borrar la cuenta: " + (err.message || err), "error");
+    }
+}
+
 async function doLogout() {
     await db.auth.signOut(), state.user = null, state.profile = null, state.visited = {}, state.photos = [], showAuth()
 }
