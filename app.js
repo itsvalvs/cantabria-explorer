@@ -4080,7 +4080,26 @@ async function init() {
         showApp(); loadMap(); loadEventos();
     } else showAuth();
     db.auth.onAuthStateChange(async (e, t) => {
-        if ("PASSWORD_RECOVERY" === e) { state.recoveryMode = !0; return promptNuevaPassword(); }
+        if ("PASSWORD_RECOVERY" === e) {
+            // Solo tratamos como recovery si la URL realmente lo dice.
+            // Al confirmar un registro (type=signup), Supabase a veces también
+            // dispara PASSWORD_RECOVERY — no queremos pedir contraseña nueva ahí.
+            const hash = window.location.hash || "";
+            const isRealRecovery = hash.includes("type=recovery");
+            if (!isRealRecovery) {
+                // Es una confirmación de signup: continuamos con el flujo normal.
+                if (t?.user && !state.user) {
+                    await loadUserData(t.user); showApp(); loadMap(); loadEventos();
+                }
+                // Limpia el hash para que no se vuelva a disparar al recargar
+                if (window.history?.replaceState) {
+                    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+                }
+                return;
+            }
+            state.recoveryMode = !0;
+            return promptNuevaPassword();
+        }
         if (state.recoveryMode) return;
         "SIGNED_OUT" === e ? showAuth() : "SIGNED_IN" === e && t?.user && !state.user && (await loadUserData(t.user), showApp(), loadMap(), loadEventos())
     })
