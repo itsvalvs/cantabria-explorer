@@ -3299,18 +3299,23 @@ async function openFriendProfile(e, t) {
     }).limit(9)]), s = n.data, r = o.data || [], d = a.data || [], l = new Set(r.map(e => e.municipio));
     s?.avatar_url && (document.getElementById("fp-avatar").innerHTML = '<img src="' + esc(s.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(t) + '"/>'), document.getElementById("fp-visits-count").textContent = r.length, document.getElementById("fp-photos-count").textContent = d.length, renderFriendMiniMap(l);
 
-    // Moderación: reportar / bloquear usuario
+    // Moderación: dejar de ser amigos / reportar / bloquear usuario
     let mod = document.getElementById("fp-moderation");
     if (!mod) {
         mod = document.createElement("div");
         mod.id = "fp-moderation";
         document.getElementById("fp-gallery").parentNode.appendChild(mod);
     }
-    mod.style.cssText = "display:flex;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)";
-    mod.innerHTML =
+    mod.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)";
+    const _somosAmigos = await (async () => {
+        try { return (await getFriendsCache()).some(a => a.id === e); } catch (_) { return false; }
+    })();
+    const _btnUnfriend = _somosAmigos
+        ? '<button data-uid="' + esc(e) + '" data-uname="' + esc(t) + '" onclick="dejarDeSerAmigos(this.dataset.uid, this.dataset.uname)" style="flex:1 1 100%;padding:9px;background:rgba(232,184,32,0.1);color:#e8b820;border:1px solid rgba(232,184,32,0.3);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-user-minus" aria-hidden="true"></i> Dejar de ser amigos</button>'
+        : "";
+    mod.innerHTML = _btnUnfriend +
         '<button data-uid="' + esc(e) + '" onclick="reportarContenido(\'usuario\', this.dataset.uid, this.dataset.uid)" style="flex:1;padding:9px;background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-flag" aria-hidden="true"></i> Reportar</button>' +
         '<button data-uid="' + esc(e) + '" data-uname="' + esc(t) + '" onclick="bloquearUsuario(this.dataset.uid, this.dataset.uname)" style="flex:1;padding:9px;background:rgba(232,40,40,0.1);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif"><i class="ti ti-ban" aria-hidden="true"></i> Bloquear</button>';
-
     // Amigos de este usuario (para enviarles solicitud)
     renderFriendsOfFriend(e, mod);
     document.getElementById("fp-map").innerHTML = r.length ? r.slice(0, 8).map(e => {
@@ -4844,6 +4849,26 @@ async function reportarContenido(tipo, contenidoId, usuarioId) {
         toast("Gracias, hemos recibido tu reporte", "success");
     } catch (err) {
         toast("No se pudo enviar el reporte", "error");
+    }
+}
+
+async function dejarDeSerAmigos(uid, uname) {
+    if (!state.user || !uid || uid === state.user.id) return;
+    if (!await confirmar(
+        "Ya no veréis vuestro contenido en el feed. Podréis volver a ser amigos si alguno envía una nueva solicitud.",
+        { titulo: "¿Dejar de ser amigos" + (uname ? " de @" + uname : "") + "?", ok: "Dejar de ser amigos", peligro: !0 }
+    )) return;
+    try {
+        await db.from("friendships").delete()
+            .or(`and(follower_id.eq.${state.user.id},following_id.eq.${uid}),and(follower_id.eq.${uid},following_id.eq.${state.user.id})`);
+        _friendsCache = null;
+        state.feedCache = null;
+        if (typeof closeFriendProfile === "function") closeFriendProfile();
+        if (typeof loadFriendCount === "function") loadFriendCount();
+        if (typeof loadFeed === "function") loadFeed(!0);
+        toast("Ya no sois amigos", "info");
+    } catch (err) {
+        toast("Error: " + (err.message || err), "error");
     }
 }
 
