@@ -838,8 +838,7 @@ function showWelcomeOrigen(tries = 0) {
   const munis = getMunicipiosList();
   // Si el mapa aún no se ha dibujado, reintenta un momento
   if (!munis.length && tries < 8) { setTimeout(() => showWelcomeOrigen(tries + 1), 500); return; }
-
-  const opciones = munis.map(m => '<option value="' + esc(m) + '"></option>').join('');
+    const opciones = munis.map(m => '<option value="' + esc(m) + '">' + esc(m) + '</option>').join('');
   const ov = document.createElement('div');
   ov.id = 'origen-modal';
   ov.style.cssText = 'position:fixed;inset:0;z-index:600;background:rgba(6,12,20,0.82);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:22px;font-family:Inter,sans-serif';
@@ -847,27 +846,32 @@ function showWelcomeOrigen(tries = 0) {
     '<div style="width:100%;max-width:360px;background:#141e2c;border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:26px 22px;box-shadow:0 20px 60px rgba(0,0,0,0.5)">'
     + '<div style="font-size:34px;text-align:center;margin-bottom:6px">🏔️</div>'
     + '<div style="font-family:Georgia,serif;font-style:italic;font-size:23px;color:#fff;text-align:center;margin-bottom:6px">¿De dónde eres?</div>'
-    + '<div style="font-size:13px;color:rgba(255,255,255,0.55);text-align:center;line-height:1.5;margin-bottom:18px">Esto es turismo interno: hecho por y para cántabros.<br>Dinos tu pueblo (aunque vivas fuera 😉).</div>'
-    + '<input id="origen-inp" list="origen-list" autocomplete="off" placeholder="Escribe tu municipio…" style="width:100%;box-sizing:border-box;padding:13px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:12px;color:#fff;font-size:15px;font-family:Inter,sans-serif;outline:none"/>'
-    + '<datalist id="origen-list">' + opciones + '</datalist>'
+    + '<div style="font-size:13px;color:rgba(255,255,255,0.55);text-align:center;line-height:1.5;margin-bottom:18px">Esto es turismo interno: hecho por y para cántabros.<br>Elige tu pueblo (aunque vivas fuera 😉).</div>'
+    + '<select id="origen-sel" style="width:100%;box-sizing:border-box;padding:13px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:12px;color:#fff;font-size:15px;font-family:Inter,sans-serif;outline:none;appearance:none;-webkit-appearance:none;background-image:url(\'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2214%22 height=%2214%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22white%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><polyline points=%226 9 12 15 18 9%22/></svg>\');background-repeat:no-repeat;background-position:right 14px center;padding-right:38px">'
+    + '<option value="" style="background:#141e2c;color:rgba(255,255,255,0.5)">Elige tu municipio…</option>'
+    + opciones
+    + '</select>'
     + '<div id="origen-err" style="display:none;color:#e8288a;font-size:12px;margin-top:8px"></div>'
     + '<button id="origen-ok" style="width:100%;margin-top:16px;padding:14px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Empezar a conquistar</button>'
     + '<button id="origen-fuera" style="width:100%;margin-top:10px;padding:11px;background:none;border:none;color:rgba(255,255,255,0.4);font-size:12px;cursor:pointer;font-family:Inter,sans-serif;text-decoration:underline">No soy de Cantabria</button>'
     + '</div>';
   document.body.appendChild(ov);
 
+  // Que las <option> del select se vean legibles al desplegar
+  const sel = document.getElementById('origen-sel');
+  if (sel) {
+    [...sel.options].forEach(o => { if (o.value) { o.style.background = '#141e2c'; o.style.color = '#fff'; } });
+  }
+
   document.getElementById('origen-ok').onclick = () => {
-    const val = document.getElementById('origen-inp').value.trim();
+    const val = (document.getElementById('origen-sel').value || '').trim();
     const err = document.getElementById('origen-err');
-    if (!val) { err.textContent = 'Escribe tu municipio o pulsa «No soy de Cantabria».'; err.style.display = 'block'; return; }
-    const norm = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const match = munis.find(m => norm(m) === norm(val)); // acepta aunque no ponga tildes
-    if (!match) { err.textContent = 'No encontramos ese municipio. Elígelo de la lista.'; err.style.display = 'block'; return; }
-    saveOrigen(match);
+    if (!val) { err.textContent = 'Elige tu municipio o pulsa «No soy de Cantabria».'; err.style.display = 'block'; return; }
+    saveOrigen(val);
   };
   document.getElementById('origen-fuera').onclick = showFueraMessage;
 }
-
+  
 // Mensajito con cariño para los de fuera (sin bloquear)
 function showFueraMessage() {
   const ov = document.getElementById('origen-modal');
@@ -4867,9 +4871,9 @@ async function verBloqueados() {
             const av = p.avatar_url
                 ? '<img src="' + esc(p.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt=""/>'
                 : getInitials(p.username);
-            return '<div style="display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06)">'
+            return '<div data-blk-row style="display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06)">'
                 + '<div style="width:36px;height:36px;border-radius:50%;background:#1a2535;display:flex;align-items:center;justify-content:center;font-size:12px;color:#7ab3e8;flex-shrink:0;overflow:hidden">' + av + '</div>'
-                + '<span style="flex:1;font-size:14px;color:#fff">' + esc(p.username) + '</span>'
+                + '<span data-blk-uname style="flex:1;font-size:14px;color:#fff">' + esc(p.username) + '</span>'
                 + '<button data-uid="' + esc(p.id) + '" onclick="desbloquearUsuario(this.dataset.uid, this)" style="padding:7px 14px;background:rgba(34,176,80,0.15);color:#5DCAA5;border:1px solid rgba(34,176,80,0.35);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">Desbloquear</button>'
                 + '</div>';
         }).join("");
@@ -4880,13 +4884,38 @@ async function verBloqueados() {
 
 async function desbloquearUsuario(uid, btn) {
     if (!state.user || !uid) return;
+    // Cogemos el nombre antes de tocar el botón, para el modal siguiente
+    const row = btn ? btn.closest("[data-blk-row]") || btn.parentElement : null;
+    const uname = row ? (row.querySelector("[data-blk-uname]")?.textContent || "").trim() : "";
     if (btn) { btn.disabled = !0; btn.textContent = "..."; }
     try {
         await db.from("blocks").delete().eq("blocker_id", state.user.id).eq("blocked_id", uid);
         state.blockedIds?.delete(uid);
         state.feedCache = null; _friendsCache = null;
-        if (btn) { const row = btn.closest("div"); if (row) row.remove(); }
-        toast("Usuario desbloqueado. Si quieres volver a ser amigos, tendrás que enviarle la solicitud otra vez.", "success");
+        if (row) row.remove();
+        // Si la lista se ha quedado vacía, mensaje amable
+        const listEl = document.getElementById("bloqueados-list");
+        if (listEl && !listEl.querySelector("[data-blk-row]")) {
+            listEl.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:10px 0">No has bloqueado a nadie.</div>';
+        }
+        toast("Usuario desbloqueado", "success");
+        // Ofrecer volver a enviar solicitud de amistad
+        const ok = await confirmar(
+            "Ya no está bloqueado. ¿Quieres enviarle una solicitud de amistad para volver a ver su contenido en el feed?",
+            { titulo: "¿Volver a ser amigos?" + (uname ? " · @" + uname : ""), ok: "Enviar solicitud", cancel: "Ahora no" }
+        );
+        if (ok) {
+            const { error } = await db.from("friendships").insert({
+                follower_id: state.user.id,
+                following_id: uid,
+                estado: "pendiente"
+            });
+            if (error && error.code !== "23505") {
+                toast("No se pudo enviar la solicitud: " + error.message, "error");
+            } else {
+                toast("Solicitud enviada. Cuando la acepte, veréis vuestro contenido en el feed 💚", "success");
+            }
+        }
     } catch (e) {
         toast("No se pudo desbloquear: " + (e.message || e), "error");
         if (btn) { btn.disabled = !1; btn.textContent = "Desbloquear"; }
