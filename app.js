@@ -1872,9 +1872,8 @@ function _evSingleCard(e) {
         <div class="ev-name">${esc(e.nombre)}</div>
         <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>
         <div class="ev-desc">${esc(e.descripcion || "")}</div>
-        <div id="ev-fotos-${e.id}" style="margin:8px 0"></div>
         <div class="ev-footer">
-          <div class="ev-count" id="ev-count-${e.id}"><strong>...</strong> van</div>
+          <div class="ev-count" id="ev-count-${e.id}" data-eid="${esc(e.id)}" onclick="event.stopPropagation();openEventGoingModal(this.dataset.eid)" style="cursor:pointer"><strong>...</strong> van</div>
           <div style="display:flex;gap:6px;align-items:center">
             ${fotosBtn}
             <button onclick="event.stopPropagation();toggleInscripcion('${e.id}')" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background-color:${bg};color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ${ic}" aria-hidden="true"></i>${txt}</button>
@@ -1903,8 +1902,7 @@ function _evFestivalCard(f) {
               <div style="font-size:11px;color:rgba(255,255,255,0.45);flex-shrink:0">${ev.fecha && fechas.length > 1 ? _evDateShort(ev.fecha) : ""}</div>
             </div>
             ${ev.descripcion ? `<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:3px;line-height:1.4">${esc(ev.descripcion)}</div>` : `<div style="font-size:11px;color:rgba(255,255,255,0.3);margin-top:3px">Toca para ver la programación</div>`}
-            <div id="ev-fotos-${ev.id}" style="margin:7px 0 0"></div>
-            <div id="ev-count-${ev.id}" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:5px"><strong>...</strong> van</div>
+            <div id="ev-count-${ev.id}" data-eid="${esc(ev.id)}" onclick="event.stopPropagation();openEventGoingModal(this.dataset.eid)" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:5px;cursor:pointer"><strong>...</strong> van</div>
           </div>
           <div style="display:flex;gap:6px;margin-top:8px">
             ${fotosBtn}
@@ -1995,42 +1993,91 @@ function renderEventos() {
         return header + cards;
     }).join("");
     if (isAdmin()) { loadPendingSuggestionsBadge(); loadPendingReportsBadge(); }
-    list.forEach(e => { loadEventCount(e.id); loadEventPhotos(e.id); });
+    // Solo cargamos el contador de apuntados; las fotos ya solo se ven dentro de la ficha del evento.
+    list.forEach(e => { loadEventCount(e.id); });
 }
+// Galería completa de fotos del evento (solo dentro de la ficha).
+// Mantenemos el nombre por compatibilidad con las llamadas existentes.
 async function loadEventPhotos(eventId, targetId) {
-    const cont = document.getElementById(targetId || "ev-fotos-" + eventId);
+    const cont = document.getElementById(targetId || "evm-fotos");
     if (!cont) return;
     const { data: fotos } = await db.from("event_photos")
-        .select("id, user_id, storage_path, descripcion, profiles(username)")
-        .eq("event_id", eventId).order("created_at", { ascending: !1 }).limit(8);
-    if (!fotos || !fotos.length) { cont.innerHTML = ""; return; }
-    const paths = [...new Set(fotos.map(f => f.storage_path).filter(Boolean))];
+        .select("id, user_id, storage_path, descripcion, created_at, profiles(username)")
+        .eq("event_id", eventId).order("created_at", { ascending: !1 });
+    if (!fotos || !fotos.length) {
+        cont.innerHTML = '<div style="margin-top:6px;padding:14px;background:rgba(255,255,255,0.03);border:1px dashed rgba(255,255,255,0.12);border-radius:12px;text-align:center;font-size:12px;color:rgba(255,255,255,0.4)">📸 Aún no hay fotos. ¡Sé el primero en subir una!</div>';
+        return;
+    }
+    // Filtramos bloqueados
+    const visibles = fotos.filter(f => !state.blockedIds?.has(f.user_id));
+    if (!visibles.length) { cont.innerHTML = ""; return; }
+    const paths = [...new Set(visibles.map(f => f.storage_path).filter(Boolean))];
     const { data: signed } = await db.storage.from("evidencias").createSignedUrls(paths, 3600);
     const urls = {};
     (signed || []).forEach(s => { if (s.signedUrl) urls[s.path] = s.signedUrl; });
-    const thumbs = fotos.filter(f => urls[f.storage_path]).map(f =>
-        '<div style="flex-shrink:0;width:74px;height:74px;border-radius:10px;overflow:hidden;background:#1a2535">'
-        + '<img src="' + esc(urls[f.storage_path]) + '" style="width:100%;height:100%;object-fit:cover" alt="' + esc(f.profiles?.username || "foto") + '" title="' + esc(f.profiles?.username || "") + '"/>'
+    // Guardamos el mapa para el lightbox
+    window._evPhotoUrls = window._evPhotoUrls || {};
+    visibles.forEach(f => { if (urls[f.storage_path]) window._evPhotoUrls[f.id] = { url: urls[f.storage_path], user: f.profiles?.username || "", desc: f.descripcion || "" }; });
+    const items = visibles.filter(f => urls[f.storage_path]).map(f =>
+        '<div data-fid="' + esc(f.id) + '" onclick="openEventPhotoLightbox(this.dataset.fid)" style="position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:#1a2535;cursor:pointer">'
+        + '<img src="' + esc(urls[f.storage_path]) + '" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" alt="' + esc(f.profiles?.username || "foto") + '"/>'
+        + (f.profiles?.username ? '<div style="position:absolute;bottom:0;left:0;right:0;padding:4px 6px;background:linear-gradient(to top,rgba(0,0,0,0.75),transparent);font-size:10px;color:#fff;font-weight:600">@' + esc(f.profiles.username) + '</div>' : '')
         + '</div>').join("");
-    cont.innerHTML = thumbs
-        ? '<div style="font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em">📸 Fotos del evento</div><div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px">' + thumbs + '</div>'
-        : "";
+    cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">📸 Fotos del evento · ' + visibles.length + '</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">' + items + '</div>';
+}
+
+// Lightbox simple para las fotos del evento
+function openEventPhotoLightbox(fid) {
+    const info = window._evPhotoUrls?.[fid];
+    if (!info) return;
+    let ov = document.getElementById("ev-lightbox");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "ev-lightbox";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:500;display:none;align-items:center;justify-content:center;padding:20px;cursor:zoom-out";
+        ov.addEventListener("click", () => { ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="max-width:100%;max-height:100%;text-align:center">'
+        + '<img src="' + esc(info.url) + '" style="max-width:100%;max-height:80vh;border-radius:12px;display:block;margin:0 auto"/>'
+        + (info.user || info.desc
+            ? '<div style="margin-top:12px;color:#fff;font-size:13px">'
+              + (info.user ? '<div style="font-weight:700;color:#e8b820">@' + esc(info.user) + '</div>' : '')
+              + (info.desc ? '<div style="margin-top:4px;color:rgba(255,255,255,0.75);line-height:1.4">' + esc(info.desc) + '</div>' : '')
+              + '</div>'
+            : '')
+        + '</div>';
+    ov.style.display = "flex";
 }
 async function loadEventCount(e) {
-    const {
-        count: t
-    } = await db.from("event_signups").select("*", {
-        count: "exact",
-        head: !0
-    }).eq("event_id", e), i = document.getElementById("ev-count-" + e);
-    i && (i.innerHTML = `<strong>${t||0}</strong> van`)
+    const { count: t } = await db.from("event_signups").select("*", {
+        count: "exact", head: !0
+    }).eq("event_id", e).eq("estado", "aprobado");
+    const i = document.getElementById("ev-count-" + e);
+    if (i) i.innerHTML = `<strong>${t||0}</strong> van`;
 }
 async function toggleInscripcion(e) {
     if (!state.user) return;
-    state.inscripciones[e] ? (await db.from("event_signups").delete().eq("user_id", state.user.id).eq("event_id", e), delete state.inscripciones[e]) : (await db.from("event_signups").insert({
-        user_id: state.user.id,
-        event_id: e
-    }), state.inscripciones[e] = !0), renderEventos()
+    const ev = (state.eventos || []).find(x => String(x.id) === String(e));
+    // Si es privado, la lógica de solicitud pasa por otra función (bloque 4)
+    if (ev?.es_privado) return solicitarPlazaEventoPrivado(e);
+    if (state.inscripciones[e]) {
+        await db.from("event_signups").delete().eq("user_id", state.user.id).eq("event_id", e);
+        delete state.inscripciones[e];
+    } else {
+        const { error } = await db.from("event_signups").insert({
+            user_id: state.user.id, event_id: e, estado: "aprobado"
+        });
+        if (error) { toast("No se pudo apuntar: " + error.message, "error"); return; }
+        state.inscripciones[e] = !0;
+    }
+    renderEventos();
+}
+// Stub temporal: la función real llegará en el bloque 4.
+// Así evitamos ReferenceError si alguien intenta apuntarse a un privado antes de tener el bloque 4.
+if (typeof window.solicitarPlazaEventoPrivado !== "function") {
+    window.solicitarPlazaEventoPrivado = function() { toast("Los eventos privados se activarán en la próxima actualización", "info"); };
 }
 let pendingEventId = null,
     pendingEventName = null;
@@ -5053,13 +5100,16 @@ function renderProgramaHtml(ev) {
     }).join("") + '</div>';
 }
 
-// — Quién va (con caras) —
+// — Quién va (con caras). Todo el bloque es clicable → abre la lista completa.
 async function loadEventGoing(eid) {
   const cont = document.getElementById("evm-going"); if (!cont) return;
   try {
-    const { data } = await db.from("event_signups").select("user_id").eq("event_id", eid);
+    const { data } = await db.from("event_signups").select("user_id").eq("event_id", eid).eq("estado", "aprobado");
     const uids = [...new Set((data || []).map(d => d.user_id))].filter(u => !state.blockedIds?.has(u));
-    if (!uids.length) { cont.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.35)">Nadie se ha apuntado aún. ¡Sé el primero! 🎉</div>'; return; }
+    if (!uids.length) {
+      cont.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.35)">Nadie se ha apuntado aún. ¡Sé el primero! 🎉</div>';
+      return;
+    }
     const { data: profs } = await db.from("profiles").select("id,username,avatar_url").in("id", uids);
     const friends = await getFriendsCache().catch(() => []);
     const friendIds = new Set((friends || []).map(f => f.id));
@@ -5074,11 +5124,77 @@ async function loadEventGoing(eid) {
     }).join("");
     const friendsGoing = ordered.filter(p => friendIds.has(p.id)).map(p => p.username).filter(Boolean);
     const extra = uids.length > 12 ? '<div style="margin-left:4px;font-size:12px;color:rgba(255,255,255,0.5)">+' + (uids.length - 12) + '</div>' : '';
-    cont.innerHTML = '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">👥 Quién va</div>'
+    cont.innerHTML = '<div data-eid="' + esc(eid) + '" onclick="openEventGoingModal(this.dataset.eid)" style="cursor:pointer;padding:2px 0;border-radius:10px" title="Ver todos los apuntados">'
+      + '<div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">👥 Quién va · toca para ver todos</div>'
       + '<div style="display:flex;align-items:center;padding-left:9px">' + avatars + extra + '</div>'
       + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:7px"><strong style="color:#fff">' + uids.length + '</strong> apuntados'
-      + (friendsGoing.length ? ' · 👥 van ' + esc(friendsGoing.slice(0, 3).join(", ")) + (friendsGoing.length > 3 ? " y " + (friendsGoing.length - 3) + " más" : "") : "") + '</div>';
+      + (friendsGoing.length ? ' · 👥 van ' + esc(friendsGoing.slice(0, 3).join(", ")) + (friendsGoing.length > 3 ? " y " + (friendsGoing.length - 3) + " más" : "") : "")
+      + '</div></div>';
   } catch (e) { console.error("loadEventGoing", e); cont.innerHTML = ""; }
+}
+
+// — Modal completa "Quién va" — lista con avatares clicables a perfil
+async function openEventGoingModal(eid) {
+    const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
+    let ov = document.getElementById("evgoing-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "evgoing-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:450;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:80vh;overflow-y:auto;padding:18px 16px 24px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+        + '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;font-weight:700;color:#fff">👥 Quién va</div>'
+        + (ev ? '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:2px">' + esc(ev.nombre) + '</div>' : '')
+        + '</div>'
+        + '<button onclick="document.getElementById(\'evgoing-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer;flex-shrink:0">✕</button>'
+        + '</div>'
+        + '<div id="evgoing-list"><div style="text-align:center;padding:24px;color:rgba(255,255,255,0.4);font-size:12px"><div class="spin" style="margin:0 auto 8px"></div>Cargando...</div></div>'
+        + '</div>';
+    ov.style.display = "flex";
+    try {
+        const { data } = await db.from("event_signups")
+            .select("user_id, created_at").eq("event_id", eid).eq("estado", "aprobado")
+            .order("created_at", { ascending: !0 });
+        const uids = [...new Set((data || []).map(d => d.user_id))].filter(u => !state.blockedIds?.has(u));
+        const list = document.getElementById("evgoing-list");
+        if (!list) return;
+        if (!uids.length) {
+            list.innerHTML = '<div style="text-align:center;padding:20px;color:rgba(255,255,255,0.4);font-size:13px">Nadie se ha apuntado aún 🎉</div>';
+            return;
+        }
+        const { data: profs } = await db.from("profiles").select("id,username,avatar_url").in("id", uids);
+        const friends = await getFriendsCache().catch(() => []);
+        const friendIds = new Set((friends || []).map(f => f.id));
+        // Ordena: tú primero, luego amigos, luego el resto
+        const ordered = (profs || []).sort((a, b) => {
+            const sa = a.id === state.user.id ? 2 : friendIds.has(a.id) ? 1 : 0;
+            const sb = b.id === state.user.id ? 2 : friendIds.has(b.id) ? 1 : 0;
+            return sb - sa;
+        });
+        list.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px"><strong style="color:#fff">' + uids.length + '</strong> apuntados</div>'
+            + ordered.map(p => {
+                const isMe = p.id === state.user.id;
+                const isF = friendIds.has(p.id);
+                const badge = isMe ? '<span style="font-size:10px;padding:2px 7px;background:rgba(232,184,32,0.2);color:#e8b820;border-radius:999px;font-weight:600">Tú</span>'
+                            : isF ? '<span style="font-size:10px;padding:2px 7px;background:rgba(93,202,165,0.15);color:#5DCAA5;border-radius:999px;font-weight:600">Amigo</span>' : '';
+                const avatarHtml = p.avatar_url
+                    ? '<img src="' + esc(p.avatar_url) + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0"/>'
+                    : '<div style="width:40px;height:40px;border-radius:50%;background:#22324a;display:flex;align-items:center;justify-content:center;font-size:13px;color:#9cc4f0;flex-shrink:0;font-weight:600">' + esc(getInitials(p.username || "?")) + '</div>';
+                const clickable = !isMe;
+                return '<div ' + (clickable ? 'data-uid="' + esc(p.id) + '" data-uname="' + esc(p.username || "") + '" onclick="document.getElementById(\'evgoing-modal\').style.display=\'none\';setTimeout(()=>openFriendProfile(this.dataset.uid, this.dataset.uname),60)"' : '') + ' style="display:flex;align-items:center;gap:11px;padding:10px 4px;border-bottom:1px solid rgba(255,255,255,0.06)' + (clickable ? ';cursor:pointer' : '') + '">'
+                    + avatarHtml
+                    + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@' + esc(p.username || "usuario") + '</div></div>'
+                    + badge
+                    + '</div>';
+            }).join("");
+    } catch (e) {
+        console.error("openEventGoingModal", e);
+        const list = document.getElementById("evgoing-list");
+        if (list) list.innerHTML = '<div style="text-align:center;padding:20px;color:#ff6b6b;font-size:12px">Error al cargar la lista</div>';
+    }
 }
 
 // — Recordatorio local (sin servidor: avisa al abrir la app cerca de la fecha) —
