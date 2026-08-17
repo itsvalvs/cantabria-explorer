@@ -1869,7 +1869,7 @@ function _evSingleCard(e) {
         <div class="ev-tipo-badge" style="background:rgba(255,255,255,0.15);color:#fff">${e.tipo_badge || e.tipo}</div>
       </div>
       <div class="ev-body">
-        <div class="ev-name">${esc(e.nombre)}</div>
+        <div class="ev-name">${e.es_privado ? '🔒 ' : ''}${esc(e.nombre)}</div>
         <div class="ev-loc"><i class="ti ti-map-pin" aria-hidden="true"></i>${esc(e.lugar)}</div>
         <div class="ev-desc">${esc(e.descripcion || "")}</div>
         <div class="ev-footer">
@@ -1931,11 +1931,17 @@ function renderEventos() {
     const isUpcoming = ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d >= today; };
     const upcoming = state.eventos.filter(isUpcoming);
     const past = state.eventos.filter(ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d < today && state.inscripciones[ev.id]; });
-    let list = "todos" === currentFilter ? upcoming
-        : "cerca" === currentFilter ? upcoming
-            : "inscritos" === currentFilter ? upcoming.filter(e => state.inscripciones[e.id])
+    // Los eventos privados NO aparecen en "Todos" ni en filtros por tipo:
+    // solo se ven desde "Mis eventos" o el listado de pasados si eres el creador/apuntado.
+    const esInvitadoOCreador = e => !!state.inscripciones[e.id] || e.creador_id === state.user?.id;
+    const upcomingPublicOs   = upcoming.filter(e => !e.es_privado);
+    const upcomingMios       = upcoming.filter(e => e.es_privado && esInvitadoOCreador(e));
+
+    let list = "todos" === currentFilter ? [...upcomingPublicOs, ...upcomingMios].sort((a,b)=>new Date(a.fecha)-new Date(b.fecha))
+        : "cerca" === currentFilter ? upcomingPublicOs
+            : "inscritos" === currentFilter ? upcoming.filter(e => esInvitadoOCreador(e))
                 : "pasados" === currentFilter ? past
-                    : upcoming.filter(e => e.tipo === currentFilter);
+                    : upcomingPublicOs.filter(e => e.tipo === currentFilter);
 
     const tabIns = document.getElementById("tab-inscritos");
     if (tabIns) { const c = upcoming.filter(e => state.inscripciones[e.id]).length; tabIns.textContent = c > 0 ? "Mis eventos (" + c + ")" : "Mis eventos"; }
@@ -4458,6 +4464,9 @@ async function loadEventos() {
     }), state.eventos = [...i.values()].sort((e, t) => new Date(e.fecha) - new Date(t.fecha)), renderEventos()
 }
 async function loadEventosSupabase() {
+    // Con RLS activa, el mismo SELECT nos devuelve:
+    //  - todos los públicos activos
+    //  - los privados donde soy creador o estoy apuntado (pendiente o aprobado)
     const {
         data: e
     } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
@@ -5370,19 +5379,70 @@ function openEventModal(eid) {
         + programaFoto
         + renderProgramaHtml(ev)
         + '<div id="evm-going" style="margin-top:16px"></div>'
+        + '<div id="evm-pending"></div>'
         + '<div id="evm-fotos" style="margin-top:14px"></div>'
-        + '<div style="display:flex;gap:8px;margin-top:10px">'
+        + (ev.es_privado
+            ? _renderPrivateEventActions(ev)
+            : _renderPublicEventActions(ev))
+        + '</div>';
+    ov.style.display = "flex";
+    loadEventPhotos(ev.id, "evm-fotos");
+    loadEventGoing(ev.id);
+    if (ev.es_privado && ev.creador_id === state.user.id) loadPendingRequestsForEvent(ev.id);
+    renderFestMiniMap(ev);
+}
+
+// Botones de acción para eventos PÚBLICOS (igual que antes)
+function _renderPublicEventActions(ev) {
+    return '<div style="display:flex;gap:8px;margin-top:10px">'
         + '<button data-eid="' + esc(ev.id) + '" onclick="toggleEventRemind(this.dataset.eid,this)" style="flex:1;padding:11px;background:' + (_remindList().includes(String(ev.id)) ? 'rgba(34,176,80,0.18);color:#5DCAA5' : 'rgba(255,255,255,0.06);color:rgba(255,255,255,0.75)') + ';border:1px solid rgba(255,255,255,0.12);border-radius:12px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (_remindList().includes(String(ev.id)) ? '🔔 Te avisaré' : '🔔 Recuérdame') + '</button>'
         + '<button data-eid="' + esc(ev.id) + '" onclick="shareEvento(this.dataset.eid)" style="flex:1;padding:11px;background:rgba(232,90,160,0.14);color:#f08fc4;border:1px solid rgba(232,90,160,0.35);border-radius:12px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📤 Compartir</button>'
         + '</div>'
         + '<div style="display:flex;gap:8px;margin-top:8px">'
         + '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();setTimeout(()=>openEventFotoSheet(this.dataset.eid, this.dataset.ename),60)" style="flex:1;padding:13px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto del evento</button>'
         + '<button data-eid="' + esc(ev.id) + '" onclick="toggleInscripcion(this.dataset.eid);closeEventModal()" style="flex:1;padding:13px;background:' + (state.inscripciones[ev.id] ? 'rgba(34,176,80,0.18);color:#5DCAA5;border:1px solid rgba(34,176,80,0.4)' : '#22b050;color:#fff;border:none') + ';border-radius:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">' + (state.inscripciones[ev.id] ? '✓ Apuntado' : 'Apuntarme') + '</button>'
-        + '</div></div>';
-    ov.style.display = "flex";
-    loadEventPhotos(ev.id, "evm-fotos");
-    loadEventGoing(ev.id);
-    renderFestMiniMap(ev);
+        + '</div>';
+}
+
+// Botones de acción para eventos PRIVADOS
+function _renderPrivateEventActions(ev) {
+    const soyCreador = ev.creador_id === state.user.id;
+    const apuntado = !!state.inscripciones[ev.id];
+    const badge = '<div style="margin-top:10px;padding:9px 12px;background:rgba(232,90,160,0.12);border:1px solid rgba(232,90,160,0.35);border-radius:10px;font-size:11px;color:#f08fc4;text-align:center">🔒 Evento privado' + (soyCreador ? ' · eres el organizador' : '') + '</div>';
+
+    if (soyCreador) {
+        return badge
+            + '<div style="display:flex;gap:8px;margin-top:10px">'
+            + '<button data-eid="' + esc(ev.id) + '" onclick="openInviteQrModal(this.dataset.eid)" style="flex:1;padding:12px;background:#e8288a;color:#fff;border:none;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">📤 QR / enlace</button>'
+            + '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();setTimeout(()=>openEventFotoSheet(this.dataset.eid, this.dataset.ename),60)" style="flex:1;padding:12px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto</button>'
+            + '</div>'
+            + '<div style="margin-top:8px"><button data-eid="' + esc(ev.id) + '" onclick="borrarEventoPrivado(this.dataset.eid)" style="width:100%;padding:10px;background:transparent;color:rgba(255,107,107,0.9);border:1px solid rgba(255,107,107,0.35);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">🗑️ Cancelar evento</button></div>';
+    }
+
+    // No soy creador: puedo subir foto solo si estoy aprobado
+    return badge
+        + '<div style="display:flex;gap:8px;margin-top:10px">'
+        + (apuntado
+            ? '<button data-eid="' + esc(ev.id) + '" data-ename="' + esc(ev.nombre) + '" onclick="closeEventModal();setTimeout(()=>openEventFotoSheet(this.dataset.eid, this.dataset.ename),60)" style="flex:1;padding:12px;background:rgba(232,184,32,0.18);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">📸 Subir foto</button>'
+            : '')
+        + '<button data-eid="' + esc(ev.id) + '" onclick="solicitarPlazaEventoPrivado(this.dataset.eid);closeEventModal()" style="flex:1;padding:12px;background:' + (apuntado ? 'rgba(34,176,80,0.18);color:#5DCAA5;border:1px solid rgba(34,176,80,0.4)' : '#22b050;color:#fff;border:none') + ';border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">' + (apuntado ? '✓ Apuntado (toca para salir)' : 'Solicitar plaza') + '</button>'
+        + '</div>';
+}
+
+async function borrarEventoPrivado(eid) {
+    if (!await confirmar("¿Cancelar el evento? Se borrarán fotos y solicitudes asociadas.", { titulo: "Cancelar evento", ok: "Cancelar evento", peligro: !0 })) return;
+    try {
+        // Borra signups y event_photos (por si no hay cascade)
+        await db.from("event_signups").delete().eq("event_id", eid);
+        await db.from("event_photos").delete().eq("event_id", eid);
+        const { error } = await db.from("eventos").delete().eq("id", eid);
+        if (error) throw error;
+        state.eventos = (state.eventos || []).filter(x => String(x.id) !== String(eid));
+        delete state.inscripciones[eid];
+        closeEventModal();
+        renderEventos();
+        toast("Evento cancelado", "info");
+    } catch (e) { toast("No se pudo cancelar: " + (e.message || e), "error"); }
 }
 async function loadPendingSuggestionsBadge() {
     try {
@@ -5608,7 +5668,268 @@ async function enviarSugerencia(btn) {
         toast("¡Sugerencia enviada! La revisaremos pronto 🙌", "success");
     } catch (e) {
         toast("No se pudo enviar: " + (e.message || e), "error");
-    } finally { btn.disabled = !1; btn.textContent = "Enviar sugerencia"; }
+    
+} finally { btn.disabled = !1; btn.textContent = "Enviar sugerencia"; }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// EVENTOS PRIVADOS — creación, QR/enlace, solicitudes, aprobación
+// ═══════════════════════════════════════════════════════════════
+
+// Base del enlace de invitación (usamos el origin actual, no hardcodeamos dominio)
+function _evInviteUrl(token) {
+    return window.location.origin + window.location.pathname + "?e=" + encodeURIComponent(token);
+}
+
+// Genera un token URL-safe de ~14 chars
+function _genInviteToken() {
+    const arr = new Uint8Array(10);
+    crypto.getRandomValues(arr);
+    return Array.from(arr, b => b.toString(36).padStart(2, "0")).join("").slice(0, 14);
+}
+
+// ── Modal: crear evento privado ─────────────────────────────────
+function openCrearEventoPrivado() {
+    if (!state.user) return toast("Inicia sesión primero", "info");
+    let ov = document.getElementById("cep-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "cep-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:450;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    const inp = "width:100%;margin-top:8px;padding:11px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;box-sizing:border-box";
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">🔒 Nuevo evento privado</div><button onclick="document.getElementById(\'cep-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-bottom:6px;line-height:1.5">Solo lo verá quien tenga el enlace o QR que compartas. Tú apruebas cada persona que se apunta.</div>'
+        + '<input id="cep-nombre" placeholder="Nombre (ej. Cumple Fran Spirit)" maxlength="80" style="' + inp + '"/>'
+        + '<input id="cep-lugar" placeholder="Sitio (ej. Bar La Chispa, Santander)" maxlength="120" style="' + inp + '"/>'
+        + '<input id="cep-fecha" type="date" style="' + inp + '"/>'
+        + '<select id="cep-tipo" style="' + inp + '">'
+        +   '<option value="fiesta">🎉 Fiesta / cumple</option>'
+        +   '<option value="gastronomica">🍽️ Comida / cena</option>'
+        +   '<option value="deporte">⚽ Deporte / quedada</option>'
+        +   '<option value="cultura">🎭 Cultura</option>'
+        +   '<option value="infantil">👶 Infantil</option>'
+        +   '<option value="concierto">🎵 Concierto</option>'
+        +   '<option value="mercado">🛍️ Mercado</option>'
+        +   '<option value="romeria">⛪ Romería</option>'
+        + '</select>'
+        + '<textarea id="cep-desc" placeholder="Detalles (opcional): a qué hora, qué llevar, etc." maxlength="500" style="' + inp + ';min-height:80px;resize:none"></textarea>'
+        + '<button id="cep-submit" onclick="crearEventoPrivado(this)" style="width:100%;margin-top:14px;padding:13px;background:#e8288a;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Crear y conseguir mi enlace</button>'
+        + '</div>';
+    ov.style.display = "flex";
+}
+
+async function crearEventoPrivado(btn) {
+    const nombre = document.getElementById("cep-nombre")?.value.trim();
+    const lugar  = document.getElementById("cep-lugar")?.value.trim();
+    const fecha  = document.getElementById("cep-fecha")?.value || null;
+    const tipo   = document.getElementById("cep-tipo")?.value || "fiesta";
+    const desc   = document.getElementById("cep-desc")?.value.trim() || null;
+    if (!nombre || !lugar || !fecha) { toast("Pon al menos nombre, sitio y fecha", "info"); return; }
+    btn.disabled = !0; btn.textContent = "Creando...";
+    try {
+        const token = _genInviteToken();
+        const { data, error } = await db.from("eventos").insert({
+            nombre, lugar, fecha, tipo,
+            descripcion: desc,
+            es_privado: !0,
+            invite_token: token,
+            creador_id: state.user.id,
+            activo: !0
+        }).select().single();
+        if (error) throw error;
+        // El creador se apunta automáticamente como aprobado
+        await db.from("event_signups").insert({
+            user_id: state.user.id, event_id: data.id, estado: "aprobado"
+        });
+        state.inscripciones[data.id] = !0;
+        // Refresca la lista local para que el evento aparezca en "Mis eventos"
+        if (!Array.isArray(state.eventos)) state.eventos = [];
+        state.eventos.push(data);
+        document.getElementById("cep-modal").style.display = "none";
+        toast("¡Evento privado creado! 🎉", "success");
+        openInviteQrModal(data.id);
+        renderEventos();
+    } catch (e) {
+        toast("No se pudo crear: " + (e.message || e), "error");
+    } finally { btn.disabled = !1; btn.textContent = "Crear y conseguir mi enlace"; }
+}
+
+// ── Modal: mostrar QR + enlace para compartir ───────────────────
+async function openInviteQrModal(eid) {
+    const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
+    if (!ev || !ev.invite_token) { toast("Este evento no tiene enlace", "error"); return; }
+    const url = _evInviteUrl(ev.invite_token);
+    let ov = document.getElementById("qr-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "qr-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:460;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);padding:16px";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px;width:100%;max-width:420px;padding:22px 18px 24px;text-align:center" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><div style="font-family:\'Playfair Display\',serif;font-size:18px;font-weight:700;color:#fff">📤 Comparte para invitar</div><button onclick="document.getElementById(\'qr-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div style="font-size:13px;color:rgba(255,255,255,0.6);margin-bottom:14px;line-height:1.4"><strong style="color:#fff">' + esc(ev.nombre) + '</strong><br>Quien escanee el QR o abra el enlace podrá solicitar apuntarse. Tú apruebas cada uno.</div>'
+        + '<div id="qr-canvas-holder" style="display:flex;justify-content:center;align-items:center;background:#fff;padding:14px;border-radius:14px;margin-bottom:14px"><canvas id="qr-canvas"></canvas></div>'
+        + '<div style="display:flex;gap:6px;align-items:center;background:#1a2535;border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:8px 10px;margin-bottom:10px">'
+        + '<div style="flex:1;text-align:left;font-size:11px;color:rgba(255,255,255,0.65);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="qr-url-txt">' + esc(url) + '</div>'
+        + '<button onclick="copiarInviteUrl(this)" data-url="' + esc(url) + '" style="padding:6px 12px;background:#2272e8;color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;flex-shrink:0">Copiar</button>'
+        + '</div>'
+        + (navigator.share ? '<button onclick="compartirInvite(\'' + esc(ev.id) + '\')" style="width:100%;padding:12px;background:#e8288a;color:#fff;border:none;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">📱 Compartir por WhatsApp / IG...</button>' : '')
+        + '</div>';
+    ov.style.display = "flex";
+    // Pintar el QR
+    try {
+        if (window.QRCode && window.QRCode.toCanvas) {
+            await window.QRCode.toCanvas(document.getElementById("qr-canvas"), url, {
+                width: 220, margin: 1,
+                color: { dark: "#141e2c", light: "#ffffff" }
+            });
+        } else {
+            document.getElementById("qr-canvas-holder").innerHTML = '<div style="color:#141e2c;padding:12px;font-size:12px">No se pudo generar el QR. Usa el enlace de abajo.</div>';
+        }
+    } catch (e) { console.error("QR:", e); }
+}
+
+function copiarInviteUrl(btn) {
+    const url = btn?.dataset?.url;
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(
+        () => { btn.textContent = "✓ Copiado"; setTimeout(() => btn.textContent = "Copiar", 1500); },
+        () => toast("No se pudo copiar. Selecciona el texto manualmente.", "error")
+    );
+}
+
+async function compartirInvite(eid) {
+    const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
+    if (!ev?.invite_token) return;
+    const url = _evInviteUrl(ev.invite_token);
+    try {
+        await navigator.share({
+            title: ev.nombre,
+            text: "¡Te invito a " + ev.nombre + "! Apúntate aquí:",
+            url
+        });
+    } catch (_) { /* usuario canceló */ }
+}
+
+// ── Solicitud de plaza para privados ────────────────────────────
+async function solicitarPlazaEventoPrivado(eid) {
+    if (!state.user) return;
+    // ¿Ya tengo alguna solicitud?
+    const { data: existing } = await db.from("event_signups")
+        .select("estado").eq("event_id", eid).eq("user_id", state.user.id).maybeSingle();
+    if (existing) {
+        if (existing.estado === "aprobado") {
+            // Ya estoy dentro → toggle = desapuntarse
+            if (!await confirmar("¿Salir del evento?", { titulo: "Desapuntarse", ok: "Salir", peligro: !0 })) return;
+            await db.from("event_signups").delete().eq("user_id", state.user.id).eq("event_id", eid);
+            delete state.inscripciones[eid];
+            toast("Ya no estás apuntado", "info");
+            renderEventos();
+            return;
+        }
+        if (existing.estado === "pendiente") {
+            toast("Ya tienes una solicitud pendiente de aprobación", "info");
+            return;
+        }
+        if (existing.estado === "rechazado") {
+            toast("El organizador rechazó tu solicitud", "info");
+            return;
+        }
+    }
+    // Nueva solicitud pendiente
+    const { error } = await db.from("event_signups").insert({
+        user_id: state.user.id, event_id: eid, estado: "pendiente"
+    });
+    if (error) { toast("No se pudo enviar: " + error.message, "error"); return; }
+    toast("Solicitud enviada. Espera a que el organizador te apruebe 🙌", "success");
+    renderEventos();
+}
+
+// ── Solicitudes pendientes (panel del creador dentro de la ficha) ──
+async function loadPendingRequestsForEvent(eid) {
+    const cont = document.getElementById("evm-pending"); if (!cont) return;
+    const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
+    if (!ev || ev.creador_id !== state.user.id) { cont.innerHTML = ""; return; }
+    try {
+        const { data } = await db.from("event_signups")
+            .select("user_id, created_at").eq("event_id", eid).eq("estado", "pendiente")
+            .order("created_at", { ascending: !0 });
+        if (!data || !data.length) { cont.innerHTML = ""; return; }
+        const uids = [...new Set(data.map(d => d.user_id))];
+        const { data: profs } = await db.from("profiles").select("id,username,avatar_url").in("id", uids);
+        const profById = {}; (profs || []).forEach(p => { profById[p.id] = p; });
+        const rows = data.map(d => {
+            const p = profById[d.user_id] || {};
+            const av = p.avatar_url
+                ? '<img src="' + esc(p.avatar_url) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;flex-shrink:0"/>'
+                : '<div style="width:36px;height:36px;border-radius:50%;background:#22324a;display:flex;align-items:center;justify-content:center;font-size:12px;color:#9cc4f0;flex-shrink:0;font-weight:600">' + esc(getInitials(p.username || "?")) + '</div>';
+            return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid rgba(255,255,255,0.06)">'
+                + av
+                + '<div style="flex:1;min-width:0;font-size:13px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@' + esc(p.username || "usuario") + '</div>'
+                + '<button data-uid="' + esc(d.user_id) + '" data-eid="' + esc(eid) + '" onclick="aprobarSolicitud(this.dataset.eid, this.dataset.uid, this)" style="padding:6px 11px;background:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer">✓</button>'
+                + '<button data-uid="' + esc(d.user_id) + '" data-eid="' + esc(eid) + '" onclick="rechazarSolicitud(this.dataset.eid, this.dataset.uid, this)" style="padding:6px 11px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer">✕</button>'
+                + '</div>';
+        }).join("");
+        cont.innerHTML = '<div style="margin-top:14px;padding:12px 13px;background:rgba(232,184,32,0.08);border:1px solid rgba(232,184,32,0.3);border-radius:12px">'
+            + '<div style="font-size:10px;font-weight:700;color:#e8b820;margin-bottom:8px;letter-spacing:.05em;text-transform:uppercase">⏳ Solicitudes pendientes · ' + data.length + '</div>'
+            + rows
+            + '</div>';
+    } catch (e) { console.error("loadPendingRequestsForEvent", e); }
+}
+
+async function aprobarSolicitud(eid, uid, btn) {
+    if (btn) btn.disabled = !0;
+    const { error } = await db.from("event_signups")
+        .update({ estado: "aprobado" }).eq("event_id", eid).eq("user_id", uid);
+    if (error) { toast("Error: " + error.message, "error"); if (btn) btn.disabled = !1; return; }
+    toast("Aprobado ✅", "success");
+    loadPendingRequestsForEvent(eid);
+    loadEventGoing(eid);
+    loadEventCount(eid);
+}
+
+async function rechazarSolicitud(eid, uid, btn) {
+    if (!await confirmar("¿Rechazar esta solicitud?", { titulo: "Rechazar", ok: "Rechazar", peligro: !0 })) return;
+    if (btn) btn.disabled = !0;
+    // Borramos la fila directamente (más limpio que dejar 'rechazado' pululando)
+    const { error } = await db.from("event_signups")
+        .delete().eq("event_id", eid).eq("user_id", uid);
+    if (error) { toast("Error: " + error.message, "error"); if (btn) btn.disabled = !1; return; }
+    toast("Rechazado", "info");
+    loadPendingRequestsForEvent(eid);
+}
+
+// ── Deep-link ?e=TOKEN → abrir ficha del evento privado ─────────
+async function handleInviteToken(token) {
+    if (!token) return;
+    try {
+        // Con RLS activa, si no soy invitado no veré el evento. Añadimos un
+        // fallback: buscar el evento por token pasando por un fetch simple. Si RLS
+        // lo tapa (privado y no soy invitado), lo cargamos "a medias" con lo mínimo
+        // para poder pedir apuntarse.
+        const { data: ev } = await db.from("eventos").select("*").eq("invite_token", token).maybeSingle();
+        if (!ev) {
+            // Puede que RLS lo bloquee: intentamos un signup directo. Como el user
+            // no ve el evento aún, no podemos abrir la ficha. Le mostramos aviso:
+            toast("Este enlace requiere que el organizador te apruebe. Contacta con quien te invitó.", "info");
+            return;
+        }
+        // Cargar en state.eventos si aún no está
+        if (!(state.eventos || []).some(x => String(x.id) === String(ev.id))) {
+            state.eventos = [...(state.eventos || []), ev];
+        }
+        switchScreen("eventos");
+        setTimeout(() => openEventModal(ev.id), 300);
+    } catch (e) {
+        console.error("handleInviteToken", e);
+    }
 }
 
 
@@ -6638,7 +6959,6 @@ async function loadLikesRecibidos() {
         state._likesRecibidos = count || 0;
     } catch (_) { state._likesRecibidos = state._likesRecibidos || 0; }
 }
-
 // Deep-link de los accesos directos de Android (?go=dado|map|feed|perfil)
 try {
     const _go = new URLSearchParams(location.search).get("go");
@@ -6654,5 +6974,22 @@ try {
                 } else if (_tries > 40) clearInterval(_t);
             }, 150);
         }
+    }
+} catch (_) {}
+
+// Deep-link de invitación a evento privado (?e=TOKEN)
+try {
+    const _et = new URLSearchParams(location.search).get("e");
+    if (_et) {
+        let _tries = 0;
+        const _t = setInterval(() => {
+            _tries++;
+            if (typeof handleInviteToken === "function" && state.user && Array.isArray(state.eventos)) {
+                handleInviteToken(_et);
+                // Limpia el parámetro para que el enlace no siga abriendo la modal en cada recarga
+                try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
+                clearInterval(_t);
+            } else if (_tries > 60) clearInterval(_t);
+        }, 200);
     }
 } catch (_) {}
