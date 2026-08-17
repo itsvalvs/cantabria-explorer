@@ -259,22 +259,21 @@ async function renderRutasFeed() {
 
 function applyFeedFilter() {
   if (feedFilter === 'rutas') return; // la pestaña de rutas se pinta aparte
+  // Si por lo que sea llega el filtro "eventos" (link viejo, etc.), lo redirigimos:
+  // las fotos de evento ya no aparecen en el feed, solo dentro de su ficha.
+  if (feedFilter === 'eventos') { setFeedFilter('descubriendo'); return; }
   const posts = document.querySelectorAll('.feed-post');
-  if (feedFilter === 'global') {
-    posts.forEach(p => p.style.display = '');
-    const em = document.querySelector('.feed-empty-msg');
-    if (em) em.style.display = 'none';
-    return;
-  }
   let visibles = 0;
   posts.forEach(post => {
     const locEl  = post.querySelector('.post-location');
     const muniEl = post.querySelector('.post-muni');
     const muni   = (locEl?.textContent || muniEl?.textContent || '').trim();
     const isEvento = muni.includes('🎉');
+    // Los 🎉 se ocultan SIEMPRE (por si queda alguno colado de antes)
+    if (isEvento) { post.style.display = 'none'; return; }
     let show = true;
-    if (feedFilter === 'descubriendo') show = !isEvento;
-    else if (feedFilter === 'eventos')  show = isEvento;
+    if (feedFilter === 'global') show = true;
+    // descubriendo / privado no muestran eventos igualmente
     post.style.display = show ? '' : 'none';
     if (show) visibles++;
   });
@@ -287,10 +286,11 @@ function applyFeedFilter() {
       emptyMsg.style.cssText = 'text-align:center;padding:30px 20px;color:rgba(255,255,255,0.3);font-size:13px';
       feedPosts.appendChild(emptyMsg);
     }
-    emptyMsg.textContent = feedFilter === 'eventos' ? '🎉 Aún no hay fotos de eventos' : '';
+    emptyMsg.textContent = '';
     emptyMsg.style.display = 'block';
   } else if (emptyMsg) emptyMsg.style.display = 'none';
 }
+
 
 // Tocar una @mención: abrir perfil o enviar solicitud
 async function openMentionProfile(username) {
@@ -2182,24 +2182,23 @@ async function confirmEventPhoto() {
             n || (t = i)
         }
         if (!t) return toast("Añade una foto antes de publicar", "info"), e.textContent = "Publicar foto", void(e.disabled = !1);
-        try { await db.from("event_photos").insert({
+        // Solo guardamos en event_photos: las fotos de evento SOLO se ven
+        // dentro de la ficha del evento, ya no aparecen en el feed de Amigos.
+        const { error: epErr } = await db.from("event_photos").insert({
             user_id: state.user.id,
             event_id: pendingEventId,
             storage_path: t,
             descripcion: document.getElementById("evidencia-desc").value.trim() || null
-        }); } catch (epErr) { console.warn("event_photos:", epErr); }
-        await db.from("photos").insert({
-            user_id: state.user.id,
-            municipio: "🎉 " + pendingEventName,
-            storage_path: t,
-            descripcion: document.getElementById("evidencia-desc").value.trim() || null,
-            visibilidad: "amigos",
-            fecha: (new Date).toISOString().split("T")[0],
-            hora: (new Date).toLocaleTimeString("es-ES", {
-                hour: "2-digit",
-                minute: "2-digit"
-            })
-        }), state.feedCache = null, closeUploadSheet(), pendingEventId = null, pendingEventName = null, state.pendingFile = state.pendingBase64 = state.pendingMime = null, clearPhoto(), renderEventos(), toast("¡Foto del evento publicada! 🎉", "success")
+        });
+        if (epErr) throw epErr;
+        state.feedCache = null;
+        closeUploadSheet();
+        pendingEventId = null;
+        pendingEventName = null;
+        state.pendingFile = state.pendingBase64 = state.pendingMime = null;
+        clearPhoto();
+        renderEventos();
+        toast("¡Foto del evento publicada! 🎉", "success");
     } catch (e) {
         toast("Error: " + e.message, "error")
     } finally {
