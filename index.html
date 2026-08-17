@@ -428,7 +428,8 @@
         <button class="ev-tab" onclick="filterEvs(this,'cultura')">Cultura</button>
       </div>
       <div id="eventos-list"></div>
-      <div style="padding:18px 14px 8px">
+      <div style="padding:18px 14px 8px;display:flex;flex-direction:column;gap:8px">
+        <button onclick="openCrearEventoPrivado()" style="width:100%;padding:12px;background:rgba(232,90,160,0.12);border:1px dashed rgba(232,90,160,0.4);border-radius:12px;color:#f08fc4;font-size:13px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">🔒 Crea tu evento privado (cumple, quedada...)</button>
         <button onclick="openSugerirEvento()" style="width:100%;padding:12px;background:rgba(255,255,255,0.05);border:1px dashed rgba(255,255,255,0.2);border-radius:12px;color:rgba(255,255,255,0.6);font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">➕ ¿Falta una fiesta de tu pueblo? Sugiérela</button>
       </div>
     </div>
@@ -905,6 +906,7 @@
 <!-- D3 + TopoJSON -->
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <!-- App: UN solo archivo consolidado (antes app.min.js + app.patch.js) -->
 <script src="app.js?v=202606171330"></script>
 </body>
