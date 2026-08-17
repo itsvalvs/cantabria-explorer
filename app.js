@@ -813,7 +813,17 @@ async function doRegister() {
             }
         }
     });
-    setAuthLoading(!1), a ? (a.message.includes("already registered") ? n.textContent = "Ese email ya tiene una cuenta. Inicia sesión." : n.textContent = a.message, n.style.display = "block") : (n.style.color = "#22b050", n.textContent = "¡Cuenta creada! Revisa tu email para confirmar.", n.style.display = "block")
+    setAuthLoading(!1);
+    if (a) {
+        n.textContent = a.message.includes("already registered")
+            ? "Ese email ya tiene una cuenta. Inicia sesión."
+            : a.message;
+        n.style.display = "block";
+    } else {
+        n.style.color = "#22b050";
+        n.innerHTML = '✅ <b>¡Ya casi!</b><br>Te hemos mandado un email a <b>' + esc(e) + '</b>. Ábrelo y pulsa el enlace para entrar. Puede tardar un par de minutos — mira también en spam.';
+        n.style.display = "block";
+    }
 }
 
 function setAuthLoading(e) {
@@ -4113,7 +4123,9 @@ function registerSW() {
 }
 async function init() {
     buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4), setInterval(() => { if (state.user) loadNotifBadge(); }, 12e4);
-    if (/type=recovery/.test(window.location.hash + window.location.search) || /access_token=/.test(window.location.hash)) {
+    // Solo activamos modo recovery si la URL DICE explícitamente que es recovery.
+    // Los signup confirmados también traen access_token en el hash, pero NO son recovery.
+    if (/type=recovery/.test(window.location.hash + window.location.search)) {
         state.recoveryMode = !0;
     }
     const e = setTimeout(() => {
