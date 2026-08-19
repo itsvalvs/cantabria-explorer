@@ -2202,70 +2202,136 @@ async function confirmRutaPhoto() {
         pendingRutaName = null;
     }
 }
+// ═══ SUBIR FOTOS DE EVENTO (MULTI) ═════════════════════════════
+// Estado del multi-uploader: {file, base64, mime, id} por cada foto pendiente.
+let evUploadState = { eid: null, ename: null, items: [] };
 
-function openEventFotoSheet(e, t) {
-    pendingRutaName = null;
-    pendingEventId = e;
-    pendingEventName = t;
-    const _rt = document.getElementById("sheet-rating"); if (_rt) _rt.style.display = "none";
-    document.getElementById("sht-title").textContent = t;
-    document.getElementById("sht-sub").textContent = "Sube una foto de la fiesta 📸";
-    document.getElementById("btn-desmarcar").style.display = "none";
-    document.getElementById("btn-conf").textContent = "Publicar foto";
-    clearPhoto();
-    const desc = document.getElementById("evidencia-desc");
-    if (desc) desc.value = "";
-    // Ocultar el checklist de localidades (es de municipios, no de eventos)
-    const locs = document.getElementById("sheet-locs");
-    if (locs) { locs.style.display = "none"; locs.innerHTML = ""; }
-    // Abrir la hoja como OVERLAY que flota sobre la pantalla actual
-    // (Eventos), en vez de saltar al mapa
-    const sh = document.getElementById("upload-sheet");
-    sh.style.position = "fixed";
-    sh.style.zIndex = "400";
-    sh.classList.add("open");
+function openEventFotoSheet(eid, ename) {
+    // Alias para no romper llamadas antiguas
+    return openEventUploadMulti(eid, ename);
 }
-async function confirmEventPhoto() {
-    if (!pendingEventId || !state.user) return;
-    const e = document.getElementById("btn-conf");
-    e.textContent = "Subiendo...", e.disabled = !0;
-    try {
-        let t = null;
-        if (state.pendingBase64 && state.pendingMime) {
-            // pendingBase64 ya es una data-URL completa
-            const e = await fetch(state.pendingBase64).then(e => e.blob()),
-                i = state.user.id + "/eventos/" + pendingEventId + "_" + Date.now() + ".jpg",
-                {
-                    error: n
-                } = await db.storage.from("evidencias").upload(i, e, {
-                    contentType: state.pendingMime
-                });
-            n || (t = i)
-        }
-        if (!t) return toast("Añade una foto antes de publicar", "info"), e.textContent = "Publicar foto", void(e.disabled = !1);
-        // Solo guardamos en event_photos: las fotos de evento SOLO se ven
-        // dentro de la ficha del evento, ya no aparecen en el feed de Amigos.
-        const { error: epErr } = await db.from("event_photos").insert({
-            user_id: state.user.id,
-            event_id: pendingEventId,
-            storage_path: t,
-            descripcion: document.getElementById("evidencia-desc").value.trim() || null
-        });
-        if (epErr) throw epErr;
-        state.feedCache = null;
-        closeUploadSheet();
-        pendingEventId = null;
-        pendingEventName = null;
-        state.pendingFile = state.pendingBase64 = state.pendingMime = null;
-        clearPhoto();
-        renderEventos();
-        toast("¡Foto del evento publicada! 🎉", "success");
-    } catch (e) {
-        toast("Error: " + e.message, "error")
-    } finally {
-        e.textContent = "Publicar foto", e.disabled = !1
+
+function openEventUploadMulti(eid, ename) {
+    if (!state.user) return;
+    evUploadState = { eid, ename, items: [] };
+    let ov = document.getElementById("evup-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "evup-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:460;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) closeEventUploadMulti(); });
+        document.body.appendChild(ov);
     }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;padding:18px 16px 24px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div><div style="font-family:\'Playfair Display\',serif;font-size:19px;font-weight:700;color:#fff">📸 Subir fotos</div><div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:2px">' + esc(ename) + '</div></div><button onclick="closeEventUploadMulti()" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer;flex-shrink:0">✕</button></div>'
+        + '<div style="margin-top:10px">'
+        +   '<input id="evup-file" type="file" accept="image/*" multiple style="display:none" onchange="onEventFilesPicked(this.files)"/>'
+        +   '<button onclick="document.getElementById(\'evup-file\').click()" style="width:100%;padding:14px;background:rgba(232,184,32,0.15);color:#e8b820;border:2px dashed rgba(232,184,32,0.5);border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">➕ Añadir fotos (varias a la vez)</button>'
+        + '</div>'
+        + '<div id="evup-grid" style="margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px"></div>'
+        + '<textarea id="evup-desc" placeholder="Descripción (opcional, se aplica a todas)" maxlength="300" style="width:100%;margin-top:12px;padding:10px 12px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:10px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;box-sizing:border-box;min-height:60px;resize:none"></textarea>'
+        + '<div id="evup-progress" style="margin-top:10px;font-size:12px;color:rgba(255,255,255,0.5);text-align:center;min-height:16px"></div>'
+        + '<button id="evup-submit" onclick="publishEventPhotos()" disabled style="width:100%;margin-top:8px;padding:14px;background:#22b050;color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif;opacity:0.5">Publicar 0 fotos</button>'
+        + '</div>';
+    ov.style.display = "flex";
+    renderEvUploadGrid();
 }
+
+function closeEventUploadMulti() {
+    const ov = document.getElementById("evup-modal");
+    if (ov) ov.style.display = "none";
+    evUploadState = { eid: null, ename: null, items: [] };
+}
+
+async function onEventFilesPicked(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    // Límite razonable
+    if (evUploadState.items.length + files.length > 20) {
+        toast("Máximo 20 fotos por vez", "info");
+        return;
+    }
+    const pg = document.getElementById("evup-progress");
+    if (pg) pg.textContent = "Comprimiendo " + files.length + " foto(s)...";
+    for (const f of files) {
+        try {
+            const compressed = await compressImage(f, 1600, 0.82);
+            evUploadState.items.push({
+                id: Math.random().toString(36).slice(2, 9),
+                base64: compressed.base64,
+                mime: compressed.mime
+            });
+        } catch (e) {
+            console.warn("Error comprimiendo:", e);
+        }
+    }
+    if (pg) pg.textContent = "";
+    renderEvUploadGrid();
+    // Reset del input para que se puedan añadir más después
+    const inp = document.getElementById("evup-file");
+    if (inp) inp.value = "";
+}
+
+function removeEvUploadItem(id) {
+    evUploadState.items = evUploadState.items.filter(x => x.id !== id);
+    renderEvUploadGrid();
+}
+
+function renderEvUploadGrid() {
+    const grid = document.getElementById("evup-grid");
+    const btn  = document.getElementById("evup-submit");
+    if (!grid || !btn) return;
+    const n = evUploadState.items.length;
+    grid.innerHTML = evUploadState.items.map(it =>
+        '<div style="position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:#1a2535">'
+        + '<img src="' + it.base64 + '" style="width:100%;height:100%;object-fit:cover"/>'
+        + '<button data-id="' + it.id + '" onclick="removeEvUploadItem(this.dataset.id)" style="position:absolute;top:4px;right:4px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,0.75);color:#fff;border:none;font-size:12px;font-weight:700;cursor:pointer">✕</button>'
+        + '</div>'
+    ).join("");
+    btn.textContent = n === 0 ? "Publicar 0 fotos" : "Publicar " + n + (n === 1 ? " foto" : " fotos");
+    btn.disabled = n === 0;
+    btn.style.opacity = n === 0 ? "0.5" : "1";
+}
+
+async function publishEventPhotos() {
+    if (!evUploadState.eid || !state.user || !evUploadState.items.length) return;
+    const btn = document.getElementById("evup-submit");
+    const pg  = document.getElementById("evup-progress");
+    const desc = (document.getElementById("evup-desc")?.value || "").trim() || null;
+    btn.disabled = !0; btn.style.opacity = "0.5";
+    const total = evUploadState.items.length;
+    let done = 0, failed = 0;
+    for (const it of evUploadState.items) {
+        try {
+            const blob = await fetch(it.base64).then(r => r.blob());
+            const path = state.user.id + "/eventos/" + evUploadState.eid + "_" + Date.now() + "_" + it.id + ".jpg";
+            const { error: upErr } = await db.storage.from("evidencias").upload(path, blob, { contentType: it.mime });
+            if (upErr) throw upErr;
+            const { error: dbErr } = await db.from("event_photos").insert({
+                user_id: state.user.id,
+                event_id: evUploadState.eid,
+                storage_path: path,
+                descripcion: desc
+            });
+            if (dbErr) throw dbErr;
+            done++;
+        } catch (e) {
+            console.warn("Subida fallida:", e);
+            failed++;
+        }
+        if (pg) pg.textContent = "Subiendo " + (done + failed) + " / " + total + "...";
+    }
+    if (pg) pg.textContent = "";
+    if (done && !failed) toast("¡" + done + " foto" + (done > 1 ? "s" : "") + " publicada" + (done > 1 ? "s" : "") + "! 🎉", "success");
+    else if (done && failed) toast("Subidas " + done + " · fallaron " + failed, "info");
+    else toast("No se pudo subir ninguna foto", "error");
+    const eid = evUploadState.eid;
+    closeEventUploadMulti();
+    // Refrescar la galería si la ficha del evento está abierta
+    if (document.getElementById("evm-fotos")) loadEventPhotos(eid, "evm-fotos");
+    renderEventos();
+}
+
 const COMARCAS = ["Costa Occidental", "Saja-Nansa", "Liébana", "Besaya", "Campoo", "Valles Pasiegos", "Trasmiera", "Bahía de Santander", "Asón-Agüera", "Costa Oriental"],
     COAST_MUNIS = ["Santander", "Castro-Urdiales", "Santoña", "Laredo", "Comillas", "San Vicente de la Barquera", "Suances", "Miengo", "Piélagos", "Camargo", "El Astillero", "Noja", "Bareyo", "Arnuero", "Colindres", "Limpias", "Marina de Cudeyo", "Ribamontán al Mar", "Escalante", "Argoños", "Meruelo", "Voto"],
     LOREM = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.",
