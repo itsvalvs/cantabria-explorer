@@ -5314,8 +5314,20 @@ function _wrapTextEv(ctx, text, x, y, maxW, lh) {
   for (const w of words) { const t = line + w + " "; if (ctx.measureText(t).width > maxW && line) { ctx.fillText(line.trim(), x, yy); line = w + " "; yy += lh; } else line = t; }
   ctx.fillText(line.trim(), x, yy); return yy;
 }
+
+// Genera el enlace profundo a la ficha del evento
+function _eventDeepLink(eid) {
+  return window.location.origin + window.location.pathname + "?ev=" + encodeURIComponent(eid);
+}
+
 async function shareEvento(eid) {
   const ev = (state.eventos || []).find(x => String(x.id) === String(eid)); if (!ev) return;
+  const url = _eventDeepLink(eid);
+  const fch = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
+  const mensaje = "¡Únete a mí y apúntate a " + ev.nombre + "! 🎉"
+                + (fch ? "\n📅 " + fch : "")
+                + (ev.lugar ? "\n📍 " + ev.lugar : "")
+                + "\n\n" + url;
   try {
     const W = 1080, H = 1350, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
     // Fondo degradado festivo
@@ -5333,36 +5345,54 @@ async function shareEvento(eid) {
     const cardX = 90, cardY = 250, cardW = W - 180, cardH = H - 520, r = 36;
     x.fillStyle = "rgba(10,8,20,0.55)"; roundRect(x, cardX, cardY, cardW, cardH, r); x.fill();
     x.strokeStyle = "rgba(255,255,255,0.18)"; x.lineWidth = 2; roundRect(x, cardX, cardY, cardW, cardH, r); x.stroke();
-    // Contenido tarjeta
     x.textAlign = "center";
     x.fillStyle = "#e8c93a"; x.font = "bold 40px Inter, Arial, sans-serif"; x.fillText("· F I E S T A ·", W / 2, cardY + 90);
     x.fillStyle = "#fff"; x.font = "bold 92px Georgia, serif";
     const yEnd = _wrapTextEv(x, ev.nombre, W / 2, cardY + 220, cardW - 120, 100);
-    // Línea separadora punteada
     x.strokeStyle = "rgba(255,255,255,0.2)"; x.setLineDash([10, 12]); x.beginPath(); x.moveTo(cardX + 60, yEnd + 60); x.lineTo(cardX + cardW - 60, yEnd + 60); x.stroke(); x.setLineDash([]);
     x.fillStyle = "rgba(255,255,255,0.92)"; x.font = "46px Inter, Arial, sans-serif";
-    const fch = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
     x.fillText("📅  " + fch, W / 2, yEnd + 150);
     if (ev.lugar) { x.font = "44px Inter, Arial, sans-serif"; x.fillStyle = "rgba(255,255,255,0.8)"; x.fillText("📍  " + ev.lugar, W / 2, yEnd + 225); }
-    // Otros pueblos del festival
     const sibs = (state.eventos || []).filter(e => (e.festival || e.nombre) === (ev.festival || ev.nombre) && (e.lugar || e.municipio) !== ev.lugar);
     if (sibs.length) {
       x.font = "32px Inter, Arial, sans-serif"; x.fillStyle = "rgba(255,255,255,0.55)";
       _wrapTextEv(x, "También en: " + sibs.map(s => s.lugar || s.municipio).join(", "), W / 2, yEnd + 300, cardW - 140, 42);
     }
-    // Pie con marca
+    // Pie con marca + CTA claro para el enlace
+    x.fillStyle = "rgba(255,255,255,0.9)"; x.font = "bold 38px Inter, Arial, sans-serif";
+    x.fillText("👉 Apúntate en la app 👈", W / 2, H - 220);
     x.fillStyle = "rgba(255,255,255,0.85)"; x.font = "bold 44px Georgia, serif"; x.fillText("Ya lo pisé", W / 2, H - 150);
-    x.fillStyle = "rgba(255,255,255,0.45)"; x.font = "30px Inter, Arial, sans-serif"; x.fillText("Conquista Cantabria · app.yalopise.com", W / 2, H - 95);
+    x.fillStyle = "rgba(255,255,255,0.45)"; x.font = "30px Inter, Arial, sans-serif"; x.fillText("app.yalopise.com", W / 2, H - 95);
+
     const blob = await new Promise(rz => c.toBlob(rz, "image/png"));
     const file = new File([blob], "fiesta.png", { type: "image/png" });
+
+    // Compartir NATIVO (imagen + texto con enlace) → funciona en WhatsApp, IG DM, etc.
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: ev.nombre, text: "¡Vente a " + ev.nombre + "! 🎉" });
-    } else {
-      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "fiesta.png"; a.click(); URL.revokeObjectURL(url);
-      toast("Imagen descargada para compartir 📤", "success");
+      try {
+        await navigator.share({ files: [file], title: ev.nombre, text: mensaje });
+        return;
+      } catch (_) { /* usuario canceló, seguimos al fallback */ }
     }
-  } catch (e) { toast("No se pudo compartir", "error"); }
+    // Fallback sin imagen pero con enlace
+    if (navigator.share) {
+      try { await navigator.share({ title: ev.nombre, text: mensaje, url }); return; } catch (_) {}
+    }
+    // Último recurso: copia el mensaje al portapapeles y descarga la imagen aparte
+    try { await navigator.clipboard.writeText(mensaje); toast("📋 Enlace copiado. Pégalo donde quieras", "success"); }
+    catch (_) { toast("Copia el enlace manualmente: " + url, "info", 6000); }
+    const dl = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = dl; a.download = "fiesta.png"; a.click(); URL.revokeObjectURL(dl);
+  } catch (e) {
+    // Si la generación del cartel falla, al menos comparte el enlace
+    console.warn("shareEvento cartel:", e);
+    if (navigator.share) {
+      try { await navigator.share({ title: ev.nombre, text: mensaje, url }); return; } catch (_) {}
+    }
+    try { await navigator.clipboard.writeText(mensaje); toast("📋 Enlace copiado", "success"); }
+    catch (_) { toast("Enlace: " + url, "info", 6000); }
+  }
 }
+
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath(); ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
@@ -7055,7 +7085,6 @@ try {
         }
     }
 } catch (_) {}
-
 // Deep-link de invitación a evento privado (?e=TOKEN)
 try {
     const _et = new URLSearchParams(location.search).get("e");
@@ -7065,7 +7094,28 @@ try {
             _tries++;
             if (typeof handleInviteToken === "function" && state.user && Array.isArray(state.eventos)) {
                 handleInviteToken(_et);
-                // Limpia el parámetro para que el enlace no siga abriendo la modal en cada recarga
+                try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
+                clearInterval(_t);
+            } else if (_tries > 60) clearInterval(_t);
+        }, 200);
+    }
+} catch (_) {}
+
+// Deep-link a un evento público concreto (?ev=ID)
+try {
+    const _evid = new URLSearchParams(location.search).get("ev");
+    if (_evid) {
+        let _tries = 0;
+        const _t = setInterval(() => {
+            _tries++;
+            if (typeof switchScreen === "function" && state.user && Array.isArray(state.eventos) && state.eventos.length) {
+                const ev = state.eventos.find(x => String(x.id) === String(_evid));
+                if (ev) {
+                    switchScreen("eventos");
+                    setTimeout(() => openEventModal(ev.id), 300);
+                } else {
+                    toast("No se encontró la fiesta. Puede que haya terminado o esté oculta.", "info");
+                }
                 try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
                 clearInterval(_t);
             } else if (_tries > 60) clearInterval(_t);
