@@ -5315,81 +5315,31 @@ function _wrapTextEv(ctx, text, x, y, maxW, lh) {
   ctx.fillText(line.trim(), x, yy); return yy;
 }
 
-// Genera el enlace profundo a la ficha del evento
+// Enlace profundo a la ficha del evento
 function _eventDeepLink(eid) {
   return window.location.origin + window.location.pathname + "?ev=" + encodeURIComponent(eid);
 }
 
 async function shareEvento(eid) {
-  const ev = (state.eventos || []).find(x => String(x.id) === String(eid)); if (!ev) return;
+  const ev = (state.eventos || []).find(x => String(x.id) === String(eid));
+  if (!ev) return;
   const url = _eventDeepLink(eid);
-  const fch = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
-  const mensaje = "¡Únete a mí y apúntate a " + ev.nombre + "! 🎉"
-                + (fch ? "\n📅 " + fch : "")
-                + (ev.lugar ? "\n📍 " + ev.lugar : "")
-                + "\n\n" + url;
+  const mensaje =
+    "Te apunto a esta fiesta 🎉\n\n" +
+    "» " + ev.nombre + (ev.lugar ? " · " + ev.lugar : "") + " «\n\n" +
+    "Ábrelo en la app y apúntate conmigo 👇\n" +
+    url;
+  // Compartir nativo (solo texto + enlace)
+  if (navigator.share) {
+    try { await navigator.share({ title: ev.nombre, text: mensaje, url }); return; }
+    catch (_) { /* usuario canceló */ }
+  }
+  // Fallback: copiar al portapapeles
   try {
-    const W = 1080, H = 1350, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
-    // Fondo degradado festivo
-    const g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#1b1030"); g.addColorStop(0.55, "#3a1338"); g.addColorStop(1, "#5a1840");
-    x.fillStyle = g; x.fillRect(0, 0, W, H);
-    // Confeti
-    const cols = ["#e8288a", "#e8c93a", "#5DCAA5", "#7ab3e8", "#f08fc4", "#ffffff"];
-    for (let i = 0; i < 90; i++) {
-      x.save(); x.translate(Math.random() * W, Math.random() * H); x.rotate(Math.random() * Math.PI);
-      x.globalAlpha = 0.5 + Math.random() * 0.4; x.fillStyle = cols[i % cols.length];
-      const s = 7 + Math.random() * 14; x.fillRect(-s / 2, -s / 2, s, s * 0.5); x.restore();
-    }
-    x.globalAlpha = 1;
-    // Tarjeta central tipo "entrada"
-    const cardX = 90, cardY = 250, cardW = W - 180, cardH = H - 520, r = 36;
-    x.fillStyle = "rgba(10,8,20,0.55)"; roundRect(x, cardX, cardY, cardW, cardH, r); x.fill();
-    x.strokeStyle = "rgba(255,255,255,0.18)"; x.lineWidth = 2; roundRect(x, cardX, cardY, cardW, cardH, r); x.stroke();
-    x.textAlign = "center";
-    x.fillStyle = "#e8c93a"; x.font = "bold 40px Inter, Arial, sans-serif"; x.fillText("· F I E S T A ·", W / 2, cardY + 90);
-    x.fillStyle = "#fff"; x.font = "bold 92px Georgia, serif";
-    const yEnd = _wrapTextEv(x, ev.nombre, W / 2, cardY + 220, cardW - 120, 100);
-    x.strokeStyle = "rgba(255,255,255,0.2)"; x.setLineDash([10, 12]); x.beginPath(); x.moveTo(cardX + 60, yEnd + 60); x.lineTo(cardX + cardW - 60, yEnd + 60); x.stroke(); x.setLineDash([]);
-    x.fillStyle = "rgba(255,255,255,0.92)"; x.font = "46px Inter, Arial, sans-serif";
-    x.fillText("📅  " + fch, W / 2, yEnd + 150);
-    if (ev.lugar) { x.font = "44px Inter, Arial, sans-serif"; x.fillStyle = "rgba(255,255,255,0.8)"; x.fillText("📍  " + ev.lugar, W / 2, yEnd + 225); }
-    const sibs = (state.eventos || []).filter(e => (e.festival || e.nombre) === (ev.festival || ev.nombre) && (e.lugar || e.municipio) !== ev.lugar);
-    if (sibs.length) {
-      x.font = "32px Inter, Arial, sans-serif"; x.fillStyle = "rgba(255,255,255,0.55)";
-      _wrapTextEv(x, "También en: " + sibs.map(s => s.lugar || s.municipio).join(", "), W / 2, yEnd + 300, cardW - 140, 42);
-    }
-    // Pie con marca + CTA claro para el enlace
-    x.fillStyle = "rgba(255,255,255,0.9)"; x.font = "bold 38px Inter, Arial, sans-serif";
-    x.fillText("👉 Apúntate en la app 👈", W / 2, H - 220);
-    x.fillStyle = "rgba(255,255,255,0.85)"; x.font = "bold 44px Georgia, serif"; x.fillText("Ya lo pisé", W / 2, H - 150);
-    x.fillStyle = "rgba(255,255,255,0.45)"; x.font = "30px Inter, Arial, sans-serif"; x.fillText("app.yalopise.com", W / 2, H - 95);
-
-    const blob = await new Promise(rz => c.toBlob(rz, "image/png"));
-    const file = new File([blob], "fiesta.png", { type: "image/png" });
-
-    // Compartir NATIVO (imagen + texto con enlace) → funciona en WhatsApp, IG DM, etc.
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: ev.nombre, text: mensaje });
-        return;
-      } catch (_) { /* usuario canceló, seguimos al fallback */ }
-    }
-    // Fallback sin imagen pero con enlace
-    if (navigator.share) {
-      try { await navigator.share({ title: ev.nombre, text: mensaje, url }); return; } catch (_) {}
-    }
-    // Último recurso: copia el mensaje al portapapeles y descarga la imagen aparte
-    try { await navigator.clipboard.writeText(mensaje); toast("📋 Enlace copiado. Pégalo donde quieras", "success"); }
-    catch (_) { toast("Copia el enlace manualmente: " + url, "info", 6000); }
-    const dl = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = dl; a.download = "fiesta.png"; a.click(); URL.revokeObjectURL(dl);
-  } catch (e) {
-    // Si la generación del cartel falla, al menos comparte el enlace
-    console.warn("shareEvento cartel:", e);
-    if (navigator.share) {
-      try { await navigator.share({ title: ev.nombre, text: mensaje, url }); return; } catch (_) {}
-    }
-    try { await navigator.clipboard.writeText(mensaje); toast("📋 Enlace copiado", "success"); }
-    catch (_) { toast("Enlace: " + url, "info", 6000); }
+    await navigator.clipboard.writeText(mensaje);
+    toast("📋 ¡Listo! Enlace copiado, pégalo donde quieras", "success");
+  } catch (_) {
+    toast("Copia el enlace: " + url, "info", 7000);
   }
 }
 
