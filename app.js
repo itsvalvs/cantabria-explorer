@@ -1857,7 +1857,9 @@ function _evSingleCard(e) {
     const bg = inscrito ? "#1a7a3e" : "#aa1060";
     const txt = inscrito ? "Apuntado" : "Apuntarme";
     const ic = inscrito ? "ti-check" : "ti-plus";
-    const a = _evDateShort(e.fecha);
+    const a = e.fecha_fin && e.fecha_fin !== e.fecha
+        ? (_evDateShort(e.fecha) + " – " + _evDateShort(e.fecha_fin))
+        : _evDateShort(e.fecha);
     const _mf = _muniDeEvento(e)?.imagen_url;
     const past = (new Date - new Date(e.fecha)) / 864e5;
     const fotosBtn = (inscrito || past >= 0) ? `<button onclick="event.stopPropagation();openEventFotoSheet(this.dataset.eid, this.dataset.ename)" data-eid="${esc(e.id)}" data-ename="${esc(e.nombre)}" style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(232,184,32,0.2);color:#e8b820;border:1px solid rgba(232,184,32,0.4);border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;flex-shrink:0"><i class="ti ti-camera" aria-hidden="true"></i>📸 Fotos</button>` : "";
@@ -1928,7 +1930,13 @@ function _evFestivalCard(f) {
 function renderEventos() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const isUpcoming = ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d >= today; };
+    // Un evento sigue siendo "próximo/actual" hasta su fecha_fin (si la hay)
+    // o hasta 3 días después de fecha (fallback por si es un finde/varios días).
+    const isUpcoming = ev => {
+        const fin = ev.fecha_fin ? new Date(ev.fecha_fin) : new Date(new Date(ev.fecha).getTime() + 3 * 864e5);
+        fin.setHours(23, 59, 59, 999);
+        return fin >= today;
+    };
     const upcoming = state.eventos.filter(isUpcoming);
     const past = state.eventos.filter(ev => { const d = new Date(ev.fecha); d.setHours(0, 0, 0, 0); return d < today && state.inscripciones[ev.id]; });
     // Los eventos privados NO aparecen en "Todos" ni en filtros por tipo:
@@ -5336,7 +5344,12 @@ function openEventModal(eid) {
     const recapBanner = isPast
         ? '<div style="margin-top:14px;padding:11px 13px;background:rgba(232,90,160,0.1);border:1px solid rgba(232,90,160,0.3);border-radius:12px;font-size:12px;color:#f0a8cf">📸 <b>Recap del evento</b> — mira las fotos que subió la gente y quién fue.</div>'
         : "";
-    const fecha = ev.fecha ? new Date(ev.fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" }) : "";
+    const fFmt = f => new Date(f).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+    const fecha = ev.fecha
+        ? (ev.fecha_fin && ev.fecha_fin !== ev.fecha
+            ? "Del " + fFmt(ev.fecha) + " al " + fFmt(ev.fecha_fin)
+            : fFmt(ev.fecha))
+        : "";
     // Contacto: @usuario de IG, URL o texto plano
     let contactoHtml = "";
     const ct = (ev.contacto || "").trim();
