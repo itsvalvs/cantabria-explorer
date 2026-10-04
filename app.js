@@ -2556,9 +2556,47 @@ function openMuniModal(e) {
         m = t.comer_sg || [];
     u && p && (m.length ? (u.style.display = "block", p.innerHTML = m.map((e, t) => '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)"><div style="width:24px;height:24px;border-radius:50%;background:rgba(232,184,32,0.15);display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0">🌾</div><p style="font-size:13px;color:rgba(255,255,255,0.65);line-height:1.45;margin:0">' + e + "</p></div>").join("")) : u.style.display = "none"), document.getElementById("mm-btn-mapa").onclick = () => {
         closeMuniModal(), switchScreen("map"), setTimeout(() => selectMuniOnMap(e), 250)
-    }, loadMuniGallery(e), loadMuniFriendEvidence(e), loadRecomendaciones(e);
+    }, loadMuniGallery(e), loadMuniFriendEvidence(e), loadRecomendaciones(e), loadActividades(e);
     document.getElementById("muni-modal").style.display = "flex"
 }
+// ═══ QUÉ HACER: actividades fijas por municipio (tabla actividades) ═══
+async function loadActividades(muni) {
+    const wrap = document.getElementById("mm-actividades-wrap");
+    const cont = document.getElementById("mm-actividades");
+    if (!wrap || !cont) return;
+    wrap.style.display = "none";
+    state.actividadesCache = state.actividadesCache || {};
+    let acts = state.actividadesCache[muni];
+    if (!acts) {
+        try {
+            const { data, error } = await db.from("actividades")
+                .select("titulo,lugar,url,categoria")
+                .eq("municipio", muni).eq("activa", !0)
+                .order("titulo");
+            if (error) throw error;
+            acts = data || [];
+            state.actividadesCache[muni] = acts;
+        } catch (err) { console.warn("loadActividades:", err); return; }
+    }
+    // Si mientras cargaba se abrió otro municipio, no pintar
+    if (state.currentMuni !== muni || !acts.length) return;
+    cont.innerHTML = acts.map(a => {
+        const safeUrl = a.url && /^https?:\/\//i.test(a.url) ? a.url : null;
+        const tag = a.categoria
+            ? '<span style="display:inline-block;margin-top:3px;font-size:10px;padding:2px 8px;border-radius:999px;background:rgba(232,104,32,0.12);color:#f0a070">' + esc(a.categoria) + '</span>'
+            : "";
+        const fila = '<div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06)">'
+            + '<div style="width:24px;height:24px;border-radius:50%;background:rgba(232,104,32,0.18);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0">✨</div>'
+            + '<div style="flex:1;min-width:0"><div style="font-size:13px;color:rgba(255,255,255,0.85);line-height:1.4">' + esc(a.titulo) + '</div>' + tag + '</div>'
+            + (safeUrl ? '<i class="ti ti-external-link" aria-hidden="true" style="font-size:14px;color:rgba(255,255,255,0.3);flex-shrink:0"></i>' : '')
+            + '</div>';
+        return safeUrl
+            ? '<a href="' + esc(safeUrl) + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:block">' + fila + '</a>'
+            : fila;
+    }).join("");
+    wrap.style.display = "block";
+}
+
 // Galería del municipio: todas las fotos (tuyas + de amigos) en cuadrícula
 async function loadMuniGallery(muni) {
     let cont = document.getElementById("mm-galeria");
