@@ -4,7 +4,7 @@
 // ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
 // Si en la consola no ves este mensaje, el navegador te está
 // sirviendo un app.js antiguo (sube el ?v= del index.html).
-const APP_BUILD = "202610041723 · panel bot";
+const APP_BUILD = "202610041740 · editar bot";
 console.log("%c Ya lo pisé — build " + APP_BUILD + " ",
     "background:#22b050;color:#fff;font-weight:700;border-radius:4px;padding:2px 6px");
 
@@ -5601,6 +5601,7 @@ async function openBotReview() {
             .order("fecha_inicio").limit(200);
         if (error) throw error;
         if (!data || !data.length) { list.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:6px 0">Nada pendiente 🎉</div>'; return; }
+        window._botEvs = {}; data.forEach(ev => { window._botEvs[ev.id] = ev; });
         const f = d => new Date(d + "T00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
         list.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px"><strong style="color:#fff">' + data.length + '</strong> pendientes de revisar</div>'
             + data.map(ev => {
@@ -5613,7 +5614,9 @@ async function openBotReview() {
                     + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:3px">' + meta + '</div>'
                     + (ev.lugar ? '<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:2px">📍 ' + esc(ev.lugar) + '</div>' : '')
                     + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px"><span style="font-size:10.5px;color:rgba(255,255,255,0.3)">' + esc(ev.fuente || "") + '</span>' + link + '</div>'
+                    + '<div class="botrev-edit" style="display:none;margin-top:10px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.08)"></div>'
                     + '<div style="display:flex;gap:8px;margin-top:10px">'
+                    + '<button data-id="' + esc(ev.id) + '" onclick="editarBot(this.dataset.id,this)" title="Editar" style="padding:9px 12px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:10px;font-size:12px;cursor:pointer;font-family:Inter,sans-serif">✏️</button>'
                     + '<button data-id="' + esc(ev.id) + '" onclick="moderarBot(this.dataset.id,\'aprobado\',this)" style="flex:1;padding:9px;background:#22b050;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">✓ Publicar</button>'
                     + '<button data-id="' + esc(ev.id) + '" onclick="moderarBot(this.dataset.id,\'descartado\',this)" style="padding:9px 14px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✕ Descartar</button>'
                     + '</div></div>';
@@ -5621,6 +5624,61 @@ async function openBotReview() {
     } catch (e) {
         list.innerHTML = '<div style="color:#ff6b6b;font-size:12px">Error: ' + esc(e.message || e) + '. ¿Ejecutaste el SQL del panel?</div>';
     }
+}
+
+function editarBot(id, btn) {
+    const ev = window._botEvs?.[id];
+    if (!ev) return;
+    const box = btn.closest(".botrev-card")?.querySelector(".botrev-edit");
+    if (!box) return;
+    if (box.style.display === "block") { box.style.display = "none"; return; }   // segundo toque = cerrar
+    const inp = "width:100%;margin-top:4px;padding:9px 10px;background:#1a2535;border:1px solid rgba(255,255,255,0.12);border-radius:9px;font-size:13px;color:#fff;font-family:Inter,sans-serif;outline:none;box-sizing:border-box";
+    const lbl = t => '<div style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:9px;text-transform:uppercase;letter-spacing:.04em">' + t + '</div>';
+    const opt = (v, sel) => '<option value="' + esc(v) + '"' + (v === sel ? " selected" : "") + ' style="background:#141e2c">' + esc(v || "—") + '</option>';
+    const munis = Object.keys(state.municipiosData || {}).sort((a, b) => a.localeCompare(b, "es"));
+    if (ev.municipio && !munis.includes(ev.municipio)) munis.unshift(ev.municipio);
+    const cats = ["música", "teatro", "exposición", "fiesta popular", "gastronomía", "deporte", "infantil", "mercado", "visita guiada", "cine", "charla", "otro"];
+    const p = "be-" + id + "-";
+    const campo = (k, tipo, extra) => '<input id="' + p + k + '" type="' + tipo + '" value="' + esc(ev[k] || "") + '" ' + (extra || "") + ' style="' + inp + '"/>';
+    box.innerHTML =
+          lbl("Título") + campo("titulo", "text", 'maxlength="150"')
+        + '<div style="display:flex;gap:8px"><div style="flex:1">' + lbl("Desde") + campo("fecha_inicio", "date") + '</div>'
+        + '<div style="flex:1">' + lbl("Hasta (opcional)") + campo("fecha_fin", "date") + '</div></div>'
+        + '<div style="display:flex;gap:8px"><div style="flex:1">' + lbl("Hora") + campo("hora", "time") + '</div>'
+        + '<div style="flex:1">' + lbl("Precio") + campo("precio", "text", 'maxlength="60"') + '</div></div>'
+        + lbl("Lugar") + campo("lugar", "text", 'maxlength="150"')
+        + lbl("Municipio") + '<select id="' + p + 'municipio" style="' + inp + '">' + opt("", ev.municipio || "") + munis.map(m => opt(m, ev.municipio)).join("") + '</select>'
+        + lbl("Categoría") + '<select id="' + p + 'categoria" style="' + inp + '">' + cats.map(c => opt(c, ev.categoria || "otro")).join("") + '</select>'
+        + lbl("Enlace") + campo("url", "url")
+        + '<div style="display:flex;gap:8px;margin-top:12px">'
+        + '<button data-id="' + esc(id) + '" onclick="guardarBot(this.dataset.id,this,false)" style="flex:1;padding:9px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">💾 Guardar</button>'
+        + '<button data-id="' + esc(id) + '" onclick="guardarBot(this.dataset.id,this,true)" style="flex:1;padding:9px;background:#22b050;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">✓ Guardar y publicar</button>'
+        + '</div>';
+    box.style.display = "block";
+}
+
+async function guardarBot(id, btn, publicar) {
+    if (!isAdmin()) return;
+    const g = k => (document.getElementById("be-" + id + "-" + k)?.value || "").trim();
+    const c = {
+        titulo: g("titulo"), fecha_inicio: g("fecha_inicio"), fecha_fin: g("fecha_fin") || null,
+        hora: g("hora") || null, precio: g("precio") || null, lugar: g("lugar") || null,
+        municipio: g("municipio") || null, categoria: g("categoria") || "otro", url: g("url") || null
+    };
+    if (!c.titulo || !c.fecha_inicio) return void toast("Título y fecha de inicio son obligatorios", "info");
+    if (c.fecha_fin && c.fecha_fin < c.fecha_inicio) return void toast("La fecha de fin es anterior a la de inicio", "info");
+    if (c.url && !/^https?:\/\//i.test(c.url)) return void toast("El enlace debe empezar por http:// o https://", "info");
+    if (c.fecha_fin === c.fecha_inicio) c.fecha_fin = null;
+    if (publicar) c.estado = "aprobado";   // mismo UPDATE: el trigger publica ya con los datos corregidos
+    btn.disabled = !0;
+    const { data, error } = await db.from("eventos_importados").update(c).eq("id", id).select("id");
+    btn.disabled = !1;
+    if (error || !data || !data.length) {
+        return void toast(error ? "No se pudo: " + error.message : "Sin permiso para editar (revisa el SQL del panel)", "error");
+    }
+    toast(publicar ? "Guardado y publicado 🎉" : "Cambios guardados", "success");
+    if (publicar) { loadEventos(); loadPendingBotBadge(); }
+    openBotReview();
 }
 
 async function moderarBot(id, estado, btn) {
