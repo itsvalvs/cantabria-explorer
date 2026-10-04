@@ -4,7 +4,7 @@
 // ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
 // Si en la consola no ves este mensaje, el navegador te está
 // sirviendo un app.js antiguo (sube el ?v= del index.html).
-const APP_BUILD = "202610041652 · fixes 1-2-5-6-7-8";
+const APP_BUILD = "202610041723 · panel bot";
 console.log("%c Ya lo pisé — build " + APP_BUILD + " ",
     "background:#22b050;color:#fff;font-weight:700;border-radius:4px;padding:2px 6px");
 
@@ -1987,14 +1987,14 @@ function renderEventos() {
     const cont = document.getElementById("eventos-list");
     if (!festObjs.length) { cont.innerHTML = '<div style="text-align:center;padding:30px 16px;color:rgba(255,255,255,0.3);font-size:13px">No hay eventos en este filtro.</div>'; return; }
     const adminBanner = isAdmin()
-        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button><button onclick="openReportsReview()" style="padding:7px 13px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">🚩 Reportes<span id="rep-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#e82828;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
+        ? '<div style="margin:0 0 10px;padding:11px 13px;background:rgba(34,114,232,0.1);border:1px solid rgba(34,114,232,0.3);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:#9cc4f0">🛡️ Panel de moderación</span><button onclick="openSuggestionsReview()" style="padding:7px 13px;background:#2272e8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">Revisar sugerencias<span id="sug-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#2272e8;border-radius:999px;padding:0 6px;font-size:10px"></span></button><button onclick="openReportsReview()" style="padding:7px 13px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">🚩 Reportes<span id="rep-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#e82828;border-radius:999px;padding:0 6px;font-size:10px"></span></button><button onclick="openBotReview()" style="padding:7px 13px;background:#6b4fd8;color:#fff;border:none;border-radius:999px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">🤖 Bot<span id="bot-pend-badge" style="display:none;margin-left:6px;background:#fff;color:#6b4fd8;border-radius:999px;padding:0 6px;font-size:10px"></span></button></div>'
         : "";
     cont.innerHTML = adminBanner + perOrder.map(per => {
         const header = '<div style="padding:14px 4px 8px;font-size:12px;font-weight:700;color:#f08fc4;letter-spacing:.05em;text-transform:uppercase">📅 ' + esc(per) + '</div>';
         const cards = periodos[per].map(f => f.rows.length === 1 ? _evSingleCard(f.rows[0]) : _evFestivalCard(f)).join("");
         return header + cards;
     }).join("");
-    if (isAdmin()) { loadPendingSuggestionsBadge(); loadPendingReportsBadge(); }
+    if (isAdmin()) { loadPendingSuggestionsBadge(); loadPendingReportsBadge(); loadPendingBotBadge(); }
     // Solo cargamos el contador de apuntados; las fotos ya solo se ven dentro de la ficha del evento.
     list.forEach(e => { loadEventCount(e.id); });
 }
@@ -5574,6 +5574,86 @@ async function loadPendingReportsBadge() {
     } catch (_) {}
 }
 
+// ═══ PANEL "🤖 Bot": eventos recogidos automáticamente (solo admin) ═══
+function _hoyISO() { return new Date().toLocaleDateString("sv-SE"); } // YYYY-MM-DD hora local
+
+async function openBotReview() {
+    if (!isAdmin()) return;
+    let ov = document.getElementById("botrev-modal");
+    if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "botrev-modal";
+        ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:345;display:none;align-items:flex-end;justify-content:center;backdrop-filter:blur(3px)";
+        ov.addEventListener("click", e => { if (e.target === ov) ov.style.display = "none"; });
+        document.body.appendChild(ov);
+    }
+    ov.innerHTML = '<div style="background:#141e2c;border-radius:22px 22px 0 0;width:100%;max-width:520px;max-height:88vh;overflow-y:auto;padding:20px 18px 26px" onclick="event.stopPropagation()">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-family:\'Playfair Display\',serif;font-size:20px;font-weight:700;color:#fff">🤖 Eventos del bot</div><button onclick="document.getElementById(\'botrev-modal\').style.display=\'none\'" style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);color:#fff;border:none;cursor:pointer">✕</button></div>'
+        + '<div id="botrev-list"><div style="color:rgba(255,255,255,0.4);font-size:13px">Cargando...</div></div></div>';
+    ov.style.display = "flex";
+    const list = document.getElementById("botrev-list");
+    try {
+        const hoy = _hoyISO();
+        const { data, error } = await db.from("eventos_importados")
+            .select("id,titulo,fecha_inicio,fecha_fin,hora,lugar,municipio,categoria,precio,url,fuente")
+            .eq("estado", "pendiente")
+            .or("fecha_inicio.gte." + hoy + ",fecha_fin.gte." + hoy)
+            .order("fecha_inicio").limit(200);
+        if (error) throw error;
+        if (!data || !data.length) { list.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:6px 0">Nada pendiente 🎉</div>'; return; }
+        const f = d => new Date(d + "T00:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+        list.innerHTML = '<div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:10px"><strong style="color:#fff">' + data.length + '</strong> pendientes de revisar</div>'
+            + data.map(ev => {
+                const fecha = f(ev.fecha_inicio) + (ev.fecha_fin && ev.fecha_fin !== ev.fecha_inicio ? " – " + f(ev.fecha_fin) : "");
+                const meta = [fecha, ev.hora, ev.municipio, ev.categoria, ev.precio].filter(Boolean).map(esc).join(" · ");
+                const link = ev.url && /^https?:\/\//i.test(ev.url)
+                    ? '<a href="' + esc(ev.url) + '" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:#7ab3e8;text-decoration:none">Ver fuente ↗</a>' : "";
+                return '<div class="botrev-card" style="padding:13px;border:1px solid rgba(255,255,255,0.1);border-radius:14px;margin-bottom:10px">'
+                    + '<div style="font-size:14px;font-weight:700;color:#fff">' + esc(ev.titulo) + '</div>'
+                    + '<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:3px">' + meta + '</div>'
+                    + (ev.lugar ? '<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:2px">📍 ' + esc(ev.lugar) + '</div>' : '')
+                    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px"><span style="font-size:10.5px;color:rgba(255,255,255,0.3)">' + esc(ev.fuente || "") + '</span>' + link + '</div>'
+                    + '<div style="display:flex;gap:8px;margin-top:10px">'
+                    + '<button data-id="' + esc(ev.id) + '" onclick="moderarBot(this.dataset.id,\'aprobado\',this)" style="flex:1;padding:9px;background:#22b050;color:#fff;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif">✓ Publicar</button>'
+                    + '<button data-id="' + esc(ev.id) + '" onclick="moderarBot(this.dataset.id,\'descartado\',this)" style="padding:9px 14px;background:rgba(232,40,40,0.15);color:#ff6b6b;border:1px solid rgba(232,40,40,0.3);border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif">✕ Descartar</button>'
+                    + '</div></div>';
+            }).join("");
+    } catch (e) {
+        list.innerHTML = '<div style="color:#ff6b6b;font-size:12px">Error: ' + esc(e.message || e) + '. ¿Ejecutaste el SQL del panel?</div>';
+    }
+}
+
+async function moderarBot(id, estado, btn) {
+    if (!isAdmin()) return;
+    const card = btn.closest(".botrev-card");
+    const botones = card ? [...card.querySelectorAll("button")] : [];
+    botones.forEach(b => b.disabled = !0);
+    const { data, error } = await db.from("eventos_importados").update({ estado }).eq("id", id).select("id");
+    if (error || !data || !data.length) {
+        // Sin error pero 0 filas = RLS no deja actualizar
+        toast(error ? "No se pudo: " + error.message : "Sin permiso para moderar (revisa el SQL del panel)", "error");
+        botones.forEach(b => b.disabled = !1);
+        return;
+    }
+    card?.remove();
+    toast(estado === "aprobado" ? "Publicado en Eventos 🎉" : "Descartado", estado === "aprobado" ? "success" : "info");
+    loadPendingBotBadge();
+    if (estado === "aprobado") loadEventos();
+    const list = document.getElementById("botrev-list");
+    if (list && !list.querySelector(".botrev-card")) list.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:13px;padding:6px 0">Nada pendiente 🎉</div>';
+}
+
+async function loadPendingBotBadge() {
+    if (!isAdmin()) return;
+    try {
+        const hoy = _hoyISO();
+        const { count } = await db.from("eventos_importados").select("id", { count: "exact", head: !0 })
+            .eq("estado", "pendiente").or("fecha_inicio.gte." + hoy + ",fecha_fin.gte." + hoy);
+        const b = document.getElementById("bot-pend-badge");
+        if (b) { b.textContent = count || 0; b.style.display = count ? "inline-block" : "none"; }
+    } catch (_) {}
+}
+
 async function openSuggestionsReview() {
     if (!isAdmin()) return;
     let ov = document.getElementById("sugrev-modal");
@@ -7042,6 +7122,21 @@ try {
                 }
                 try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
                 clearInterval(_t);
+            } else if (_tries > 60) clearInterval(_t);
+        }, 200);
+    }
+} catch (_) {}
+
+// Deep-link al panel del bot (?revisar=bot) — viene del resumen diario de Telegram
+try {
+    if (new URLSearchParams(location.search).get("revisar") === "bot") {
+        let _tries = 0;
+        const _t = setInterval(() => {
+            _tries++;
+            if (state.user && state.profile && typeof openBotReview === "function") {
+                clearInterval(_t);
+                if (isAdmin()) { switchScreen("eventos"); setTimeout(openBotReview, 300); }
+                try { window.history.replaceState(null, "", window.location.pathname); } catch (_) {}
             } else if (_tries > 60) clearInterval(_t);
         }, 200);
     }
