@@ -4,7 +4,7 @@
 // ═══ SELLO DE VERSIÓN ═══════════════════════════════════════
 // Si en la consola no ves este mensaje, el navegador te está
 // sirviendo un app.js antiguo (sube el ?v= del index.html).
-const APP_BUILD = "2026-08-10 · gpu-lite mapa";
+const APP_BUILD = "202610041652 · fixes 1-2-5-6-7-8";
 console.log("%c Ya lo pisé — build " + APP_BUILD + " ",
     "background:#22b050;color:#fff;font-weight:700;border-radius:4px;padding:2px 6px");
 
@@ -209,11 +209,10 @@ async function renderRutasFeed() {
   let authors, profiles;
   if (state.feedCache?.authors) { authors = state.feedCache.authors; profiles = state.feedCache.friendProfiles || []; }
   else {
-    const { data: fs } = await db.from('friendships').select('follower_id,following_id').or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq('estado', 'aceptado');
-    const fids = [...new Set((fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id))];
+    const pr = await getFriendsCache().catch(() => []);
+    const fids = pr.map(p => p.id);
     authors = [...new Set([...fids, state.user.id])].filter(id => !state.blockedIds?.has(id));
-    const { data: pr } = fids.length ? await db.from('profiles').select('id,username,avatar_url').in('id', fids) : { data: [] };
-    profiles = pr || [];
+    profiles = pr;
   }
   const profById = {}; profiles.forEach(p => profById[p.id] = p);
   if (state.profile) profById[state.user.id] = { id: state.user.id, username: state.profile.username, avatar_url: state.profile.avatar_url };
@@ -1433,11 +1432,7 @@ function showMuniBar(e) {
 async function loadFriendVisits() {
     if (!state.user) return;
     try {
-        const { data: fs } = await db.from("friendships")
-            .select("follower_id,following_id")
-            .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-            .eq("estado", "aceptado");
-        const fids = [...new Set((fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id))]
+        const fids = (await getFriendsCache().catch(() => [])).map(f => f.id)
             .filter(id => !state.blockedIds?.has(id));
         state.friendVisits = {};
         if (fids.length) {
@@ -1831,13 +1826,6 @@ fileInput.addEventListener("change", function(e) {
     e.target.value = ""; // permite volver a elegir las mismas / añadir más
 });
 let currentFilter = "todos";
-async function loadEventos() {
-    const {
-        data: e
-    } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
-    e && (state.eventos = e), renderEventos(), checkEventReminders()
-}
-
 function filterEvs(e, t) {
     currentFilter = t, document.querySelectorAll(".ev-tab").forEach(e => e.classList.remove("active")), e.classList.add("active"), renderEventos()
 }
@@ -2666,9 +2654,7 @@ async function loadMuniFriendEvidence(e) {
     const t = document.getElementById("mm-friend-evidence");
     if (!t) return;
     if (t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Buscando evidencias de amigos...</div>', !state.user) return;
-    const {
-        data: i
-    } = await db.from("friendships").select("follower_id, following_id").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), n = (i || []).map(e => e.follower_id === state.user.id ? e.following_id : e.follower_id);
+    const n = (await getFriendsCache().catch(() => [])).map(f => f.id);
     if (!n.length) return void(t.innerHTML = '<div style="color:rgba(255,255,255,0.25);font-size:12px">Ningún amigo ha visitado este municipio aún.</div>');
     const {
         data: o
@@ -2723,16 +2709,9 @@ async function loadFeed(reset = !1) {
     fp.innerHTML = '<div style="text-align:center;padding:30px;color:rgba(255,255,255,0.3);font-size:12px"><div class="spin" style="margin:0 auto 10px"></div>Cargando feed...</div>';
 
     // Amigos aceptados → autores del feed
-    const { data: fs } = await db.from("friendships")
-        .select("follower_id,following_id")
-        .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`)
-        .eq("estado", "aceptado");
-    const fids = [...new Set((fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id))];
-    let perfiles = [];
-    if (fids.length) {
-        const { data: pr } = await db.from("profiles").select("id,username,avatar_url").in("id", fids);
-        perfiles = pr || [];
-    }
+    if (reset) _friendsCache = null;   // pull-to-refresh: refresca también la lista de amigos
+    const perfiles = await getFriendsCache().catch(() => []);
+    const fids = perfiles.map(p => p.id);
     renderStories(perfiles);
 
     state.feedCache = {
@@ -3685,27 +3664,18 @@ async function renderProfile() {
 }
 async function loadFriendCount() {
     if (!state.user) return;
-    const {
-        data: e
-    } = await db.from("friendships").select("follower_id, following_id").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), t = new Set;
-    (e || []).forEach(e => {
-        const i = e.follower_id === state.user.id ? e.following_id : e.follower_id;
-        t.add(i)
-    });
+    const amigos = await getFriendsCache().catch(() => []);
     const i = document.getElementById("sf");
-    i && (i.textContent = t.size)
+    i && (i.textContent = amigos.length)
 }
 async function openFriendsModal() {
     const e = document.getElementById("friends-list-modal"),
         t = document.getElementById("friends-list-content");
     if (!e || !t) return;
     t.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:10px 0">Cargando...</div>', e.style.display = "flex";
-    const {
-        data: i
-    } = await db.from("friendships").select("follower_id,following_id,follower:profiles!friendships_follower_id_fkey(id,username,avatar_url),following:profiles!friendships_following_id_fkey(id,username,avatar_url)").or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado"), n = new Set, o = (i || []).map(e => e.follower_id === state.user.id ? e.following : e.follower).filter(e => !(!e || n.has(e.id)) && (n.add(e.id), !0));
+    const o = await getFriendsCache().catch(() => []);
     o.length ? t.innerHTML = o.map(e => {
-        const t = (e.username || "?").split(" ").map(e => e[0]).join("").toUpperCase().substring(0, 2),
-            i = e.avatar_url ? '<img src="' + esc(e.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(e.username) + '"/>' : t;
+        const i = e.avatar_url ? '<img src="' + esc(e.avatar_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%" alt="' + esc(e.username) + '"/>' : getInitials(e.username);
         return '<div data-uid="' + esc(e.id) + '" data-uname="' + esc(e.username) + '" onclick="closeFriendsModal();openFriendProfile(this.dataset.uid, this.dataset.uname)" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer"><div style="width:42px;height:42px;border-radius:50%;background:#1a2535;border:1.5px solid #e86820;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:#e86820;flex-shrink:0;overflow:hidden">' + i + '</div><div style="flex:1"><div style="font-size:14px;font-weight:500;color:#fff">' + esc(e.username) + '</div></div><i class="ti ti-chevron-right" style="color:rgba(255,255,255,0.2);font-size:16px" aria-hidden="true"></i></div>'
     }).join("") : t.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:13px;padding:20px 0;text-align:center">Aún no tienes amigos añadidos</div>'
 }
@@ -3739,7 +3709,7 @@ async function aceptarSolicitud(e, t) {
         follower_id: state.user.id,
         following_id: e,
         estado: "aceptado"
-    }), await loadSolicitudes()
+    }), _friendsCache = null, await loadSolicitudes(), loadFriendCount()
 }
 async function rechazarSolicitud(e, t) {
     if (await confirmar("¿Rechazar la solicitud de " + t + "?", { titulo: "Rechazar solicitud", ok: "Rechazar", peligro: !0 })) { await db.from("friendships").delete().eq("follower_id", e).eq("following_id", state.user.id); await loadSolicitudes(); loadNotifBadge(); }
@@ -4071,7 +4041,7 @@ async function loadMap() {
             data: e
         }, {
             data: t
-        }] = await Promise.all([db.from("municipios").select("*"), db.from("visits").select("municipio")]);
+        }] = await Promise.all([db.from("municipios").select("*"), db.rpc("popularidad_municipios")]);
         // Rutas desde la BD (tabla "rutas"). Si no existe aún, se usa el array semilla.
         try {
             const { data: rt, error: rtErr } = await db.from("rutas").select("nombre,km,muni,url").order("km", { ascending: !1 });
@@ -4080,7 +4050,7 @@ async function loadMap() {
         e && (state.municipiosData = {}, e.forEach(e => {
             state.municipiosData[e.nombre] = e
         }), state.coast = e.filter(e => "costa" === e.tipo).map(e => e.nombre), state.mountain = e.filter(e => "montaña" === e.tipo).map(e => e.nombre)), state.popularidad = {}, (t || []).forEach(e => {
-            state.popularidad[e.municipio] = (state.popularidad[e.municipio] || 0) + 1
+            state.popularidad[e.municipio] = Number(e.visitas) || 0
         }), document.getElementById("screen-dado").classList.contains("active") && renderMuniList();
         const i = await d3.json("https://cdn.jsdelivr.net/npm/es-atlas@0.5.0/es/municipalities.json"),
             n = {
@@ -4286,7 +4256,7 @@ function registerSW() {
     navigator.serviceWorker.register("sw.js?v=" + v).catch(e => console.warn("SW:", e));
 }
 async function init() {
-    buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4), setInterval(() => { if (state.user) loadNotifBadge(); }, 12e4);
+    buildNavs(), renderDice(6), updateClock(), setInterval(updateClock, 3e4), setInterval(() => { if (state.user && document.visibilityState === "visible") loadNotifBadge(); }, 6e5);
     // Solo activamos modo recovery si la URL DICE explícitamente que es recovery.
     // Los signup confirmados también traen access_token en el hash, pero NO son recovery.
     if (/type=recovery/.test(window.location.hash + window.location.search)) {
@@ -4569,54 +4539,16 @@ function launchConfetti() {
     }
 }
 async function loadEventos() {
-    const [e, t] = await Promise.all([loadEventosSupabase(), loadEventosSantander()]), i = new Map;
-    [...e, ...t].forEach(e => {
-        const t = e.nombre + e.fecha;
-        i.has(t) || i.set(t, e)
-    }), state.eventos = [...i.values()].sort((e, t) => new Date(e.fecha) - new Date(t.fecha)), renderEventos()
+    state.eventos = await loadEventosSupabase();
+    renderEventos();
+    checkEventReminders();
 }
 async function loadEventosSupabase() {
     // Con RLS activa, el mismo SELECT nos devuelve:
     //  - todos los públicos activos
     //  - los privados donde soy creador o estoy apuntado (pendiente o aprobado)
-    const {
-        data: e
-    } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
-    return (e || []).map(e => ({
-        ...e,
-        source: "local"
-    }))
-}
-async function loadEventosSantander() {
-    try {
-        const e = "https://datos.santander.es/api/rest/datasets/agenda_cultural.json?items=20",
-            t = await fetch("https://api.allorigins.win/get?url=" + encodeURIComponent(e));
-        if (!t.ok) return [];
-        const i = await t.json(),
-            n = JSON.parse(i.contents);
-        return (n?.resources || n?.result?.resources || []).filter(e => {
-            const t = e["dc:date"] || e.fecha || "";
-            return t && new Date(t) >= new Date
-        }).slice(0, 10).map(e => ({
-            id: "stander-" + (e.uri || Math.random()),
-            nombre: e["dc:title"] || e.titulo || "Evento cultural",
-            lugar: e["vcard:locality"] || e.lugar || "Santander",
-            fecha: e["dc:date"] || e.fecha || (new Date).toISOString(),
-            dia_semana: new Date(e["dc:date"] || e.fecha).toLocaleDateString("es-ES", {
-                weekday: "short"
-            }),
-            tipo: "cultura",
-            descripcion: e["dc:description"] || e.descripcion || "",
-            tipo_badge: "Agenda Santander",
-            color_bg: "#1a0d2a",
-            icon: "ti-star",
-            activo: !0,
-            source: "api",
-            url: e["dc:identifier"] || ""
-        }))
-    } catch (e) {
-        return console.log("API Santander no disponible:", e.message), []
-    }
+    const { data: e } = await db.from("eventos").select("*").eq("activo", !0).order("fecha");
+    return (e || []).map(e => ({ ...e, source: "local" }));
 }
 async function exportarMapa() {
     const btn = document.getElementById("btn-export-map");
@@ -4823,9 +4755,7 @@ async function guardarRecomendacion() {
 async function loadRecomendaciones(muni) {
     const cont = document.getElementById("mm-recomendaciones");
     if (!cont || !state.user) return;
-    const { data: fs } = await db.from("friendships").select("follower_id, following_id")
-        .or(`follower_id.eq.${state.user.id},following_id.eq.${state.user.id}`).eq("estado", "aceptado");
-    const fids = (fs || []).map(f => f.follower_id === state.user.id ? f.following_id : f.follower_id);
+    const fids = (await getFriendsCache().catch(() => [])).map(f => f.id);
     const ids  = [...new Set([...fids, state.user.id])];
 
     const { data: recs } = await db.from("recomendaciones")
@@ -5971,7 +5901,7 @@ async function loadPendingRequestsForEvent(eid) {
                 + av
                 + '<div style="flex:1;min-width:0;font-size:13px;font-weight:600;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">@' + esc(p.username || "usuario") + '</div>'
                 + '<button data-uid="' + esc(d.user_id) + '" data-eid="' + esc(eid) + '" onclick="aprobarSolicitud(this.dataset.eid, this.dataset.uid, this)" style="padding:6px 11px;background:#22b050;color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer">✓</button>'
-                + '<button data-uid="' + esc(d.user_id) + '" data-eid="' + esc(eid) + '" onclick="rechazarSolicitud(this.dataset.eid, this.dataset.uid, this)" style="padding:6px 11px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer">✕</button>'
+                + '<button data-uid="' + esc(d.user_id) + '" data-eid="' + esc(eid) + '" onclick="rechazarSolicitudEvento(this.dataset.eid, this.dataset.uid, this)" style="padding:6px 11px;background:rgba(232,40,40,0.85);color:#fff;border:none;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer">✕</button>'
                 + '</div>';
         }).join("");
         cont.innerHTML = '<div style="margin-top:14px;padding:12px 13px;background:rgba(232,184,32,0.08);border:1px solid rgba(232,184,32,0.3);border-radius:12px">'
@@ -5992,7 +5922,7 @@ async function aprobarSolicitud(eid, uid, btn) {
     loadEventCount(eid);
 }
 
-async function rechazarSolicitud(eid, uid, btn) {
+async function rechazarSolicitudEvento(eid, uid, btn) {
     if (!await confirmar("¿Rechazar esta solicitud?", { titulo: "Rechazar", ok: "Rechazar", peligro: !0 })) return;
     if (btn) btn.disabled = !0;
     // Borramos la fila directamente (más limpio que dejar 'rechazado' pululando)
@@ -6770,6 +6700,7 @@ async function fetchNotifications() {
 }
 
 async function loadNotifBadge() {
+    state._notifTs = Date.now();
     try {
         const items = await fetchNotifications();
         state._notifs = items;
@@ -6781,6 +6712,11 @@ async function loadNotifBadge() {
         });
     } catch (e) { console.warn("loadNotifBadge:", e); }
 }
+
+// Al volver a la app, refresca el badge (como mucho una vez por minuto)
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.user && Date.now() - (state._notifTs || 0) > 6e4) loadNotifBadge();
+});
 
 function renderNotifList() {
     const list = document.getElementById("notif-list");
