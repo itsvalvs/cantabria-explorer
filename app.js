@@ -2471,7 +2471,6 @@ function openMuniModal(e) {
         hdr.style.background = "transparent";
         if (hdrContent) {
             hdrContent.style.marginTop = "-30px";
-            hdrContent.style.paddingTop = "16px";
             hdrContent.style.position = "relative";
             hdrContent.style.background = i
             ? "linear-gradient(to top, rgba(13,30,50,0.9) 0%, rgba(13,30,50,0.6) 35%, rgba(13,30,50,0.15) 65%, rgba(13,30,50,0) 100%)"
