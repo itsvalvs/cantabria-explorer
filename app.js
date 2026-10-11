@@ -2473,8 +2473,8 @@ function openMuniModal(e) {
             hdrContent.style.marginTop = "-85px";
             hdrContent.style.position = "relative";
             hdrContent.style.background = i
-                ? "linear-gradient(to top, rgba(13,30,50,0.96) 35%, rgba(13,30,50,0.55) 70%, rgba(13,30,50,0.05) 100%)"
-                : "linear-gradient(to top, rgba(13,32,22,0.96) 35%, rgba(13,32,22,0.55) 70%, rgba(13,32,22,0.05) 100%)";
+            ? "linear-gradient(to top, rgba(13,30,50,0.9) 0%, rgba(13,30,50,0.6) 35%, rgba(13,30,50,0.15) 65%, rgba(13,30,50,0) 100%)"
+            : "linear-gradient(to top, rgba(13,32,22,0.9) 0%, rgba(13,32,22,0.6) 35%, rgba(13,32,22,0.15) 65%, rgba(13,32,22,0) 100%)";
         }
     } else {
         if (o) o.style.display = "none";
