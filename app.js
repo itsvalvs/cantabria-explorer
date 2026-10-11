@@ -2470,7 +2470,7 @@ function openMuniModal(e) {
         o.style.display = "block";
         hdr.style.background = "transparent";
         if (hdrContent) {
-            hdrContent.style.marginTop = "0px";
+            hdrContent.style.marginTop = "-30px";
             hdrContent.style.paddingTop = "16px";
             hdrContent.style.position = "relative";
             hdrContent.style.background = i
