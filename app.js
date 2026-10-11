@@ -2464,24 +2464,22 @@ function openMuniModal(e) {
     const hdr = document.getElementById("mm-header"),
         hdrContent = document.getElementById("mm-header-content");
     if (t.imagen_url && o && a) {
-        // Con foto: el bloque de color se superpone translúcido y deja
-        // ver la imagen detrás (degradado de abajo hacia arriba)
-        a.src = t.imagen_url;
-        o.style.display = "block";
-        hdr.style.background = "transparent";
-        if (hdrContent) {
-            hdrContent.style.marginTop = "0px";
-            hdrContent.style.paddingTop = "14px";
-            hdrContent.style.position = "relative";
-            hdrContent.style.background = i
-            ? "linear-gradient(to top, rgba(13,30,50,0.9) 0%, rgba(13,30,50,0.6) 35%, rgba(13,30,50,0.15) 65%, rgba(13,30,50,0) 100%)"
-            : "linear-gradient(to top, rgba(13,32,22,0.9) 0%, rgba(13,32,22,0.6) 35%, rgba(13,32,22,0.15) 65%, rgba(13,32,22,0) 100%)";
-        }
-    } else {
-        if (o) o.style.display = "none";
-        hdr.style.background = i ? "linear-gradient(135deg,rgba(13,42,74,0.55),rgba(21,58,96,0.55))" : "linear-gradient(135deg,rgba(13,42,30,0.55),rgba(21,48,32,0.55))";
-        if (hdrContent) { hdrContent.style.marginTop = "0"; hdrContent.style.background = "none"; }
-    }
+    a.src = t.imagen_url;
+    o.style.display = "block";
+    o.style.height = "200px";
+    hdr.style.background = "transparent";
+    hdr.style.padding = "0";
+    hdrContent.style.margin = "0";
+    hdrContent.style.padding = "12px 18px 16px";
+    hdrContent.style.position = "relative";
+    hdrContent.style.background = i
+        ? "linear-gradient(to top, rgba(13,30,50,0.9) 0%, rgba(13,30,50,0.6) 35%, rgba(13,30,50,0.15) 65%, rgba(13,30,50,0) 100%)"
+        : "linear-gradient(to top, rgba(13,32,22,0.9) 0%, rgba(13,32,22,0.6) 35%, rgba(13,32,22,0.15) 65%, rgba(13,32,22,0) 100%)";
+} else {
+    if (o) o.style.display = "none";
+    hdr.style.background = i ? "linear-gradient(135deg,rgba(13,42,74,0.55),rgba(21,58,96,0.55))" : "linear-gradient(135deg,rgba(13,42,30,0.55),rgba(21,48,32,0.55))";
+    if (hdrContent) { hdrContent.style.marginTop = "0"; hdrContent.style.background = "none"; }
+}
     const s = document.getElementById("mm-badge");
     s.innerHTML = `<i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:10px"></i> ${i?"Costa":"Montaña"}`, s.style.background = i ? "rgba(56,138,221,0.25)" : "rgba(29,158,117,0.25)", s.style.color = i ? "#85B7EB" : "#5DCAA5", document.getElementById("mm-name").textContent = e, document.getElementById("mm-comarca").textContent = t.comarca ? "Comarca de " + t.comarca : "";
     const r = [];
