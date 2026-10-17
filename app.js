@@ -2463,23 +2463,34 @@ function openMuniModal(e) {
         a = document.getElementById("mm-img");
     const hdr = document.getElementById("mm-header"),
         hdrContent = document.getElementById("mm-header-content");
-    if (t.imagen_url && o && a) {
-    a.src = t.imagen_url;
-    o.style.display = "block";
-    o.style.height = "200px";
-    hdr.style.background = "transparent";
-    hdr.style.padding = "0";
-    hdrContent.style.margin = "0";
-    hdrContent.style.padding = "12px 18px 16px";
-    hdrContent.style.position = "relative";
-    hdrContent.style.background = i
-        ? "linear-gradient(to top, rgba(13,30,50,0.9) 0%, rgba(13,30,50,0.6) 35%, rgba(13,30,50,0.15) 65%, rgba(13,30,50,0) 100%)"
-        : "linear-gradient(to top, rgba(13,32,22,0.9) 0%, rgba(13,32,22,0.6) 35%, rgba(13,32,22,0.15) 65%, rgba(13,32,22,0) 100%)";
-} else {
-    if (o) o.style.display = "none";
-    hdr.style.background = i ? "linear-gradient(135deg,rgba(13,42,74,0.55),rgba(21,58,96,0.55))" : "linear-gradient(135deg,rgba(13,42,30,0.55),rgba(21,48,32,0.55))";
-    if (hdrContent) { hdrContent.style.marginTop = "0"; hdrContent.style.background = "none"; }
-}
+        if (t.imagen_url && o && a) {
+        a.src = t.imagen_url;
+        o.style.display = "block";
+        o.style.height = "min(380px, 52vh)";      // foto más alta (ajústalo a tu gusto)
+        hdr.style.background = "transparent";
+        hdr.style.padding = "0";
+        // El bloque del título va ENCIMA de la parte baja de la foto
+        hdrContent.style.position = "absolute";
+        hdrContent.style.left = "0";
+        hdrContent.style.right = "0";
+        hdrContent.style.bottom = "0";
+        hdrContent.style.margin = "0";
+        hdrContent.style.padding = "70px 18px 16px";   // los 70px son la zona de fundido
+        hdrContent.style.background = i
+            ? "linear-gradient(to top, rgba(20,30,44,1) 0%, rgba(13,30,50,0.75) 38%, rgba(13,30,50,0) 100%)"
+            : "linear-gradient(to top, rgba(20,30,44,1) 0%, rgba(13,32,22,0.75) 38%, rgba(13,32,22,0) 100%)";
+    } else {
+        if (o) o.style.display = "none";
+        hdr.style.background = i ? "linear-gradient(135deg,rgba(13,42,74,0.55),rgba(21,58,96,0.55))" : "linear-gradient(135deg,rgba(13,42,30,0.55),rgba(21,48,32,0.55))";
+        if (hdrContent) {
+            // Reset: el modal se reutiliza, así que hay que deshacer el modo "encima de la foto"
+            hdrContent.style.position = "relative";
+            hdrContent.style.left = hdrContent.style.right = hdrContent.style.bottom = "";
+            hdrContent.style.margin = "0";
+            hdrContent.style.padding = "20px 18px 16px";
+            hdrContent.style.background = "none";
+        }
+    }
     const s = document.getElementById("mm-badge");
     s.innerHTML = `<i class="ti ${i?"ti-waves":"ti-mountain"}" aria-hidden="true" style="font-size:10px"></i> ${i?"Costa":"Montaña"}`, s.style.background = i ? "rgba(56,138,221,0.25)" : "rgba(29,158,117,0.25)", s.style.color = i ? "#85B7EB" : "#5DCAA5", document.getElementById("mm-name").textContent = e, document.getElementById("mm-comarca").textContent = t.comarca ? "Comarca de " + t.comarca : "";
     const r = [];
